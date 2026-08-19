@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +37,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if getattr(sys, "frozen", False):
+        # The Windows bundle contains Playwright's local Chromium directory.
+        # Force the Node driver to resolve that bundled browser instead of the
+        # current user's external ms-playwright cache.
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
     args = _parser().parse_args(argv)
     application = QGuiApplication(sys.argv[:1])
     application.setApplicationName("信息化人力工作台")

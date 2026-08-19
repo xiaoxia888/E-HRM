@@ -33,7 +33,7 @@ playwright install chromium
 
 - `environment.backend.yml`：Python 3.11.15 和后端运行环境；
 - `environment.frontend.yml`：PySide6 + Qt Quick/QML 桌面前端；
-- `environment.windows-build.yml`：未来仅在 Windows 打包机安装；
+- `environment.windows-build.yml`：仅在 Windows 打包机安装；
 - `requirements/*.lock.txt`：各层精确的 Python 包版本。
 
 开发机也可以使用包含后端、前端和测试依赖的组合环境：
@@ -53,6 +53,22 @@ Python 默认值。配置按命名空间分为：
 
 该文件不保存账号密码或个人下载目录，因此纳入版本控制。浏览器资料目录、
 录制代码和下载文件仍在 `.gitignore` 中。
+
+## Windows 打包
+
+Windows 版默认构建为 onedir 运行目录，再生成 ZIP 便携版和 Inno Setup 单文件
+安装程序。这样能够稳定携带 Qt/QML、Playwright Driver 和 Chromium，同时避免
+onefile 每次启动都解压几百 MB 浏览器文件。
+
+请在 Windows 构建机运行：
+
+```powershell
+conda env update -n ehrm -f environment.windows-build.yml
+conda activate ehrm
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+```
+
+完整说明见 `packaging/windows/README.md`。
 
 ## 2. 录制实际流程
 

@@ -22,5 +22,10 @@ logs/
 artifacts/
 screenshots/
 
+# Windows build outputs and generated metadata
+build/
+dist/
+packaging/windows/generated/
+
 # config/settings.toml 是不含账号密码的版本化系统配置。
 # 用户偏好、登录状态和凭据只保存在操作系统应用数据目录。

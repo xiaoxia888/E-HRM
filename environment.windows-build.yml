@@ -8,4 +8,4 @@ dependencies:
   - pip
   - pip:
       - -r requirements/windows-build.lock.txt
-
+      - -r requirements/dev.lock.txt
