@@ -14,20 +14,15 @@ ApplicationWindow {
     minimumHeight: 720
     visible: true
     title: "信息化人力工作台"
-    color: "#f5f7fa"
+    color: "#edf2f7"
     font.family: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : "PingFang SC"
 
     property int activeModule: 0
 
     onClosing: function(close) {
-        if (window.backend.running) {
+        if (window.backend.running || window.backend.erpUploading) {
             close.accepted = false
             runningCloseDialog.open()
-        } else if (!window.backend.shutdown()) {
-            close.accepted = false
-            messageDialog.heading = "正在关闭浏览器"
-            messageDialog.message = "自动化工作线程尚未完全退出，请稍后再关闭工作台。"
-            messageDialog.open()
         }
     }
 
@@ -44,6 +39,8 @@ ApplicationWindow {
         id: templateDialog
         title: "保存 Excel 模板"
         currentFolder: window.backend.downloadsFolderUrl
+        currentFile: window.backend.templateDefaultUrl
+        defaultSuffix: "xlsx"
         nameFilters: ["Excel 工作簿 (*.xlsx)"]
         fileMode: FileDialog.SaveFile
         onAccepted: window.backend.saveTemplate(selectedFile)
@@ -64,7 +61,7 @@ ApplicationWindow {
             Layout.preferredWidth: 220
             Layout.fillHeight: true
             color: "#ffffff"
-            border.color: "#e5e8ee"
+            border.color: "#d6dde7"
 
             Column {
                 anchors.fill: parent
@@ -112,7 +109,6 @@ ApplicationWindow {
                     width: parent.width
                     text: "上传至 ERP"
                     iconSource: "../assets/upload.svg"
-                    reserved: true
                     selected: window.activeModule === 1
                     onClicked: window.activeModule = 1
                 }
@@ -151,8 +147,8 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 105
-                        color: "#ffffff"
-                        border.color: "#e5e8ee"
+                        color: "#f9fbfd"
+                        border.color: "#d6dde7"
 
                         RowLayout {
                             anchors.fill: parent
@@ -198,8 +194,8 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             radius: 10
-                            color: "#ffffff"
-                            border.color: "#e1e5eb"
+                            color: "#fbfcfe"
+                            border.color: "#d3dbe6"
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -303,11 +299,11 @@ ApplicationWindow {
                                     Layout.fillHeight: true
                                     radius: 7
                                     color: "#ffffff"
-                                    border.color: "#e3e7ed"
+                                    border.color: "#cfd8e4"
                                     clip: true
 
-                                    property var ratios: [0.07, 0.16, 0.14, 0.10, 0.20, 0.09, 0.12, 0.12]
-                                    property var headers: ["状态", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
+                                    property var ratios: [0.16, 0.14, 0.11, 0.09, 0.18, 0.08, 0.12, 0.12]
+                                    property var headers: ["任务编号", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
 
                                     Column {
                                         anchors.fill: parent
@@ -315,7 +311,7 @@ ApplicationWindow {
                                         Rectangle {
                                             width: parent.width
                                             height: 48
-                                            color: "#f7f8fa"
+                                            color: "#edf2f7"
                                             Row {
                                                 anchors.fill: parent
                                                 Repeater {
@@ -327,7 +323,7 @@ ApplicationWindow {
                                                         width: tablePanel.width * tablePanel.ratios[headerCell.index]
                                                         height: 48
                                                         color: "transparent"
-                                                        border.color: "#ebedf1"
+                                                        border.color: "#dce3ec"
                                                         Text {
                                                             anchors.centerIn: parent
                                                             text: headerCell.modelData
@@ -353,15 +349,16 @@ ApplicationWindow {
                                                 required property var modelData
                                                 width: recordList.width
                                                 height: 50
-                                                color: recordRow.index % 2 ? "#fbfcfd" : "#ffffff"
-                                                border.color: "#edf0f3"
+                                                color: recordRow.index % 2 ? "#f6f8fb" : "#ffffff"
+                                                border.color: "#e1e7ef"
                                                 Row {
                                                     anchors.fill: parent
                                                     Repeater {
                                                         model: [
-                                                            recordRow.modelData.status, recordRow.modelData.unit,
-                                                            recordRow.modelData.department, recordRow.modelData.name,
-                                                            recordRow.modelData.identity, recordRow.modelData.insurance,
+                                                            recordRow.modelData.taskNumber, recordRow.modelData.unit,
+                                                            recordRow.modelData.department,
+                                                            recordRow.modelData.name, recordRow.modelData.identity,
+                                                            recordRow.modelData.insurance,
                                                             recordRow.modelData.startMonth, recordRow.modelData.endMonth
                                                         ]
                                                         Item {
@@ -372,14 +369,14 @@ ApplicationWindow {
                                                             height: 50
                                                             Text {
                                                                 anchors.fill: parent
-                                                                anchors.leftMargin: dataCell.index === 0 ? 0 : 10
+                                                                anchors.leftMargin: 10
                                                                 anchors.rightMargin: 8
                                                                 verticalAlignment: Text.AlignVCenter
-                                                                horizontalAlignment: dataCell.index === 0 || dataCell.index >= 5 ? Text.AlignHCenter : Text.AlignLeft
+                                                                horizontalAlignment: dataCell.index >= 5 ? Text.AlignHCenter : Text.AlignLeft
                                                                 text: dataCell.modelData
-                                                                color: dataCell.index === 0 ? "#12a150" : "#303744"
+                                                                color: "#303744"
                                                                 font.pixelSize: 13
-                                                                font.weight: dataCell.index === 0 ? Font.DemiBold : Font.Normal
+                                                                font.weight: dataCell.index === 0 ? Font.Medium : Font.Normal
                                                                 elide: Text.ElideRight
                                                             }
                                                         }
@@ -420,8 +417,8 @@ ApplicationWindow {
                             Layout.preferredWidth: 360
                             Layout.fillHeight: true
                             radius: 10
-                            color: "#ffffff"
-                            border.color: "#e1e5eb"
+                            color: "#fbfcfe"
+                            border.color: "#d3dbe6"
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -454,8 +451,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 116
                                     radius: 8
-                                    color: "#ffffff"
-                                    border.color: "#e1e5eb"
+                                    color: "#f5f8fc"
+                                    border.color: "#d7e0ea"
                                     Column {
                                         anchors.fill: parent
                                         anchors.margins: 15
@@ -505,7 +502,7 @@ ApplicationWindow {
                                         Layout.preferredHeight: 42
                                         radius: 7
                                         color: "#ffffff"
-                                        border.color: "#d9dde5"
+                                        border.color: "#cbd5e1"
                                         Text {
                                             anchors.fill: parent
                                             anchors.leftMargin: 12
@@ -523,26 +520,39 @@ ApplicationWindow {
                                     }
                                 }
 
-                                Row {
-                                    spacing: 9
-                                    opacity: 0.5
-                                    Rectangle {
-                                        width: 17
-                                        height: 17
-                                        radius: 3
-                                        color: "#f1f3f5"
-                                        border.color: "#cfd4dc"
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 7
+                                        CheckBox {
+                                            id: erpUploadCheck
+                                            checked: window.backend.uploadToErp
+                                            enabled: !window.backend.running
+                                            onToggled: window.backend.setUploadToErp(checked)
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "下载完成后自动上传至 ERP"
+                                            color: "#303744"
+                                            font.pixelSize: 14
+                                            font.weight: Font.Medium
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: !window.backend.running
+                                                onClicked: window.backend.setUploadToErp(!window.backend.uploadToErp)
+                                            }
+                                        }
                                     }
                                     Text {
-                                        text: "下载完成后进入 ERP 上传"
-                                        color: "#566071"
-                                        font.pixelSize: 14
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 34
+                                        text: "按 Excel 任务编号匹配申请并静默上传 PDF"
+                                        color: "#7a8493"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
                                     }
-                                }
-                                Text {
-                                    text: "ERP 上传功能接入后启用"
-                                    color: "#8b93a1"
-                                    font.pixelSize: 13
                                 }
 
                                 Item { Layout.fillHeight: true }
@@ -571,20 +581,16 @@ ApplicationWindow {
                 }
             }
 
-            PlaceholderPage {
-                title: "上传至 ERP"
-                subtitle: "权益单下载完成后，可在这里选择任务结果并自动上传至 ERP。"
-                description: "该模块已预留，后续接入 ERP 登录、文件匹配、上传及结果回写流程。"
+            ErpUploadPage {
+                backend: window.backend
             }
             PlaceholderPage {
                 title: "任务记录"
                 subtitle: "统一查看权益单下载和 ERP 上传任务。"
                 description: "后续将支持按人员、时间和状态筛选，并可仅重试失败项目。"
             }
-            PlaceholderPage {
-                title: "系统设置"
-                subtitle: "管理默认保存目录、浏览器和批量处理参数。"
-                description: "当前批量人数可直接在权益单获取页的高级设置中调整。"
+            SystemSettingsPage {
+                backend: window.backend
             }
         }
     }
@@ -645,7 +651,7 @@ ApplicationWindow {
                             anchors.leftMargin: 12
                             anchors.rightMargin: 8
                             verticalAlignment: Text.AlignVCenter
-                            text: conditionRow.modelData.unit + " · " + conditionRow.modelData.insurance + " · "
+                            text: conditionRow.modelData.taskNumber + " · " + conditionRow.modelData.insurance + " · "
                                   + conditionRow.modelData.startMonth + " 至 " + conditionRow.modelData.endMonth + " · "
                                   + conditionRow.modelData.peopleCount + " 人"
                                   + (conditionRow.modelData.pdfCount > 1 ? " · " + conditionRow.modelData.pdfCount + " 份 PDF" : "")
@@ -674,6 +680,7 @@ ApplicationWindow {
             Text {
                 text: "结果 Excel <b><font color='#1677ff'>1</font></b> 份 · PDF "
                       + "<b><font color='#1677ff'>" + window.backend.expectedPdfCount + "</font></b> 份"
+                      + (window.backend.uploadToErp ? " · 完成后自动上传 ERP" : "")
                 textFormat: Text.RichText
                 color: "#303744"
                 font.pixelSize: 16
@@ -884,10 +891,13 @@ ApplicationWindow {
                 AppButton {
                     text: "停止任务"
                     danger: true
-                    enabled: !window.backend.stopping
+                    enabled: window.backend.erpUploading || !window.backend.stopping
                     onClicked: {
                         runningCloseDialog.close()
-                        stopTaskDialog.open()
+                        if (window.backend.erpUploading)
+                            window.backend.requestManualErpStop()
+                        else
+                            stopTaskDialog.open()
                     }
                 }
             }

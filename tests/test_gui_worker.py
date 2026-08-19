@@ -43,7 +43,7 @@ def test_playwright_workbench_is_reused_inside_one_thread_context(
 
     monkeypatch.setattr(worker_module, "DesktopWorkbench", FakeWorkbench)
     settings = load_settings(
-        Path("config/settings.example.toml"),
+        Path("config/settings.toml"),
         data_root=tmp_path / "runtime",
     )
     worker = worker_module.AutomationWorker(settings, logging.getLogger("test.worker"))
@@ -101,7 +101,7 @@ def test_worker_forwards_cooperative_cancel_request(
 
     monkeypatch.setattr(worker_module, "DesktopWorkbench", CancellableWorkbench)
     settings = load_settings(
-        Path("config/settings.example.toml"),
+        Path("config/settings.toml"),
         data_root=tmp_path / "runtime",
     )
     worker = worker_module.AutomationWorker(settings, logging.getLogger("test.cancel"))

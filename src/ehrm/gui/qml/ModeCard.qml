@@ -9,9 +9,9 @@ Rectangle {
 
     implicitHeight: 126
     radius: 9
-    color: control.selected ? "#f5f9ff" : mouseArea.containsMouse ? "#fafcff" : "#ffffff"
+    color: control.selected ? "#edf5ff" : mouseArea.containsMouse ? "#f3f7fb" : "#f8fafc"
     border.width: control.selected ? 2 : 1
-    border.color: control.selected ? "#1677ff" : "#dfe3e8"
+    border.color: control.selected ? "#1677ff" : "#cfd8e4"
 
     Row {
         anchors.fill: parent

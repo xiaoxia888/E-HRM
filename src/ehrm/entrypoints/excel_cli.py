@@ -7,7 +7,7 @@ from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_EXCEL_EXPORT
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.settings import load_settings
+from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.excel_loader import RightsStatementExcelLoader
 from ehrm.modules.rights_statement.excel_models import (
     ExcelRunResult,
@@ -27,9 +27,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", type=Path, default=Path("downloads"))
     parser.add_argument("--batch-size", type=int, default=50)
-    parser.add_argument("--config", type=Path, default=Path("config/settings.toml"))
+    parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--dry-run", action="store_true", help="只校验并显示计划")
     parser.add_argument("--yes", action="store_true", help="跳过执行前确认")
+    parser.add_argument(
+        "--upload-erp",
+        action="store_true",
+        help="权益单下载完成后按任务编号静默上传至 ERP",
+    )
     return parser
 
 
@@ -71,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode=mode,
                 output_dir=args.output.expanduser().resolve(),
                 source_excel=args.input.expanduser().resolve(),
+                upload_to_erp=args.upload_erp,
             ),
         )
         if not isinstance(result, ExcelRunResult):
@@ -85,6 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"执行完成：成功 {result.succeeded}，失败 {result.failed}")
+    if args.upload_erp:
+        print(
+            f"ERP 上传完成：成功 {result.erp_uploaded} 人，"
+            f"失败 {result.erp_failed} 人"
+        )
     records_by_row = {record.row_number: record for record in records}
     for item in result.items:
         if item.success:

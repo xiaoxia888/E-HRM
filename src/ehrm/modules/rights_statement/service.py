@@ -51,6 +51,7 @@ class RightsStatementService:
                     insurance_type=request.insurance_type,
                     start_month=request.start_month,
                     end_month=request.end_month,
+                    task_number="单次下载",
                 )
                 group = WorkGroup(sequence=1, records=(record,))
                 statement_page.prepare_group(group)

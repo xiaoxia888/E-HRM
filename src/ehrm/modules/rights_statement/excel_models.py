@@ -20,10 +20,11 @@ class EmployeeRecord:
     insurance_type: str
     start_month: str
     end_month: str
+    task_number: str
 
     @property
     def group_key(self) -> tuple[str, str, str, str]:
-        return self.unit, self.insurance_type, self.start_month, self.end_month
+        return self.task_number, self.insurance_type, self.start_month, self.end_month
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,10 @@ class ItemResult:
     code: str
     message: str
     file_path: Path | None = None
+    erp_success: bool | None = None
+    erp_code: str | None = None
+    erp_message: str | None = None
+    erp_attachment_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +59,8 @@ class ExcelRunResult:
     manifest_path: Path
     result_workbook_path: Path | None
     items: tuple[ItemResult, ...]
+    erp_uploaded: int = 0
+    erp_failed: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,3 +69,4 @@ class ExcelTaskRequest:
     mode: ExportMode
     output_dir: Path
     source_excel: Path
+    upload_to_erp: bool = False

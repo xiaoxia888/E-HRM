@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Event, Lock
 
@@ -9,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import TaskCancelledError
 from ehrm.core.settings import AppSettings
+from ehrm.modules.erp.batch_service import ErpBatchUploadService
 from ehrm.modules.rights_statement.excel_models import ExcelTaskRequest
 from ehrm.modules.rights_statement.excel_service import ExcelRightsStatementService
 from ehrm.workbench import DesktopWorkbench
@@ -87,6 +89,19 @@ class AutomationWorker(QThread):
                         workbench.start()
                     self.status_changed.emit("正在自动查询并下载权益单")
                     result = workbench.run(request)
+                    if getattr(request, "upload_to_erp", False) and not self._cancel_requested.is_set():
+                        # The rights-site browser remains alive on this QThread.
+                        # ERP owns another sync Playwright instance, so it must
+                        # run in its own Python thread to avoid greenlet crashes.
+                        with ThreadPoolExecutor(
+                            max_workers=1,
+                            thread_name_prefix="ehrm-erp-upload",
+                        ) as executor:
+                            result = executor.submit(
+                                self._upload_to_erp,
+                                request,
+                                result,
+                            ).result()
                     self._logger.info("自动化任务已完成，正在通知桌面界面")
                     self.completed.emit(result)
                 except TaskCancelledError:
@@ -124,3 +139,20 @@ class AutomationWorker(QThread):
                     workbench.stop()
                 except Exception:
                     self._logger.exception("关闭桌面工作台浏览器失败")
+
+    def _upload_to_erp(self, request: ExcelTaskRequest, result):
+        items = ErpBatchUploadService(
+            self._settings,
+            self._logger,
+            self.status_changed.emit,
+            self._cancel_requested.is_set,
+        ).execute(request, result)
+        return ExcelRightsStatementService(
+            self._settings,
+            self._logger,
+        ).refresh_artifacts(
+            result,
+            request.source_excel,
+            request.output_dir,
+            items,
+        )

@@ -12,6 +12,7 @@ __pycache__/
 # Login state and personal data. Never commit these.
 data/browser-profile/
 data/codegen-profile/
+data/erp-browser-profile/
 data/session-state.json
 auth.json
 
@@ -21,5 +22,5 @@ logs/
 artifacts/
 screenshots/
 
-# Local configuration may contain private URLs or paths
-config/settings.toml
+# config/settings.toml 是不含账号密码的版本化系统配置。
+# 用户偏好、登录状态和凭据只保存在操作系统应用数据目录。

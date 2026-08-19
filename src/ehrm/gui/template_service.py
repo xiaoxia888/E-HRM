@@ -9,7 +9,16 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 
 class RightsStatementTemplateService:
-    HEADERS = ("单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间")
+    HEADERS = (
+        "任务编号",
+        "单位",
+        "部门",
+        "姓名",
+        "身份证",
+        "险种",
+        "开始时间",
+        "结束时间",
+    )
     INSURANCE_OPTIONS = ("养老", "工伤", "失业")
 
     def write(self, destination: Path) -> Path:
@@ -26,16 +35,26 @@ class RightsStatementTemplateService:
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
         sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = "A1:G1"
+        sheet.auto_filter.ref = "A1:H1"
         sheet.row_dimensions[1].height = 26
-        widths = {"A": 24, "B": 18, "C": 14, "D": 24, "E": 13, "F": 16, "G": 16}
+        widths = {
+            "A": 24,
+            "B": 24,
+            "C": 18,
+            "D": 14,
+            "E": 24,
+            "F": 13,
+            "G": 16,
+            "H": 16,
+        }
         for column, width in widths.items():
             sheet.column_dimensions[column].width = width
 
         for row in range(2, 1002):
-            sheet.cell(row=row, column=4).number_format = "@"
-            sheet.cell(row=row, column=6).number_format = "yyyy-mm"
+            sheet.cell(row=row, column=1).number_format = "@"
+            sheet.cell(row=row, column=5).number_format = "@"
             sheet.cell(row=row, column=7).number_format = "yyyy-mm"
+            sheet.cell(row=row, column=8).number_format = "yyyy-mm"
 
         insurance_validation = DataValidation(
             type="list",
@@ -49,17 +68,18 @@ class RightsStatementTemplateService:
         insurance_validation.showInputMessage = True
         insurance_validation.showErrorMessage = True
         sheet.add_data_validation(insurance_validation)
-        insurance_validation.add("E2:E1001")
+        insurance_validation.add("F2:F1001")
 
         invalid_period_fill = PatternFill("solid", fgColor="FDE9E7")
         sheet.conditional_formatting.add(
-            "G2:G1001",
-            FormulaRule(formula=["AND(F2<>\"\",G2<>\"\",F2>G2)"], fill=invalid_period_fill),
+            "H2:H1001",
+            FormulaRule(formula=["AND(G2<>\"\",H2<>\"\",G2>H2)"], fill=invalid_period_fill),
         )
 
         guide = workbook.create_sheet("填写说明")
         guide_rows = (
             ("字段", "填写要求"),
+            ("任务编号", "必填，ERP 人力资源事务申请编号，例如 RLSQ20260819-0001"),
             ("单位", "必填，填写参保单位名称"),
             ("部门", "必填，用于结果文件归类"),
             ("姓名", "必填"),
@@ -80,4 +100,3 @@ class RightsStatementTemplateService:
         workbook.save(destination)
         workbook.close()
         return destination
-

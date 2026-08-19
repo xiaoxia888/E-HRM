@@ -61,5 +61,53 @@ class FileValidationError(EhrmError):
     code = ErrorCode.FILE_VALIDATION_ERROR
 
 
+class ErpAuthenticationFailedError(EhrmError):
+    code = ErrorCode.ERP_AUTHENTICATION_FAILED
+
+
+class ErpApplicationNotFoundError(EhrmError):
+    code = ErrorCode.ERP_APPLICATION_NOT_FOUND
+
+
+class ErpApplicationAmbiguousError(EhrmError):
+    code = ErrorCode.ERP_APPLICATION_AMBIGUOUS
+
+
+class ErpQueryFailedError(EhrmError):
+    code = ErrorCode.ERP_QUERY_FAILED
+    retryable = True
+
+
+class ErpDuplicateAttachmentError(EhrmError):
+    code = ErrorCode.ERP_DUPLICATE_ATTACHMENT
+
+
+class ErpUploadFailedError(EhrmError):
+    code = ErrorCode.ERP_UPLOAD_FAILED
+    retryable = True
+
+
+class ErpUploadVerificationError(EhrmError):
+    code = ErrorCode.ERP_UPLOAD_VERIFICATION_FAILED
+    retryable = True
+
+
+class ErpAttachmentNotFoundError(EhrmError):
+    code = ErrorCode.ERP_ATTACHMENT_NOT_FOUND
+
+
+class ErpAttachmentAmbiguousError(EhrmError):
+    code = ErrorCode.ERP_ATTACHMENT_AMBIGUOUS
+
+
+class ErpDeleteFailedError(EhrmError):
+    code = ErrorCode.ERP_DELETE_FAILED
+
+
+class ErpDeleteVerificationError(EhrmError):
+    code = ErrorCode.ERP_DELETE_VERIFICATION_FAILED
+    retryable = True
+
+
 class TaskCancelledError(EhrmError):
     code = ErrorCode.TASK_CANCELLED

@@ -32,11 +32,12 @@ def record(identity: str) -> EmployeeRecord:
         insurance_type="养老",
         start_month="2025-01",
         end_month="2025-06",
+        task_number="RLSQ20260819-0001",
     )
 
 
 def test_identity_number_is_used_before_name() -> None:
-    settings = load_settings(Path("config/settings.example.toml"))
+    settings = load_settings(Path("config/settings.toml"))
     fake_page = FakePage()
     page = RightsStatementPage(fake_page, settings, object())  # type: ignore[arg-type]
 
@@ -47,7 +48,7 @@ def test_identity_number_is_used_before_name() -> None:
 
 
 def test_name_is_only_the_empty_identity_fallback() -> None:
-    settings = load_settings(Path("config/settings.example.toml"))
+    settings = load_settings(Path("config/settings.toml"))
     fake_page = FakePage()
     page = RightsStatementPage(fake_page, settings, object())  # type: ignore[arg-type]
 
@@ -58,7 +59,7 @@ def test_name_is_only_the_empty_identity_fallback() -> None:
 
 
 def test_unchanged_group_filters_are_not_selected_again() -> None:
-    settings = load_settings(Path("config/settings.example.toml"))
+    settings = load_settings(Path("config/settings.toml"))
     page = RightsStatementPage(FakePage(), settings, object())  # type: ignore[arg-type]
     calls: list[tuple[str, str]] = []
     actual: dict[str, str | None] = {
@@ -90,6 +91,7 @@ def test_unchanged_group_filters_are_not_selected_again() -> None:
         insurance_type=first.insurance_type,
         start_month=first.start_month,
         end_month="2025-07",
+        task_number=first.task_number,
     )
 
     page.prepare_group(WorkGroup(1, (first,)))

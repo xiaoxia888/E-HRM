@@ -24,7 +24,7 @@ from ehrm.modules.rights_statement.excel_models import (
 
 def _view_model(tmp_path: Path) -> DesktopViewModel:
     settings = load_settings(
-        Path("config/settings.example.toml"),
+        Path("config/settings.toml"),
         data_root=tmp_path / "runtime",
     )
     return DesktopViewModel(
@@ -38,8 +38,8 @@ def test_import_failure_emits_specific_row_details(tmp_path: Path) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
-    sheet.append(["测试单位", "信息部", "张三", "错误证件号", "医疗", "2025-01", "2025-06"])
+    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
+    sheet.append(["测试单位", "信息部", "张三", "错误证件号", "医疗", "2025-01", "2025-06", "RLSQ20260819-0001"])
     path = tmp_path / "invalid.xlsx"
     workbook.save(path)
 
@@ -63,9 +63,9 @@ def test_successful_import_updates_preview_and_uses_safe_default(tmp_path: Path)
     application = QGuiApplication.instance() or QGuiApplication([])
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
-    sheet.append(["测试单位", "信息部", "张三", "320101199001011234", "养老", "2025-01", "2025-06"])
-    sheet.append(["测试单位", "人事部", "李四", "320101199002021235", "养老", "2025-01", "2025-06"])
+    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
+    sheet.append(["测试单位", "信息部", "张三", "320101199001011234", "养老", "2025-01", "2025-06", "RLSQ20260819-0001"])
+    sheet.append(["测试单位", "人事部", "李四", "320101199002021235", "养老", "2025-01", "2025-06", "RLSQ20260819-0001"])
     path = tmp_path / "valid.xlsx"
     workbook.save(path)
 
@@ -79,12 +79,42 @@ def test_successful_import_updates_preview_and_uses_safe_default(tmp_path: Path)
     assert view_model.expectedPdfCount == 2
     assert view_model.batchExpectedPdfCount == 1
     assert view_model.records[0]["identity"] == "320101********1234"
+    assert view_model.records[0]["taskNumber"] == "RLSQ20260819-0001"
+
+
+def test_template_save_dialog_has_a_default_filename(tmp_path: Path) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+
+    assert application is not None
+    assert view_model.templateDefaultUrl.fileName() == "单位权益单导入模板.xlsx"
+
+
+def test_manual_erp_file_selection_validates_before_opening_confirmation(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    pdf = tmp_path / "单位权益单.pdf"
+    pdf.write_bytes(b"%PDF-1.7\ncontent\n%%EOF")
+    ready: list[bool] = []
+    view_model.erpFileReady.connect(lambda: ready.append(True))
+
+    view_model.selectErpUploadFile(QUrl.fromLocalFile(str(pdf)))
+
+    assert application is not None
+    assert view_model.erpFileSelected
+    assert view_model.erpFileName == "单位权益单.pdf"
+    assert view_model.erpFileDetails.startswith("PDF · ")
+    assert view_model.erpUploadStatus == "文件校验通过，请填写任务编号"
+    assert ready == [True]
 
 
 def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     view_model = _view_model(tmp_path)
     engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("appBackend", view_model)
     engine.setInitialProperties({"backend": view_model})
     qml_file = Path("src/ehrm/gui/qml/Main.qml").resolve()
 
@@ -129,3 +159,77 @@ def test_cancelled_result_is_presented_separately_from_failures(
     assert view_model.statusText == "任务已停止：成功 1，未处理 1，其他失败 0"
     assert messages[0][0] == "任务已停止"
     assert messages[0][1] == "已完成 1 人，未处理 1 人"
+
+
+def test_settings_are_persisted_and_applied_to_automation(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    output = tmp_path / "downloads"
+    output.mkdir()
+    view_model = _view_model(tmp_path)
+
+    view_model.setOutputFolder(QUrl.fromLocalFile(str(output)))
+    view_model.setExportMode("batch")
+    view_model.setBatchSize(30)
+    view_model.setUploadToErp(True)
+    view_model.setOpenOutputFolderAfterRun(True)
+    view_model.setExecutionSpeed("stable")
+    view_model.setNoResultConfirmSeconds(15)
+    view_model.setPreviewDownloadDelayMs(2000)
+    view_model.setDownloadTimeoutSeconds(60)
+
+    assert application is not None
+    assert view_model.outputPath == str(output)
+    assert view_model.exportMode == "batch"
+    assert view_model.batchSize == 30
+    assert view_model.uploadToErp
+    assert view_model.openOutputFolderAfterRun
+    assert view_model.executionSpeed == "stable"
+    assert view_model._settings.rights_statement.step_delay_ms == 1500
+    assert view_model._settings.rights_statement.no_result_confirm_ms == 15_000
+    assert view_model._settings.rights_statement.preview_download_delay_ms == 2000
+    assert view_model._settings.rights_statement.download_timeout_ms == 60_000
+
+    restored = _view_model(tmp_path)
+    assert restored.outputPath == str(output)
+    assert restored.exportMode == "batch"
+    assert restored.batchSize == 30
+    assert restored.uploadToErp
+
+
+def test_erp_password_is_delegated_to_system_credential_store(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+
+    class FakeCredentialStore:
+        saved: tuple[str, str] | None = None
+
+        def load_password(self, username: str) -> str | None:
+            if self.saved is not None and self.saved[0] == username:
+                return self.saved[1]
+            return None
+
+        def save_password(self, username: str, password: str) -> None:
+            self.saved = (username, password)
+
+        def delete_password(self, username: str) -> None:
+            pass
+
+    store = FakeCredentialStore()
+    view_model._credential_store = store
+
+    view_model.saveErpAccount("erp-user", "secret-value")
+
+    assert application is not None
+    assert store.saved == ("erp-user", "secret-value")
+    preferences_path = (
+        view_model._settings.browser.user_data_dir.parent / "preferences.json"
+    )
+    assert "secret-value" not in preferences_path.read_text(encoding="utf-8")
+    assert view_model.erpUsername == "erp-user"
+    assert view_model.erpPasswordStored
+    assert view_model.loadSavedErpPassword("erp-user") == "secret-value"
+    assert view_model.loadSavedErpPassword("another-user") == ""

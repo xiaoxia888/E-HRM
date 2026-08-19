@@ -9,8 +9,8 @@ Rectangle {
     implicitWidth: 210
     implicitHeight: 126
     radius: 9
-    color: "#ffffff"
-    border.color: "#e2e6ec"
+    color: "#f7f9fc"
+    border.color: "#d3dce7"
 
     Row {
         anchors.fill: parent
@@ -47,4 +47,3 @@ Rectangle {
         }
     }
 }
-

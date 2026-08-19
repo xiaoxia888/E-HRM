@@ -14,8 +14,9 @@
 - 一次性脚本由用户登录；桌面工作台在运行期间保持标签页登录状态。
 - 桌面工作台测试入口，在程序生命周期内复用唯一浏览器标签页；
 - 人员查询优先使用身份证作为社会保障号码，姓名仅作为非 Excel 调用的兜底。
+- 权益单下载完成后，可按 Excel 任务编号静默上传至 ERP 并回写结果。
 
-实际智慧人社页面的 URL 和定位器尚未硬编码。需要录制一次真实流程后，将稳定定位器整理到 `config/settings.toml`。
+智慧人社和 ERP 的 URL、定位器及系统级超时统一维护在 `config/settings.toml`。
 
 ## 1. 创建环境
 
@@ -43,13 +44,15 @@ conda activate ehrm
 playwright install chromium
 ```
 
-复制配置样例：
+项目只有一个系统配置入口 `config/settings.toml`，不再使用样例配置和隐式
+Python 默认值。配置按命名空间分为：
 
-```bash
-cp config/settings.example.toml config/settings.toml
-```
+- `[common]`：两个自动化模块真正共用的参数；
+- `[rights_statement.*]`：智慧人社及单位权益单配置；
+- `[erp.*]`：ERP 登录、查询和附件上传配置。
 
-`config/settings.toml`、浏览器资料目录、录制代码和下载文件均已加入 `.gitignore`。
+该文件不保存账号密码或个人下载目录，因此纳入版本控制。浏览器资料目录、
+录制代码和下载文件仍在 `.gitignore` 中。
 
 ## 2. 录制实际流程
 
@@ -127,7 +130,12 @@ ehrm-gui
 - 执行前确认页，明确展示拆分条件、人数和文件数；
 - 执行中可安全停止，保留已下载 PDF，并在结果 Excel 标记未处理人员；
 - Playwright 在单一常驻线程的任务队列中运行，浏览器创建、连续任务和关闭始终位于同一 Python 执行上下文；
-- 预留 ERP 上传、任务记录和系统设置模块入口。
+- 可勾选“下载完成后自动上传至 ERP”，按任务编号匹配申请并静默上传；
+- 独立“上传至 ERP”页面支持选择 PDF、Word、Excel 文件，填写任务编号后确认上传；
+- 系统设置页可维护 ERP 账号、默认下载规则、自动化节奏及运行数据。
+
+ERP 用户名保存在当前用户的应用数据目录，密码由 macOS 钥匙串或 Windows
+凭据管理器保存，不会写入 `config/settings.toml` 或用户偏好文件。
 
 界面层使用 Qt Quick/QML 组件化实现，Python 仅通过
 `DesktopViewModel` 暴露状态和命令。自动化、Excel 校验和业务规则仍保持在
@@ -150,7 +158,7 @@ Python 服务层，便于后续扩展 ERP 页面或调整视觉样式。
 输入文件第一行必须包含以下列，允许存在额外列：
 
 ```text
-单位 | 部门 | 姓名 | 身份证 | 险种 | 开始时间 | 结束时间
+任务编号 | 单位 | 部门 | 姓名 | 身份证 | 险种 | 开始时间 | 结束时间
 ```
 
 身份证列必须设置为文本格式；时间支持 `YYYY-MM`、`YYYYMM`、Excel 日期等常见形式。建议先只校验并查看执行计划：
@@ -172,7 +180,7 @@ python scripts/run_excel_task.py \
   --output ./downloads
 ```
 
-同单位、险种、起止年月的人员合并下载，每批最多50人：
+同任务编号、险种、起止年月的人员合并下载，每批最多50人；单位和部门不参与合并判断：
 
 ```bash
 python scripts/run_excel_task.py \
@@ -182,7 +190,18 @@ python scripts/run_excel_task.py \
   --output ./downloads
 ```
 
-程序不修改输入 Excel。每次运行会在输出目录生成一份带时间戳的结果 Excel，保留原表内容和格式并追加“失败原因”列；查询或下载失败会精确写回对应原始行。`downloads/_runs/` 下仍会生成 JSON 结果清单，只记录 Excel 行号、状态、文件路径和错误，不复制身份证号码。
+下载完成后自动上传 ERP：
+
+```bash
+python scripts/run_excel_task.py \
+  --input ./人员清单.xlsx \
+  --mode batch \
+  --batch-size 50 \
+  --output ./downloads \
+  --upload-erp
+```
+
+程序不修改输入 Excel。每次运行会在输出目录生成一份带时间戳的结果 Excel，保留原表内容和格式并追加“失败原因”“ERP上传结果”“ERP失败原因”列；查询、下载或上传失败会精确写回对应原始行。批量 PDF 只上传一次，上传结果会同步回写到该 PDF 对应的所有人员行。`downloads/_runs/` 下仍会生成 JSON 结果清单，只记录 Excel 行号、状态、文件路径和错误，不复制身份证号码。
 
 系统内部和 JSON 清单使用稳定异常编码流转，例如 `EMPLOYEE_NOT_FOUND`；终端、结果 Excel 和未来前端通过统一异常目录映射为“未查询到符合条件的人员”等中文含义，不直接向用户展示内部编码。
 
@@ -204,6 +223,61 @@ Excel 的身份证列保持必填。页面查询会将其填入“社会保障�
 
 每个新分组开始前会清空右侧历史人员，下载完成后不再清空，因此不会拖慢任务结束。险种、开始年月和结束年月以页面实际显示值为准；页面值已经符合当前 Excel 分组时才跳过选择，用户手动改动页面后也会自动纠正。每次身份证查询只检查左侧候选表格，并校验身份证匹配。预览会等待权益单正文标志出现，无法读取 canvas 正文时改用预览画面稳定性判断，再按 `preview_download_delay_ms` 延迟后点击下载；默认延迟为 1500 毫秒，可在 `config/settings.toml` 中调整为 1000 或 2000。
 
-## 6. 当前适配边界
+## 6. ERP 自动上传联调入口
+
+ERP 模块采用“Playwright 自动登录 + 同一浏览器上下文直接调用接口”的方式：
+
+- 页面原生登录按钮负责执行 `PowerEncode`，不在 Python 中复制加密算法；
+- 在“人力资源事务申请”页面调用网站自己的 `base64swhere()`；
+- 通过 `/Form/GridPageLoad` 查询申请，并对申请编号做二次精确匹配；
+- 对 PDF 做格式检查和 MD5 计算，再执行同名、同内容检查；
+- 通过 `/PowerPlat/Control/File.ashx` 按 2 MiB 分片上传；
+- 最后重新读取附件列表，按业务记录 ID、MD5 和文件大小确认上传结果。
+
+桌面端“上传至 ERP”页面支持以下附件，并会在打开 ERP 前校验文件结构：
+
+- PDF：`.pdf`；
+- Word：`.doc`、`.docx`；
+- Excel：`.xls`、`.xlsx`、`.xlsm`。
+
+选择文件并通过校验后，程序会弹出任务编号确认窗口；确认后在后台静默登录 ERP、精确匹配申请编号并上传附件。
+
+ERP 默认使用无界面 Chromium 静默执行，不显示浏览器窗口。智慧人社的人工安全验证浏览器配置保持不变；需要排查 ERP 页面时，可在 `config/settings.toml` 的 `[erp.browser]` 中临时设置 `headless = false`。
+
+桌面端可在“系统设置 → 账户与连接”中保存 ERP 凭据。命令行联调也可通过
+环境变量提供 ERP 凭据，不要将账号密码写入配置文件：
+
+```bash
+export EHRM_ERP_USERNAME='ERP账号'
+export EHRM_ERP_PASSWORD='ERP密码'
+```
+
+依次验证自动登录、申请查询和 PDF 上传：
+
+```bash
+python scripts/run_erp_upload.py login
+
+python scripts/run_erp_upload.py query RLSQ20260819-0001
+
+python scripts/run_erp_upload.py upload \
+  RLSQ20260819-0001 \
+  /绝对路径/测试权益单.pdf
+```
+
+删除误传附件时必须同时指定申请编号和完整文件名。程序会先展示唯一匹配的附件，并要求再次确认：
+
+```bash
+python scripts/run_erp_upload.py delete \
+  RLSQ20260819-0001 \
+  "单位权益单.pdf"
+```
+
+删除不可恢复。供未来前端确认弹窗调用时可以增加 `--yes` 跳过终端确认，但普通人工操作不要使用该参数。
+
+ERP 使用独立的 `data/erp-browser-profile/`，避免与智慧人社常驻浏览器争用同一资料目录。该目录以及 HAR 文件均包含敏感登录或业务信息，已加入 `.gitignore`。
+
+当前分片字段根据单分片 HAR 及 ERP 的 2 MiB 分片参数实现；正式批量启用前，应分别用一个小于 2 MiB 和一个大于 2 MiB 的脱敏 PDF 做现场验证。
+
+## 7. 当前适配边界
 
 已根据录制结果适配 Ant Design 年月选择、险种下拉框、查询结果转移、预览弹窗和下载事件。姓名输入框与已选人员表格目前仍使用录制所得的相对定位器，第一次连接真实网站时可能需要在 `config/settings.toml` 中做一次小幅调整。

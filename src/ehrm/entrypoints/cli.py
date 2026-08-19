@@ -10,7 +10,7 @@ from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_DOWNLOAD
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.settings import load_settings
+from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.models import RightsStatementQuery
 
 
@@ -19,7 +19,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     download = subparsers.add_parser("download", help="查询并下载单位权益单")
-    download.add_argument("--config", type=Path, default=Path("config/settings.toml"))
+    download.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
     download.add_argument("--start-month", required=True, help="格式 YYYY-MM")
     download.add_argument("--end-month", required=True, help="格式 YYYY-MM")
     download.add_argument("--insurance", required=True, help="险种显示名称")

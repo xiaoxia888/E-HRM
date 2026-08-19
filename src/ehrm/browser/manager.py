@@ -42,8 +42,16 @@ class BrowserManager:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         if self.context is not None:
-            self.context.close()
+            try:
+                self.context.close()
+            except Exception:
+                # Cleanup is best effort. A closed browser must not replace the
+                # original authentication/cancellation error.
+                pass
             self.context = None
         if self._playwright is not None:
-            self._playwright.stop()
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
             self._playwright = None

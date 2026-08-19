@@ -7,7 +7,7 @@ from pathlib import Path
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.settings import load_settings
+from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.excel_loader import RightsStatementExcelLoader
 from ehrm.modules.rights_statement.excel_models import ExcelTaskRequest, ExportMode
 from ehrm.workbench import DesktopWorkbench
@@ -15,7 +15,7 @@ from ehrm.workbench import DesktopWorkbench
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="E-HRM 常驻桌面工作台测试入口")
-    parser.add_argument("--config", type=Path, default=Path("config/settings.toml"))
+    parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--output", type=Path, default=Path("downloads"))
     parser.add_argument("--batch-size", type=int, default=50)
     return parser
@@ -58,23 +58,18 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 condition_counts = Counter(
-                    (
-                        record.unit,
-                        record.insurance_type,
-                        record.start_month,
-                        record.end_month,
-                    )
-                    for record in records
+                    record.group_key for record in records
                 )
                 print("程序从 Excel 读取到的查询条件：")
                 for (
-                    unit,
+                    task_number,
                     insurance,
                     start_month,
                     end_month,
                 ), count in condition_counts.items():
                     print(
-                        f"- {unit}｜{insurance}｜{start_month} 至 {end_month}｜{count} 人"
+                        f"- {task_number}｜{insurance}｜{start_month} 至 "
+                        f"{end_month}｜{count} 人"
                     )
                 print(f"校验通过：{len(records)} 人，预计生成 {len(groups)} 个 PDF")
                 if input("确认执行？[y/N]：").strip().lower() != "y":

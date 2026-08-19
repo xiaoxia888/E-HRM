@@ -196,6 +196,48 @@ class ExcelRightsStatementService:
             manifest_path=manifest,
             result_workbook_path=result_workbook,
             items=tuple(items),
+            erp_uploaded=sum(item.erp_success is True for item in items),
+            erp_failed=sum(item.erp_success is False for item in items),
+        )
+
+    def refresh_artifacts(
+        self,
+        result: ExcelRunResult,
+        source_excel: Path,
+        output_dir: Path,
+        items: list[ItemResult],
+    ) -> ExcelRunResult:
+        """Rewrites result artifacts after the optional ERP upload stage."""
+        ordered = sorted(items, key=lambda item: item.row_number)
+        result_workbook = result.result_workbook_path
+        if result_workbook is not None:
+            try:
+                ResultWorkbookWriter().write(
+                    source_excel,
+                    output_dir,
+                    ordered,
+                    destination=result_workbook,
+                )
+            except Exception:
+                self.logger.exception("回写 ERP 上传结果到 Excel 失败")
+        manifest = self._write_manifest(
+            output_dir,
+            result.mode,
+            ordered,
+            result_workbook,
+            destination=result.manifest_path,
+        )
+        succeeded = sum(item.success for item in ordered)
+        return ExcelRunResult(
+            mode=result.mode,
+            total=len(ordered),
+            succeeded=succeeded,
+            failed=len(ordered) - succeeded,
+            manifest_path=manifest,
+            result_workbook_path=result_workbook,
+            items=tuple(ordered),
+            erp_uploaded=sum(item.erp_success is True for item in ordered),
+            erp_failed=sum(item.erp_success is False for item in ordered),
         )
 
     def _execute_group(
@@ -250,13 +292,14 @@ class ExcelRightsStatementService:
         if mode is ExportMode.INDIVIDUAL:
             target_dir = pdf_root / self._safe(first.unit) / self._safe(first.department)
             filename = (
-                f"{self._safe(first.name)}_{self._safe(first.insurance_type)}_"
+                f"{self._safe(first.task_number)}_{self._safe(first.name)}_"
+                f"{self._safe(first.insurance_type)}_"
                 f"{first.start_month.replace('-', '')}-{first.end_month.replace('-', '')}_权益单.pdf"
             )
         else:
             target_dir = pdf_root / self._safe(first.unit) / "批量"
             filename = (
-                f"{self._safe(first.unit)}_{self._safe(first.insurance_type)}_"
+                f"{self._safe(first.task_number)}_{self._safe(first.insurance_type)}_"
                 f"{first.start_month.replace('-', '')}-{first.end_month.replace('-', '')}_"
                 f"批次{group.sequence}_{len(selected)}人.pdf"
             )
@@ -322,10 +365,11 @@ class ExcelRightsStatementService:
         mode: ExportMode,
         items: list[ItemResult],
         result_workbook: Path | None,
+        destination: Path | None = None,
     ) -> Path:
         run_dir = output_dir / "_runs"
         run_dir.mkdir(parents=True, exist_ok=True)
-        path = run_dir / f"result_{datetime.now():%Y%m%d_%H%M%S}.json"
+        path = destination or run_dir / f"result_{datetime.now():%Y%m%d_%H%M%S}.json"
         payload = {
             "mode": mode.value,
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -339,6 +383,14 @@ class ExcelRightsStatementService:
                     "code": item.code,
                     "message": display_message(item.code, item.message),
                     "file_path": str(item.file_path) if item.file_path else None,
+                    "erp_success": item.erp_success,
+                    "erp_code": item.erp_code,
+                    "erp_message": (
+                        display_message(item.erp_code, item.erp_message)
+                        if item.erp_code
+                        else item.erp_message
+                    ),
+                    "erp_attachment_id": item.erp_attachment_id,
                 }
                 for item in items
             ],

@@ -21,6 +21,7 @@ dev = ["pytest==9.1.1"]
 [project.scripts]
 ehrm = "ehrm.entrypoints.cli:main"
 ehrm-gui = "ehrm.gui.app:main"
+ehrm-erp = "ehrm.entrypoints.erp_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

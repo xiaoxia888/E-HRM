@@ -16,9 +16,19 @@ from ehrm.modules.rights_statement.excel_models import (
 )
 
 
-REQUIRED_HEADERS = ("单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间")
+REQUIRED_HEADERS = (
+    "单位",
+    "部门",
+    "姓名",
+    "身份证",
+    "险种",
+    "开始时间",
+    "结束时间",
+    "任务编号",
+)
 _IDENTITY_PATTERN = re.compile(r"^(?:\d{15}|\d{17}[0-9Xx])$")
 _MONTH_PATTERN = re.compile(r"^(\d{4})[-/.年]?(0?[1-9]|1[0-2])(?:月)?$")
+_TASK_NUMBER_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _INSURANCE_OPTIONS = {"养老", "工伤", "失业"}
 
 
@@ -57,7 +67,7 @@ class RightsStatementExcelLoader:
                 try:
                     record = self._parse_row(row_number, values, indexes)
                     dedupe_key = (
-                        record.unit,
+                        record.task_number,
                         record.identity_number,
                         record.insurance_type,
                         record.start_month,
@@ -128,6 +138,9 @@ class RightsStatementExcelLoader:
             raise ValueError("险种只能选择养老、工伤或失业")
         start = self._month(value("开始时间"), "开始时间")
         end = self._month(value("结束时间"), "结束时间")
+        task_number = self._required_text(value("任务编号"), "任务编号")
+        if not _TASK_NUMBER_PATTERN.fullmatch(task_number):
+            raise ValueError("任务编号只能包含字母、数字、下划线和短横线")
         if start > end:
             raise ValueError("开始时间不能晚于结束时间")
         return EmployeeRecord(
@@ -139,6 +152,7 @@ class RightsStatementExcelLoader:
             insurance_type=insurance,
             start_month=start,
             end_month=end,
+            task_number=task_number,
         )
 
     @staticmethod

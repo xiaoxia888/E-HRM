@@ -1,0 +1,107 @@
+# E-HRM 唯一系统配置
+#
+# 只维护系统级规则，不保存账号密码、下载目录等个人数据。
+# 时间字段以 _ms 结尾时单位为毫秒，以 _seconds 结尾时单位为秒。
+
+[common]
+# 智慧人社和 ERP 共用的 Playwright 单次操作超时。
+action_timeout_ms = 30000
+
+# -----------------------------------------------------------------------------
+# 智慧人社 / 单位权益单模块
+# -----------------------------------------------------------------------------
+
+[rights_statement.browser]
+# 智慧人社需要人工安全验证，因此始终使用可见浏览器。
+headless = false
+silent_session_check = false
+slow_mo_ms = 100
+navigation_timeout_ms = 60000
+manual_login_timeout_seconds = 300
+
+# 相对于操作系统应用数据目录解析，不会写入程序安装目录。
+user_data_dir = "data/browser-profile"
+storage_state_path = "data/session-state.json"
+
+[rights_statement.site]
+login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
+page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
+
+[rights_statement.selectors.login]
+unit_login_tab = "text=单位登录"
+# 账号和安全验证由用户在浏览器中完成，这三项保持为空。
+username = ""
+password = ""
+submit = ""
+authenticated_marker = "text=省本级"
+
+[rights_statement.selectors.navigation]
+province_entry = "text=省本级"
+city_entry = "text=南京"
+page_menu = "text=单位权益单"
+
+[rights_statement.selectors.page]
+start_month = 'role=textbox[name="选择年月"] >> nth=0'
+end_month = 'role=textbox[name="选择年月"] >> nth=1'
+insurance_type = "role=combobox"
+insurance_option_template = 'role=option[name="{value}"]'
+social_security_number = "role=textbox >> nth=4"
+employee_name = "role=textbox >> nth=5"
+query_button = 'role=button[name="查 询"]'
+results_ready = "role=row"
+no_results = "text=暂无数据"
+loading_indicator = ".ant-spin-spinning:visible"
+
+# 权益单业务阶段超时和动作缓冲。
+query_result_timeout_ms = 45000
+no_result_confirm_ms = 10000
+transfer_result_timeout_ms = 10000
+step_delay_ms = 1000
+preview_ready_timeout_ms = 30000
+preview_download_delay_ms = 1500
+download_timeout_ms = 20000
+
+# 官网页面结构定位器，仅由开发人员维护。
+calendar_popup = ".ant-calendar:visible"
+candidate_table = ""
+selected_table = "div:nth-child(3) > .ant-table-wrapper"
+transfer_left = ".arrowLeft"
+transfer_back = ".arrowRight"
+generate_button = 'role=button[name="预览权益单"]'
+download_ready = "text=缴费月数"
+download_button = 'role=button[name="图标: download 下载"]'
+preview_dialog = ".ant-modal:visible"
+close_preview = 'role=button[name="Close"]'
+
+# -----------------------------------------------------------------------------
+# ERP 附件模块
+# -----------------------------------------------------------------------------
+
+[erp.browser]
+# ERP 无验证码，默认无界面静默执行。
+headless = true
+user_data_dir = "data/erp-browser-profile"
+login_timeout_ms = 60000
+request_timeout_ms = 60000
+
+[erp.site]
+base_url = "https://erp.njncc.com"
+login_url = "https://erp.njncc.com/"
+application_url = "https://erp.njncc.com/Form/EditForm/b6399519-9db6-4643-869a-0d329fdea85b/"
+
+[erp.upload]
+# ERP 附件业务常量，普通用户不应在设置页修改。
+business_keyword = "NCC_HumProblem"
+library_id = "98005811-fdd1-4449-a391-245543f32da5"
+storage_type = "ftp"
+chunk_size_bytes = 2097152
+
+[erp.credentials]
+# 环境变量名称，不是账号密码本身。
+username_env = "EHRM_ERP_USERNAME"
+password_env = "EHRM_ERP_PASSWORD"
+
+[erp.selectors.login]
+username = 'input[name="usercode"], #usercode'
+password = 'input[name="userpass"], #userpass, input[type="password"]'
+submit = 'button:has-text("登录"), button:has-text("登 录"), input[type="submit"]'

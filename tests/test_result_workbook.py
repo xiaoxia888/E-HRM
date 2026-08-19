@@ -36,6 +36,9 @@ def test_appends_row_level_failure_reason_without_changing_source(
         assert exported.active.cell(1, 3).value == "失败原因"
         assert exported.active.cell(2, 3).value in (None, "")
         assert exported.active.cell(3, 3).value == "未查询到符合条件的人员"
+        assert exported.active.cell(1, 4).value == "ERP上传结果"
+        assert exported.active.cell(2, 4).value == "未执行"
+        assert exported.active.cell(1, 5).value == "ERP失败原因"
     finally:
         original.close()
         exported.close()
