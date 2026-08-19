@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+
+# Browser/network captures may contain credentials, tokens and business data.
+*.har
+
+# Login state and personal data. Never commit these.
+data/browser-profile/
+data/codegen-profile/
+data/session-state.json
+auth.json
+
+# Runtime artifacts
+downloads/
+logs/
+artifacts/
+screenshots/
+
+# Local configuration may contain private URLs or paths
+config/settings.toml

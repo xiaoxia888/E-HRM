@@ -1,0 +1,11 @@
+name: ehrm
+
+channels:
+  - conda-forge
+
+# 在已经通过 environment.backend.yml 创建的 ehrm 环境上增量安装。
+dependencies:
+  - pip
+  - pip:
+      - -r requirements/frontend.lock.txt
+

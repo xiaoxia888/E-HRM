@@ -1,0 +1,20 @@
+# E-HRM 用户可见异常文案
+# 左侧键是系统内部稳定编码，请勿修改或删除；右侧中文可以按业务要求调整。
+# 系统日志和 JSON 仍保留编码，终端、结果 Excel 和未来前端展示这里的中文。
+
+[error_messages]
+SUCCESS = "处理成功"
+EHRM_ERROR = "业务处理失败"
+CONFIGURATION_ERROR = "系统配置错误"
+QUERY_VALIDATION_ERROR = "查询条件校验失败"
+EXCEL_VALIDATION_ERROR = "Excel 数据校验失败"
+SECURITY_VERIFICATION_REQUIRED = "需要完成安全验证"
+AUTHENTICATION_FAILED = "登录失败或登录状态已失效"
+EMPLOYEE_NOT_FOUND = "未查询到符合条件的人员"
+QUERY_RESULT_TIMEOUT = "查询结果加载超时"
+MULTIPLE_EMPLOYEE_MATCHED = "查询到多个匹配人员，无法唯一确认"
+WEBSITE_STRUCTURE_CHANGED = "网站页面结构发生变化，自动化操作失败"
+DOWNLOAD_TIMEOUT = "权益单预览或下载超时"
+FILE_VALIDATION_ERROR = "下载文件不完整或格式无效"
+TASK_CANCELLED = "用户提前停止任务"
+UNEXPECTED_ERROR = "自动化执行发生未知错误"

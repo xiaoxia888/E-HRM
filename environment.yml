@@ -1,0 +1,13 @@
+name: ehrm
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11.15
+  - pip
+  - pip:
+      - -r requirements/backend.lock.txt
+      - -r requirements/frontend.lock.txt
+      - -r requirements/dev.lock.txt
+      - -e .

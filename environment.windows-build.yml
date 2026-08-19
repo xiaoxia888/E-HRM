@@ -1,0 +1,11 @@
+name: ehrm
+
+channels:
+  - conda-forge
+
+# 仅在 Windows 打包机上增量安装，不需要在 macOS 开发机安装。
+dependencies:
+  - pip
+  - pip:
+      - -r requirements/windows-build.lock.txt
+

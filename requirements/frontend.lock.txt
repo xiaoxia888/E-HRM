@@ -1,0 +1,3 @@
+# 跨平台桌面 GUI。macOS 开发和 Windows 运行使用相同版本。
+PySide6==6.10.1
+

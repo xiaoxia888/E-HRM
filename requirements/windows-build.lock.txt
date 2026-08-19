@@ -1,0 +1,3 @@
+# 只能在 Windows 上生成 Windows EXE。
+PyInstaller==6.21.0
+

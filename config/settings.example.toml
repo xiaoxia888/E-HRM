@@ -1,0 +1,141 @@
+# E-HRM 运行配置模板
+# 复制为 config/settings.toml 后使用。
+# 时间参数名称以 _ms 结尾时单位为毫秒；以 _seconds 结尾时单位为秒。
+# selector/定位器使用 Playwright selector 语法。官网页面变化时优先修改本文件。
+
+[browser]
+# 普通浏览器启动模式。false=显示窗口，true=无界面。
+# Excel 任务启用 silent_session_check 后，会单独用无界面模式检查会话；失效时仍会显示登录窗口。
+headless = false
+
+# 该网站登录状态与标签页绑定，跨进程静默恢复通常无效，因此默认关闭。
+# true=仍尝试无界面检查；false=一次性脚本直接打开可见浏览器。桌面工作台始终复用原标签页。
+silent_session_check = false
+
+# Playwright 每个底层操作附加的延迟，单位毫秒。用于让浏览器动作更易观察，不代替页面状态等待。
+slow_mo_ms = 100
+
+# 单个点击、填写、定位器等待的默认最长时间，单位毫秒。
+action_timeout_ms = 30000
+
+# 页面跳转的默认最长时间，单位毫秒。
+navigation_timeout_ms = 60000
+
+# 弹出可见浏览器后，等待用户完成登录和安全验证的最长时间，单位秒。
+manual_login_timeout_seconds = 300
+
+# Playwright 专用浏览器资料目录，保存 Cookie、LocalStorage 等。不要与日常 Chrome 配置共用。
+# 此目录含登录凭据，不要上传、提交 Git 或发送给他人。
+user_data_dir = "data/browser-profile"
+
+# 显式保存的 Playwright Cookie 快照，文件权限会自动设置为 600。
+# 该网站还有标签页级状态，因此此快照不能保证免登录；文件仍等同敏感凭据。
+storage_state_path = "data/session-state.json"
+
+[site]
+# 人工登录入口。
+login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
+
+# 登录状态检查及单位权益单直达地址。有效会话应能访问，否则通常会跳回登录页。
+# 若以后直达地址失效，可留空，程序将使用 [selectors.navigation] 逐级进入。
+rights_statement_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
+
+[selectors.login]
+# 登录页“单位登录”页签。
+unit_login_tab = "text=单位登录"
+
+# 以下三项是账号输入框、密码输入框和提交按钮的“定位器”，不是账号密码本身。
+# 当前保持为空表示账号和安全验证全部由用户手动完成，切勿在这里填写真实凭据。
+username = ""
+password = ""
+submit = ""
+
+# 人工登录成功后可见的标志，用于判断用户已经完成安全验证。
+authenticated_marker = "text=省本级"
+
+[selectors.navigation]
+# rights_statement_url 留空时使用的备用导航步骤。
+# 登录后依次选择省本级、南京，再进入单位权益单。
+province_entry = "text=省本级"
+city_entry = "text=南京"
+rights_statement_menu = "text=单位权益单"
+
+[selectors.rights_statement]
+# 两个“选择年月”输入框。nth=0 为开始年月，nth=1 为结束年月。
+start_month = "role=textbox[name=\"选择年月\"] >> nth=0"
+end_month = "role=textbox[name=\"选择年月\"] >> nth=1"
+
+# 险种下拉框及选项模板。{value} 运行时会替换为养老、工伤等网站显示值。
+insurance_type = "role=combobox"
+insurance_option_template = "role=option[name=\"{value}\"]"
+
+# 社会保障号码输入框。查询时优先填写 Excel 的身份证号码。
+# 当前来自录制页面的第5个 textbox；若官网补充了可访问名称，应替换为语义定位器。
+social_security_number = "role=textbox >> nth=4"
+
+# 姓名输入框。当前来自录制结果的第6个 textbox，是最可能因官网改版而需要调整的定位器。
+employee_name = "role=textbox >> nth=5"
+
+# 查询按钮、结果行和真正无数据时的提示。
+query_button = "role=button[name=\"查 询\"]"
+# 预留的通用结果就绪定位器；当前人员匹配逻辑会进一步按姓名和身份证筛选具体行。
+results_ready = "role=row"
+no_results = "text=暂无数据"
+
+# Ant Design 正在加载的标志。存在时程序不会读取表格结果。
+loading_indicator = ".ant-spin-spinning:visible"
+
+# 查询结果最长等待时间，单位毫秒。超过后返回 QUERY_RESULT_TIMEOUT。
+query_result_timeout_ms = 45000
+
+# “暂无数据”的确认时间，单位毫秒。
+# 查询后即使旧表格暂时显示暂无数据，也至少等待该时间才判定人员不存在。
+no_result_confirm_ms = 20000
+
+# 勾选并左移人员后，等待其出现在右侧已选列表的最长时间，单位毫秒。
+transfer_result_timeout_ms = 15000
+
+# 关键业务动作之间的最小缓冲，单位毫秒。
+# 作用于险种、年份、月份、查询、勾选、左移、预览等操作；批量越大，总耗时越长。
+step_delay_ms = 1000
+
+# 打开预览后，等待权益单内容标志出现的最长时间，单位毫秒。
+# 实际文字若位于 iframe/canvas 中不可读取，程序会无闪烁地检测预览结构稳定，最多尝试10秒。
+preview_ready_timeout_ms = 30000
+
+# 权益单内容出现后，到点击下载按钮之间的缓冲，单位毫秒。1500 表示1.5秒。
+preview_download_delay_ms = 1500
+
+# 点击下载后，等待浏览器产生 Playwright download 事件的最长时间，单位毫秒。
+download_timeout_ms = 60000
+
+# 当前可见的 Ant Design 年月选择弹层。
+calendar_popup = ".ant-calendar:visible"
+
+# 左侧查询结果表格范围。留空表示从整个页面查找姓名对应的数据行。
+# 若页面出现其他同名表格行，可通过首次联调得到稳定容器后填写。
+candidate_table = ""
+
+# 右侧“需打印单位权益单人员列表”。用于确认左移完成及全选已选人员。
+# 当前定位器来自录制结果，是另一个可能需要随官网结构调整的参数。
+selected_table = "div:nth-child(3) > .ant-table-wrapper"
+
+# 将左侧已查询人员移动到右侧已选列表的左箭头。
+transfer_left = ".arrowLeft"
+
+# 每个新分组开始前用于清空右侧历史人员的反向箭头。
+# 当前类名来自早期推测；不可用时程序会根据左右表格间的箭头位置自动识别“<”。
+transfer_back = ".arrowRight"
+
+# 打开单位权益单预览窗口的按钮。
+generate_button = "role=button[name=\"预览权益单\"]"
+
+# 预览文档就绪标志。程序会同时从主页面及 iframe 查找；canvas 文字可能无法定位。
+download_ready = "text=缴费月数"
+
+# 下载按钮备用定位器。程序会优先在当前预览弹窗内匹配名称以“下载”结尾的按钮。
+download_button = "role=button[name=\"图标: download 下载\"]"
+
+# 当前可见的预览弹窗和关闭按钮。
+preview_dialog = ".ant-modal:visible"
+close_preview = "role=button[name=\"Close\"]"

@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import logging
+from queue import Queue
+from threading import Event, Lock
+
+from PySide6.QtCore import QThread, Signal
+
+from ehrm.core.error_catalog import display_message
+from ehrm.core.exceptions import TaskCancelledError
+from ehrm.core.settings import AppSettings
+from ehrm.modules.rights_statement.excel_models import ExcelTaskRequest
+from ehrm.modules.rights_statement.excel_service import ExcelRightsStatementService
+from ehrm.workbench import DesktopWorkbench
+
+
+class AutomationWorker(QThread):
+    """Runs every persistent Playwright call in one Python thread context.
+
+    Playwright's synchronous API uses greenlets internally. Keeping a browser
+    alive across separate QObject queued-slot callbacks can resume those
+    greenlets from different Python contexts and crash the interpreter. This
+    thread enters ``run`` once and consumes all desktop tasks from a queue, so
+    browser creation, repeated jobs and shutdown share one execution context.
+    """
+
+    status_changed = Signal(str)
+    completed = Signal(object)
+    failed = Signal(str)
+
+    _STOP = object()
+
+    def __init__(self, settings: AppSettings, logger: logging.Logger) -> None:
+        super().__init__()
+        self._settings = settings
+        self._logger = logger
+        self._requests: Queue[ExcelTaskRequest | object] = Queue()
+        self._state_lock = Lock()
+        self._accepting = True
+        self._task_active = False
+        self._cancel_requested = Event()
+
+    def submit(self, request: ExcelTaskRequest) -> bool:
+        """Queues one request without invoking Playwright on the GUI thread."""
+        with self._state_lock:
+            if not self._accepting:
+                return False
+            if self._task_active:
+                return False
+            self._task_active = True
+            self._cancel_requested.clear()
+            self._requests.put(request)
+            return True
+
+    def cancel_current(self) -> bool:
+        """Requests cooperative cancellation at the next safe checkpoint."""
+        with self._state_lock:
+            if not self._task_active:
+                return False
+            self._cancel_requested.set()
+            return True
+
+    def shutdown(self) -> None:
+        """Stops after the active request; the GUI prevents closing mid-task."""
+        with self._state_lock:
+            if not self._accepting:
+                return
+            self._accepting = False
+            self._requests.put(self._STOP)
+
+    def run(self) -> None:
+        workbench: DesktopWorkbench | None = None
+        try:
+            while True:
+                request = self._requests.get()
+                if request is self._STOP:
+                    break
+                try:
+                    if workbench is None:
+                        self.status_changed.emit("等待登录和安全验证")
+                        workbench = DesktopWorkbench(
+                            self._settings,
+                            self._logger,
+                            self.status_changed.emit,
+                            self._cancel_requested.is_set,
+                        )
+                        workbench.start()
+                    self.status_changed.emit("正在自动查询并下载权益单")
+                    result = workbench.run(request)
+                    self._logger.info("自动化任务已完成，正在通知桌面界面")
+                    self.completed.emit(result)
+                except TaskCancelledError:
+                    self._logger.info("任务在登录或页面恢复阶段被用户停止")
+                    result = ExcelRightsStatementService(
+                        self._settings,
+                        self._logger,
+                    ).cancelled_result(
+                        list(request.groups),
+                        request.mode,
+                        request.output_dir,
+                        request.source_excel,
+                    )
+                    self.completed.emit(result)
+                except Exception as exc:
+                    self._logger.exception("桌面端自动化任务失败")
+                    code = getattr(exc, "code", "UNEXPECTED_ERROR")
+                    message = getattr(exc, "message", str(exc))
+                    self.failed.emit(display_message(code, message))
+                    if workbench is not None:
+                        try:
+                            workbench.stop()
+                        except Exception:
+                            self._logger.exception("重置异常工作台失败")
+                        workbench = None
+                finally:
+                    with self._state_lock:
+                        self._task_active = False
+                    self._cancel_requested.clear()
+        finally:
+            with self._state_lock:
+                self._accepting = False
+            if workbench is not None:
+                try:
+                    workbench.stop()
+                except Exception:
+                    self._logger.exception("关闭桌面工作台浏览器失败")

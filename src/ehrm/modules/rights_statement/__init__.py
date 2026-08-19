@@ -1,0 +1,2 @@
+"""Unit rights statement automation."""
+
