@@ -517,12 +517,12 @@ Item {
                                 BatchSizeControl {
                                     from: 3
                                     to: 60
+                                    unit: "秒"
                                     value: appBackend.noResultConfirmSeconds
                                     onValueEdited: function(newValue) {
                                         appBackend.setNoResultConfirmSeconds(newValue)
                                     }
                                 }
-                                Text { text: "秒"; color: page.secondaryColor; font.pixelSize: 13 }
                             }
                             SettingRow {
                                 Layout.fillWidth: true
@@ -531,12 +531,12 @@ Item {
                                 BatchSizeControl {
                                     from: 0
                                     to: 5000
+                                    unit: "毫秒"
                                     value: appBackend.previewDownloadDelayMs
                                     onValueEdited: function(newValue) {
                                         appBackend.setPreviewDownloadDelayMs(newValue)
                                     }
                                 }
-                                Text { text: "毫秒"; color: page.secondaryColor; font.pixelSize: 13 }
                             }
                             SettingRow {
                                 Layout.fillWidth: true
@@ -545,12 +545,12 @@ Item {
                                 BatchSizeControl {
                                     from: 5
                                     to: 180
+                                    unit: "秒"
                                     value: appBackend.downloadTimeoutSeconds
                                     onValueEdited: function(newValue) {
                                         appBackend.setDownloadTimeoutSeconds(newValue)
                                     }
                                 }
-                                Text { text: "秒"; color: page.secondaryColor; font.pixelSize: 13 }
                             }
                             Item { Layout.fillHeight: true }
                         }

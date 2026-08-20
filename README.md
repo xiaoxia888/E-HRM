@@ -1,5 +1,10 @@
 # E-HRM 首版
 
+环境初始化与运行文档：
+
+- [macOS 环境初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
+- [Windows 环境初始化与运行](docs/WINDOWS_SETUP_AND_RUN.md)
+
 当前版本实现了单位权益单自动化的通用骨架：
 
 - Playwright 持久化浏览器会话；

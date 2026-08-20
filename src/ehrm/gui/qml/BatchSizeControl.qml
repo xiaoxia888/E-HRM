@@ -6,6 +6,7 @@ Rectangle {
     property int value: 50
     property int from: 1
     property int to: 100
+    property string unit: "人"
     signal valueEdited(int value)
 
     implicitWidth: 170
@@ -66,7 +67,7 @@ Rectangle {
                 spacing: 5
                 TextInput {
                     id: editor
-                    width: 39
+                    width: control.unit === "毫秒" ? 52 : 39
                     text: control.value.toString()
                     enabled: control.enabled
                     color: "#202632"
@@ -83,7 +84,7 @@ Rectangle {
                     }
                 }
                 Text {
-                    text: "人"
+                    text: control.unit
                     color: "#596273"
                     font.pixelSize: 14
                 }
