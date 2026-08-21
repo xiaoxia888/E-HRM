@@ -10,17 +10,21 @@ Item {
     id: page
     required property var backend
     property int categoryIndex: 0
-    onCategoryIndexChanged: {
+
+    function resetErpAccountEditor() {
+        erpUsernameField.text = appBackend.erpUsername
+        erpPasswordField.text = ""
         erpPasswordField.revealPassword = false
         erpPasswordField.inputItem.focus = false
         page.forceActiveFocus()
     }
+
+    onCategoryIndexChanged: {
+        resetErpAccountEditor()
+    }
     onVisibleChanged: {
-        if (!visible) {
-            erpPasswordField.revealPassword = false
-            erpPasswordField.inputItem.focus = false
-            page.forceActiveFocus()
-        }
+        if (!visible)
+            resetErpAccountEditor()
     }
 
     readonly property color titleColor: "#1d2939"
@@ -122,6 +126,125 @@ Item {
         }
     }
 
+    component ModelRadioCard: Rectangle {
+        id: modelCard
+        property bool selected: false
+        property string title: ""
+        property string subtitle: ""
+        property string description: ""
+        signal chosen()
+
+        implicitHeight: 112
+        radius: 9
+        color: selected ? "#eef6ff" : "#ffffff"
+        border.width: selected ? 2 : 1
+        border.color: selected ? page.blue : page.borderColor
+        opacity: enabled ? 1 : 0.55
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 14
+            Rectangle {
+                Layout.preferredWidth: 22
+                Layout.preferredHeight: 22
+                radius: 11
+                color: "#ffffff"
+                border.width: modelCard.selected ? 2 : 1
+                border.color: modelCard.selected ? page.blue : "#aebbc9"
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 10
+                    height: 10
+                    radius: 5
+                    visible: modelCard.selected
+                    color: page.blue
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                Text {
+                    Layout.fillWidth: true
+                    text: modelCard.title
+                    color: page.titleColor
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: modelCard.subtitle
+                    color: page.blue
+                    font.pixelSize: 13
+                    font.family: "Menlo"
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: modelCard.description
+                    color: page.secondaryColor
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+            }
+        }
+        MouseArea {
+            anchors.fill: parent
+            enabled: modelCard.enabled
+            hoverEnabled: true
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: modelCard.chosen()
+        }
+    }
+
+    component CompactRadio: Rectangle {
+        id: radioChoice
+        property bool selected: false
+        property string text: ""
+        signal chosen()
+
+        implicitWidth: 112
+        implicitHeight: 40
+        radius: 7
+        color: selected ? "#e8f2ff" : "#ffffff"
+        border.width: selected ? 2 : 1
+        border.color: selected ? page.blue : page.borderColor
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 8
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 17
+                height: 17
+                radius: 9
+                color: "#ffffff"
+                border.width: radioChoice.selected ? 2 : 1
+                border.color: radioChoice.selected ? page.blue : "#aebbc9"
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 7
+                    height: 7
+                    radius: 4
+                    visible: radioChoice.selected
+                    color: page.blue
+                }
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: radioChoice.text
+                color: radioChoice.selected ? page.blue : page.bodyColor
+                font.pixelSize: 13
+                font.weight: radioChoice.selected ? Font.DemiBold : Font.Normal
+            }
+        }
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: radioChoice.chosen()
+        }
+    }
+
     component SettingRow: Rectangle {
         default property alias content: rowContent.data
         property string title: ""
@@ -160,18 +283,43 @@ Item {
         }
     }
 
+    component SettingsPane: ScrollView {
+        id: pane
+        default property alias paneContent: contentColumn.data
+        property int contentSpacing: 16
+        property int contentMargin: page.height < 700 ? 18 : 30
+
+        clip: true
+        contentWidth: availableWidth
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+        Item {
+            width: pane.availableWidth
+            height: contentColumn.implicitHeight + pane.contentMargin * 2
+
+            ColumnLayout {
+                id: contentColumn
+                x: pane.contentMargin
+                y: pane.contentMargin
+                width: parent.width - pane.contentMargin * 2
+                spacing: pane.contentSpacing
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 105
+            Layout.preferredHeight: page.height < 700 ? 82 : 105
             color: "#f9fbfd"
             border.color: "#d6dde7"
             Column {
                 anchors.left: parent.left
-                anchors.leftMargin: 32
+                anchors.leftMargin: page.width < 1000 ? 18 : 32
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
                 Text {
@@ -181,7 +329,7 @@ Item {
                     font.weight: Font.Bold
                 }
                 Text {
-                    text: "管理账号连接、下载规则与自动化参数"
+                    text: "管理账号连接、模型、下载规则与自动化参数"
                     color: page.secondaryColor
                     font.pixelSize: 14
                 }
@@ -191,8 +339,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 24
-            Layout.topMargin: 20
+            Layout.margins: page.height < 700 ? 12 : 24
+            Layout.topMargin: page.height < 700 ? 10 : 20
             radius: 11
             color: "#ffffff"
             border.color: "#d5dee9"
@@ -202,7 +350,7 @@ Item {
                 spacing: 0
 
                 Rectangle {
-                    Layout.preferredWidth: 242
+                    Layout.preferredWidth: page.width < 1050 ? 190 : 242
                     Layout.fillHeight: true
                     color: "#f7f9fc"
                     radius: 11
@@ -232,6 +380,7 @@ Item {
                                 "账户与连接",
                                 "下载与任务",
                                 "自动化设置",
+                                "模型配置",
                                 "系统维护",
                                 "关于软件"
                             ]
@@ -281,11 +430,8 @@ Item {
                     currentIndex: page.categoryIndex
 
                     // 账户与连接
-                    Item {
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 30
-                            spacing: 18
+                    SettingsPane {
+                        contentSpacing: 18
 
                             SectionTitle {
                                 title: "ERP 账号"
@@ -398,16 +544,11 @@ Item {
                                     onClicked: appBackend.clearErpLoginState()
                                 }
                             }
-                            Item { Layout.fillHeight: true }
-                        }
                     }
 
                     // 下载与任务
-                    Item {
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 30
-                            spacing: 16
+                    SettingsPane {
+                        contentSpacing: 16
                             SectionTitle {
                                 title: "下载与任务"
                                 description: "设置默认保存位置和权益单生成规则"
@@ -476,16 +617,11 @@ Item {
                                     }
                                 }
                             }
-                            Item { Layout.fillHeight: true }
-                        }
                     }
 
                     // 自动化设置
-                    Item {
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 30
-                            spacing: 16
+                    SettingsPane {
+                        contentSpacing: 16
                             SectionTitle {
                                 title: "自动化设置"
                                 description: "根据网络和页面响应速度调整操作节奏"
@@ -552,16 +688,171 @@ Item {
                                     }
                                 }
                             }
-                            Item { Layout.fillHeight: true }
-                        }
+                    }
+
+                    // 模型配置
+                    SettingsPane {
+                        contentSpacing: 16
+                            SectionTitle {
+                                title: "模型配置"
+                                description: "选择 ERP 申请解析使用的本地大模型"
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                Repeater {
+                                    model: appBackend.aiModelOptions
+                                    delegate: ModelRadioCard {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        selected: appBackend.aiModelProfile === modelData.value
+                                        title: modelData.label
+                                        subtitle: modelData.ollamaName
+                                        description: "运行上下文 " + modelData.numCtx
+                                                     + " · 最大输出 " + modelData.numPredict
+                                        enabled: !appBackend.erpTaskExtractionRunning
+                                        onChosen: appBackend.setAiModelProfile(modelData.value)
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 226
+                                radius: 9
+                                color: "#fbfcfe"
+                                border.color: page.borderColor
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 20
+                                    spacing: 14
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "当前模型参数"
+                                            color: page.titleColor
+                                            font.pixelSize: 17
+                                            font.weight: Font.DemiBold
+                                        }
+                                        Rectangle {
+                                            Layout.preferredWidth: 72
+                                            Layout.preferredHeight: 26
+                                            radius: 13
+                                            color: "#e8f7ef"
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "已启用"
+                                                color: "#12834a"
+                                                font.pixelSize: 12
+                                                font.weight: Font.DemiBold
+                                            }
+                                        }
+                                    }
+
+                                    GridLayout {
+                                        Layout.fillWidth: true
+                                        columns: 2
+                                        columnSpacing: 12
+                                        rowSpacing: 10
+                                        Repeater {
+                                            model: [
+                                                {
+                                                    "label": "Ollama 模型标识",
+                                                    "value": appBackend.aiModelDetails.ollamaName
+                                                },
+                                                {
+                                                    "label": "运行上下文",
+                                                    "value": appBackend.aiModelDetails.numCtx + " tokens"
+                                                },
+                                                {
+                                                    "label": "最大输出长度",
+                                                    "value": appBackend.aiModelDetails.numPredict + " tokens"
+                                                },
+                                                {
+                                                    "label": "请求超时 / 保持加载",
+                                                    "value": appBackend.aiModelDetails.timeoutSeconds
+                                                             + " 秒 / "
+                                                             + appBackend.aiModelDetails.keepAlive
+                                                }
+                                            ]
+                                            delegate: Rectangle {
+                                                id: detailTile
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 62
+                                                radius: 7
+                                                color: "#ffffff"
+                                                border.color: "#e1e7ef"
+                                                Column {
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.leftMargin: 14
+                                                    anchors.rightMargin: 14
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    spacing: 4
+                                                    Text {
+                                                        text: detailTile.modelData.label
+                                                        color: page.secondaryColor
+                                                        font.pixelSize: 11
+                                                    }
+                                                    Text {
+                                                        width: parent.width
+                                                        text: detailTile.modelData.value
+                                                        color: page.bodyColor
+                                                        font.pixelSize: 13
+                                                        font.weight: Font.Medium
+                                                        elide: Text.ElideRight
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            SettingRow {
+                                Layout.fillWidth: true
+                                implicitHeight: appBackend.aiReasoningOptions.length > 2 ? 104 : 78
+                                title: "推理模式"
+                                description: "可选项由当前模型档案决定"
+                                Grid {
+                                    columns: 2
+                                    spacing: 7
+                                    Repeater {
+                                        model: appBackend.aiReasoningOptions
+                                        delegate: CompactRadio {
+                                            required property var modelData
+                                            selected: appBackend.aiReasoningMode === modelData.value
+                                            text: modelData.label
+                                            onChosen: appBackend.setAiReasoningMode(modelData.value)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 54
+                                radius: 8
+                                color: "#eef6ff"
+                                border.color: "#cfe2fa"
+                                Text {
+                                    anchors.fill: parent
+                                    anchors.margins: 15
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: "模型选择会自动保存，并从下一次 ERP 申请解析开始生效。"
+                                    color: "#315f91"
+                                    font.pixelSize: 13
+                                }
+                            }
                     }
 
                     // 系统维护
-                    Item {
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 30
-                            spacing: 16
+                    SettingsPane {
+                        contentSpacing: 16
                             SectionTitle {
                                 title: "系统维护"
                                 description: "查看运行日志并清理可重新生成的临时数据"
@@ -584,16 +875,11 @@ Item {
                                     onClicked: appBackend.clearTemporaryFiles()
                                 }
                             }
-                            Item { Layout.fillHeight: true }
-                        }
                     }
 
                     // 关于软件
-                    Item {
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 30
-                            spacing: 18
+                    SettingsPane {
+                        contentSpacing: 18
                             SectionTitle {
                                 title: "关于软件"
                                 description: "信息化人力桌面工作台"
@@ -642,8 +928,6 @@ Item {
                                     }
                                 }
                             }
-                            Item { Layout.fillHeight: true }
-                        }
                     }
                 }
             }
@@ -653,9 +937,7 @@ Item {
     Connections {
         target: appBackend
         function onErpAccountChanged() {
-            erpPasswordField.revealPassword = false
-            erpPasswordField.inputItem.focus = false
-            page.forceActiveFocus()
+            page.resetErpAccountEditor()
         }
     }
 }

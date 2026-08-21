@@ -14,8 +14,13 @@ from PySide6.QtGui import QDesktopServices
 from ehrm.core.error_catalog import ErrorCode, display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.preferences import UserPreferences, UserPreferencesStore
-from ehrm.core.settings import AppSettings
+from ehrm.core.settings import AppSettings, select_ai_model
+from ehrm.modules.ai.models import ReasoningMode
 from ehrm.gui.erp_connection_worker import ErpConnectionWorker
+from ehrm.gui.erp_task_extraction_worker import (
+    ErpTaskExtractionRequest,
+    ErpTaskExtractionWorker,
+)
 from ehrm.gui.erp_upload_worker import ManualErpUploadWorker
 from ehrm.gui.template_service import RightsStatementTemplateService
 from ehrm.gui.worker import AutomationWorker
@@ -56,6 +61,7 @@ class DesktopViewModel(QObject):
     preferencesChanged = Signal()
     erpAccountChanged = Signal()
     erpConnectionChanged = Signal()
+    erpTaskExtractionChanged = Signal()
 
     validationFailed = Signal(str, str)
     notification = Signal(str, str)
@@ -63,6 +69,8 @@ class DesktopViewModel(QObject):
     executionFinished = Signal(str, str, str)
     erpFileReady = Signal()
     manualErpUploadFinished = Signal(str, str, str)
+    erpTaskExtractionStarted = Signal()
+    erpTaskExtractionFinished = Signal(str, str)
 
     def __init__(
         self,
@@ -83,6 +91,9 @@ class DesktopViewModel(QObject):
         self._loader = RightsStatementExcelLoader()
         self._template = RightsStatementTemplateService()
         self._records: list[EmployeeRecord] = []
+        self._record_source = ""
+        self._erp_task_result: dict[str, object] | None = None
+        self._record_issues: list[dict[str, object]] = []
         self._groups: list[WorkGroup] = []
         self._source_excel: Path | None = None
         # Individual export is the safer default: importing a file must not
@@ -103,6 +114,7 @@ class DesktopViewModel(QObject):
         self._progress_total = 1
         self._pending_output_dir: Path | None = None
         self._last_output_dir: Path | None = None
+        self._generated_source_excel: Path | None = None
         self._worker: AutomationWorker | None = None
         self._erp_upload_file: ValidatedUploadFile | None = None
         self._erp_uploading = False
@@ -111,6 +123,13 @@ class DesktopViewModel(QObject):
         self._erp_connection_worker: ErpConnectionWorker | None = None
         self._erp_connection_status = "尚未测试连接"
         self._erp_connection_success = False
+        self._erp_task_extraction_worker: ErpTaskExtractionWorker | None = None
+        self._erp_task_extraction_running = False
+        self._erp_task_extraction_stopping = False
+        self._erp_task_extraction_status = "准备就绪"
+        self._erp_task_extraction_current = 0
+        self._erp_task_extraction_total = 0
+        self._erp_task_extraction_task = ""
         self._erp_password_stored = bool(
             self._credential_store.load_password(self._preferences.erp_username)
         )
@@ -126,21 +145,41 @@ class DesktopViewModel(QObject):
         self._worker.start()
 
     @Property("QVariantList", notify=recordsChanged)
-    def records(self) -> list[dict[str, str]]:
-        return [
-            {
+    def records(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for record in self._records:
+            row_issues = [
+                item
+                for item in self._record_issues
+                if int(item.get("rowNumber") or 0) == record.row_number
+            ]
+            row_status = self._row_status(row_issues)
+            rows.append({
                 "status": "通过",
-                "unit": record.unit,
-                "department": record.department,
+                "rowNumber": record.row_number,
+                "rowStatus": row_status,
+                "rowStatusLabel": {
+                    "error": "错误",
+                    "warning": "待复核",
+                    "info": "提示",
+                    "success": "正常",
+                }[row_status],
+                "rowIssueCount": len(row_issues),
+                "rowIssueTooltip": self._row_issue_tooltip(row_issues),
+                "unit": record.unit or "-",
+                "department": record.department or "-",
                 "name": record.name,
-                "identity": self._mask_identity(record.identity_number),
+                "identity": record.identity_number or "待匹配",
                 "insurance": record.insurance_type,
-                "startMonth": record.start_month,
-                "endMonth": record.end_month,
+                "startMonth": record.start_month or (
+                    "待确认" if self._record_source == "erp" else ""
+                ),
+                "endMonth": record.end_month or (
+                    "待确认" if self._record_source == "erp" else ""
+                ),
                 "taskNumber": record.task_number,
-            }
-            for record in self._records
-        ]
+            })
+        return rows
 
     @Property(int, notify=planChanged)
     def peopleCount(self) -> int:
@@ -164,6 +203,8 @@ class DesktopViewModel(QObject):
 
     @Property(str, notify=fileChanged)
     def fileSummary(self) -> str:
+        if self._record_source == "erp":
+            return f"ERP 申请解析结果 · {len(self._records)} 人"
         if self._source_excel is None:
             return "尚未导入 Excel"
         return f"{self._source_excel.name} · {len(self._records)} 人"
@@ -171,6 +212,57 @@ class DesktopViewModel(QObject):
     @Property(bool, notify=fileChanged)
     def imported(self) -> bool:
         return self._source_excel is not None and bool(self._records)
+
+    @Property(bool, notify=fileChanged)
+    def hasRecords(self) -> bool:
+        return bool(self._records)
+
+    @Property(str, notify=fileChanged)
+    def recordStatusLabel(self) -> str:
+        if self._record_source == "erp":
+            issue_count = self._actionable_record_issue_count()
+            return (
+                f"· 解析完成，{issue_count} 项待处理"
+                if issue_count
+                else "· 解析完成"
+            )
+        return "· 校验通过"
+
+    @Property(int, notify=recordsChanged)
+    def recordIssueCount(self) -> int:
+        return self._actionable_record_issue_count()
+
+    @Property(int, notify=recordsChanged)
+    def recordDetailCount(self) -> int:
+        return len(self._record_issues)
+
+    @Property("QVariantList", notify=recordsChanged)
+    def recordIssues(self) -> list[dict[str, object]]:
+        return list(self._record_issues)
+
+    @Property(bool, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionRunning(self) -> bool:
+        return self._erp_task_extraction_running
+
+    @Property(bool, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionStopping(self) -> bool:
+        return self._erp_task_extraction_stopping
+
+    @Property(str, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionStatus(self) -> str:
+        return self._erp_task_extraction_status
+
+    @Property(int, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionProgressCurrent(self) -> int:
+        return self._erp_task_extraction_current
+
+    @Property(int, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionProgressTotal(self) -> int:
+        return self._erp_task_extraction_total
+
+    @Property(str, notify=erpTaskExtractionChanged)
+    def erpTaskExtractionCurrentTask(self) -> str:
+        return self._erp_task_extraction_task
 
     @Property(str, notify=modeChanged)
     def exportMode(self) -> str:
@@ -264,6 +356,60 @@ class DesktopViewModel(QObject):
     def executionSpeed(self) -> str:
         return self._preferences.execution_speed
 
+    @Property(str, notify=preferencesChanged)
+    def aiReasoningMode(self) -> str:
+        return self._settings.ai.default_reasoning_mode
+
+    @Property(str, notify=preferencesChanged)
+    def aiModelProfile(self) -> str:
+        return self._settings.ai.profile_id.value
+
+    @Property("QVariantList", notify=preferencesChanged)
+    def aiModelOptions(self) -> list[dict[str, object]]:
+        return [
+            {
+                "value": item.profile_id.value,
+                "label": item.display_name,
+                "ollamaName": item.model,
+                "nativeContextLength": item.native_context_length,
+                "numCtx": item.num_ctx,
+                "numPredict": item.num_predict,
+                "timeoutSeconds": item.request_timeout_seconds,
+                "keepAlive": item.keep_alive,
+            }
+            for item in self._base_settings.ai_models
+        ]
+
+    @Property("QVariantMap", notify=preferencesChanged)
+    def aiModelDetails(self) -> dict[str, object]:
+        item = self._settings.ai
+        return {
+            "value": item.profile_id.value,
+            "label": item.display_name,
+            "ollamaName": item.model,
+            "nativeContextLength": item.native_context_length,
+            "numCtx": item.num_ctx,
+            "numPredict": item.num_predict,
+            "timeoutSeconds": item.request_timeout_seconds,
+            "keepAlive": item.keep_alive,
+            "sourceUrl": item.source_url,
+        }
+
+    @Property(str, notify=preferencesChanged)
+    def aiModelRuntimeLabel(self) -> str:
+        item = self._settings.ai
+        reasoning_label = ReasoningMode.parse(
+            item.default_reasoning_mode
+        ).label
+        return f"{item.display_name}（{item.model}）· {reasoning_label}"
+
+    @Property("QVariantList", notify=preferencesChanged)
+    def aiReasoningOptions(self) -> list[dict[str, str]]:
+        return [
+            {"value": value, "label": ReasoningMode.parse(value).label}
+            for value in self._settings.ai.reasoning_modes
+        ]
+
     @Property(int, notify=preferencesChanged)
     def noResultConfirmSeconds(self) -> int:
         return self._preferences.no_result_confirm_seconds
@@ -306,6 +452,14 @@ class DesktopViewModel(QObject):
 
     @Property(str, notify=planChanged)
     def planMessage(self) -> str:
+        if self._record_source == "erp":
+            issue_count = self._actionable_record_issue_count()
+            if issue_count:
+                return (
+                    f"ERP 申请已解析，发现 {issue_count} 项待处理问题。"
+                    "请查看问题明细后再继续。"
+                )
+            return "ERP 申请已解析并校验通过，可以获取权益单。"
         if not self._records:
             return "批量模式仅合并任务编号、险种及起止年月完全相同的人员。"
         if self._mode is ExportMode.INDIVIDUAL:
@@ -397,6 +551,9 @@ class DesktopViewModel(QObject):
             self.validationFailed.emit("无法读取 Excel 文件", str(exc))
             return
         self._source_excel = path
+        self._record_source = "excel"
+        self._erp_task_result = None
+        self._record_issues = []
         self._records = records
         self.fileChanged.emit()
         self.recordsChanged.emit()
@@ -570,6 +727,77 @@ class DesktopViewModel(QObject):
         self.erpConnectionChanged.emit()
         self.notification.emit("清除成功", "下次 ERP 操作将重新登录")
 
+    @Slot(str, str, str, str, str)
+    def startErpTaskExtraction(
+        self,
+        application_code: str,
+        status_values: str,
+        transaction_type: str,
+        start_date: str,
+        end_date: str,
+    ) -> None:
+        if (
+            self._erp_task_extraction_running
+            or self._running
+            or self._erp_uploading
+            or self._erp_connection_worker is not None
+        ):
+            self.notification.emit("当前无法执行", "请先等待当前任务结束")
+            return
+        normalized_type = transaction_type.strip()
+        if not normalized_type:
+            self.notification.emit("查询条件不完整", "请选择事务类型")
+            return
+        try:
+            statuses = tuple(
+                int(value)
+                for value in status_values.split(",")
+                if value.strip()
+            )
+        except ValueError:
+            self.notification.emit("查询条件错误", "申请状态格式不正确")
+            return
+        worker = ErpTaskExtractionWorker(
+            self._settings,
+            self._logger,
+            ErpTaskExtractionRequest(
+                transaction_type=normalized_type,
+                statuses=statuses,
+                application_code=application_code.strip(),
+                start_date=start_date.strip(),
+                end_date=end_date.strip(),
+                reasoning_mode=self._settings.ai.default_reasoning_mode,
+            ),
+        )
+        worker.status_changed.connect(self._on_erp_task_extraction_status)
+        worker.progress_changed.connect(self._on_erp_task_extraction_progress)
+        worker.completed.connect(self._on_erp_task_extraction_completed)
+        worker.failed.connect(self._on_erp_task_extraction_failed)
+        worker.cancelled.connect(self._on_erp_task_extraction_cancelled)
+        worker.finished.connect(self._on_erp_task_extraction_worker_finished)
+        self._erp_task_extraction_worker = worker
+        self._erp_task_extraction_running = True
+        self._erp_task_extraction_stopping = False
+        self._erp_task_extraction_status = "正在启动 ERP 查询"
+        self._erp_task_extraction_current = 0
+        self._erp_task_extraction_total = 0
+        self._erp_task_extraction_task = ""
+        self.erpTaskExtractionChanged.emit()
+        self.erpTaskExtractionStarted.emit()
+        worker.start()
+
+    @Slot()
+    def requestErpTaskExtractionStop(self) -> None:
+        worker = self._erp_task_extraction_worker
+        if worker is None or not self._erp_task_extraction_running:
+            return
+        worker.cancel()
+        self._erp_task_extraction_stopping = True
+        self._erp_task_extraction_status = (
+            "正在安全停止：当前模型请求完成后将保留结果并停止"
+        )
+        self.erpTaskExtractionChanged.emit()
+
     @Slot(bool)
     def setOpenOutputFolderAfterRun(self, value: bool) -> None:
         self._save_preferences(open_output_folder=value)
@@ -581,6 +809,41 @@ class DesktopViewModel(QObject):
             return
         self._save_preferences(execution_speed=value)
         self._apply_automation_preferences()
+
+    @Slot(str)
+    def setAiReasoningMode(self, value: str) -> None:
+        if value not in self._settings.ai.reasoning_modes:
+            return
+        if value == self._settings.ai.default_reasoning_mode:
+            return
+        if self._save_preferences(ai_reasoning_mode=value):
+            self._settings = self._settings_with_preferences(self._base_settings)
+            self.preferencesChanged.emit()
+
+    @Slot(str)
+    def setAiModelProfile(self, value: str) -> None:
+        profile = next(
+            (
+                item
+                for item in self._base_settings.ai_models
+                if item.profile_id.value == value
+            ),
+            None,
+        )
+        if profile is None or profile.profile_id == self._settings.ai.profile_id:
+            return
+        current_mode = self._settings.ai.default_reasoning_mode
+        selected_mode = (
+            current_mode
+            if current_mode in profile.reasoning_modes
+            else profile.default_reasoning_mode
+        )
+        if self._save_preferences(
+            ai_model_profile=profile.profile_id.value,
+            ai_reasoning_mode=selected_mode,
+        ):
+            self._settings = self._settings_with_preferences(self._base_settings)
+            self.preferencesChanged.emit()
 
     @Slot(int)
     def setNoResultConfirmSeconds(self, value: int) -> None:
@@ -622,8 +885,21 @@ class DesktopViewModel(QObject):
 
     @Slot()
     def prepareExecution(self) -> None:
-        if not self.imported or self._source_excel is None or not self._groups:
-            self.notification.emit("尚未导入", "请先导入并通过校验的 Excel 文件")
+        if not self._records or not self._groups:
+            self.notification.emit(
+                "尚无可执行数据",
+                "请先导入 Excel 或获取并解析 ERP 申请信息",
+            )
+            return
+        issue_count = self._actionable_record_issue_count()
+        if issue_count:
+            self.notification.emit(
+                "存在待处理问题",
+                f"当前有 {issue_count} 项问题，请查看问题明细后再执行",
+            )
+            return
+        if self._record_source == "excel" and self._source_excel is None:
+            self.notification.emit("源文件不可用", "请重新导入 Excel 文件")
             return
         self._pending_output_dir = self._output_path / (
             f"权益单下载_{datetime.now():%Y%m%d_%H%M%S}"
@@ -635,16 +911,26 @@ class DesktopViewModel(QObject):
     def executePrepared(self) -> None:
         if (
             self._pending_output_dir is None
-            or self._source_excel is None
             or not self._groups
             or self._running
         ):
+            return
+        source_excel = self._source_excel
+        if self._record_source == "erp":
+            try:
+                source_excel = self._create_erp_source_workbook()
+            except Exception as exc:
+                self._logger.exception("生成 ERP 解析结果源工作簿失败")
+                self.notification.emit("执行准备失败", str(exc))
+                return
+        if source_excel is None:
+            self.notification.emit("执行准备失败", "没有可用的任务源数据")
             return
         request = ExcelTaskRequest(
             groups=tuple(self._groups),
             mode=self._mode,
             output_dir=self._pending_output_dir,
-            source_excel=self._source_excel,
+            source_excel=source_excel,
             upload_to_erp=self._upload_to_erp,
         )
         self._last_output_dir = self._pending_output_dir
@@ -657,6 +943,7 @@ class DesktopViewModel(QObject):
         self.progressChanged.emit()
         if self._worker is None or not self._worker.submit(request):
             self._set_running(False)
+            self._cleanup_generated_source_workbook()
             self.notification.emit("执行失败", "自动化工作线程已停止，请重新启动程序")
 
     @Slot()
@@ -710,6 +997,17 @@ class DesktopViewModel(QObject):
                     self._erp_connection_worker = None
             else:
                 self._erp_connection_worker = None
+        if self._erp_task_extraction_worker is not None:
+            extraction_worker = self._erp_task_extraction_worker
+            if extraction_worker.isRunning():
+                extraction_worker.cancel()
+                if not extraction_worker.wait(30_000):
+                    self._logger.error("ERP 申请解析线程未在 30 秒内停止")
+                else:
+                    self._erp_task_extraction_worker = None
+            else:
+                self._erp_task_extraction_worker = None
+        self._cleanup_generated_source_workbook()
 
     def _refresh_plan(self) -> None:
         self._groups = (
@@ -719,10 +1017,40 @@ class DesktopViewModel(QObject):
         )
         self.planChanged.emit()
 
+    def _create_erp_source_workbook(self) -> Path:
+        self._cleanup_generated_source_workbook()
+        task_dir = self._settings.browser.user_data_dir.parent / "tasks"
+        source = task_dir / (
+            f"ERP申请解析数据_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
+        )
+        self._generated_source_excel = self._template.write_records(
+            source,
+            self._records,
+        )
+        return self._generated_source_excel
+
+    def _cleanup_generated_source_workbook(self) -> None:
+        source = self._generated_source_excel
+        self._generated_source_excel = None
+        if source is None:
+            return
+        try:
+            source.unlink(missing_ok=True)
+        except OSError:
+            self._logger.warning(
+                "清理 ERP 临时源工作簿失败 path=%s",
+                source,
+                exc_info=True,
+            )
+
     def _clear_import(self) -> None:
+        self._cleanup_generated_source_workbook()
         self._records = []
         self._groups = []
         self._source_excel = None
+        self._record_source = ""
+        self._erp_task_result = None
+        self._record_issues = []
         self.fileChanged.emit()
         self.recordsChanged.emit()
         self.planChanged.emit()
@@ -777,12 +1105,14 @@ class DesktopViewModel(QObject):
         self.executionFinished.emit(title, message, details)
         if self._preferences.open_output_folder and self._last_output_dir is not None:
             self.openFolder(str(self._last_output_dir))
+        self._cleanup_generated_source_workbook()
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
         self._set_running(False)
         self._set_stopping(False)
         self._set_status("执行失败")
+        self._cleanup_generated_source_workbook()
         self.notification.emit("执行失败", message)
 
     @Slot(str)
@@ -843,6 +1173,293 @@ class DesktopViewModel(QObject):
         self._erp_connection_worker = None
         self.erpConnectionChanged.emit()
 
+    @Slot(str)
+    def _on_erp_task_extraction_status(self, text: str) -> None:
+        self._erp_task_extraction_status = text.strip() or "正在处理"
+        self.erpTaskExtractionChanged.emit()
+
+    @Slot(int, int, str)
+    def _on_erp_task_extraction_progress(
+        self,
+        current: int,
+        total: int,
+        task_number: str,
+    ) -> None:
+        self._erp_task_extraction_current = max(0, current)
+        self._erp_task_extraction_total = max(0, total)
+        self._erp_task_extraction_task = task_number.strip()
+        self.erpTaskExtractionChanged.emit()
+
+    @Slot(object)
+    def _on_erp_task_extraction_completed(self, result: object) -> None:
+        if not isinstance(result, dict):
+            self._on_erp_task_extraction_failed(
+                "解析结果无效",
+                "大模型解析服务未返回标准结果",
+            )
+            return
+        self._erp_task_result = result
+        request_items = result.get("rights_statement_requests")
+        records: list[EmployeeRecord] = []
+        if isinstance(request_items, list):
+            for sequence, item in enumerate(request_items, start=2):
+                if not isinstance(item, dict):
+                    continue
+                task_number = str(item.get("task_number") or "").strip()
+                identity_match = item.get("identity_match")
+                identity_match = (
+                    identity_match if isinstance(identity_match, dict) else {}
+                )
+                records.append(
+                    EmployeeRecord(
+                        row_number=sequence,
+                        unit=str(identity_match.get("company") or "").strip(),
+                        department=str(
+                            identity_match.get("department") or ""
+                        ).strip(),
+                        name=str(item.get("name") or "").strip(),
+                        identity_number=str(
+                            item.get("social_security_number") or ""
+                        ).strip(),
+                        insurance_type="养老",
+                        start_month=str(item.get("start_month") or "").strip(),
+                        end_month=str(item.get("end_month") or "").strip(),
+                        task_number=task_number,
+                    )
+                )
+        self._source_excel = None
+        self._record_source = "erp"
+        self._records = records
+        self._record_issues = self._build_erp_record_issues(result)
+        self.fileChanged.emit()
+        self.recordsChanged.emit()
+        self._refresh_plan()
+
+        summary = result.get("summary")
+        summary = summary if isinstance(summary, dict) else {}
+        processed = int(summary.get("tasks_processed") or 0)
+        total = int(summary.get("tasks_total") or 0)
+        people = int(summary.get("people_extracted") or 0)
+        failed = int(summary.get("tasks_failed") or 0)
+        stopped = bool(summary.get("stopped"))
+        self._erp_task_extraction_running = False
+        self._erp_task_extraction_stopping = False
+        self._erp_task_extraction_current = processed
+        self._erp_task_extraction_total = total
+        self._erp_task_extraction_status = (
+            f"已停止：已解析 {processed}/{total} 条申请"
+            if stopped
+            else f"解析完成：{total} 条申请，{people} 人"
+        )
+        self.erpTaskExtractionChanged.emit()
+        title = "已安全停止" if stopped else "申请信息获取完成"
+        message = f"已处理 {processed}/{total} 条申请，解析出 {people} 人"
+        if failed:
+            message += f"，{failed} 条解析失败"
+        self.erpTaskExtractionFinished.emit(title, message)
+
+    @Slot(str, str)
+    def _on_erp_task_extraction_failed(self, summary: str, details: str) -> None:
+        self._erp_task_extraction_running = False
+        self._erp_task_extraction_stopping = False
+        self._erp_task_extraction_status = summary or "获取失败"
+        self.erpTaskExtractionChanged.emit()
+        self.erpTaskExtractionFinished.emit(
+            "获取申请信息失败",
+            details or summary or "请检查 ERP 和大模型配置",
+        )
+
+    @Slot()
+    def _on_erp_task_extraction_cancelled(self) -> None:
+        self._erp_task_extraction_running = False
+        self._erp_task_extraction_stopping = False
+        self._erp_task_extraction_status = "任务已停止"
+        self.erpTaskExtractionChanged.emit()
+        self.erpTaskExtractionFinished.emit(
+            "任务已停止",
+            "ERP 查询或登录阶段已停止，未开始模型解析。",
+        )
+
+    @Slot()
+    def _on_erp_task_extraction_worker_finished(self) -> None:
+        self._erp_task_extraction_worker = None
+
+    @staticmethod
+    def _build_erp_record_issues(
+        result: dict[str, object],
+    ) -> list[dict[str, object]]:
+        issues: list[dict[str, object]] = []
+
+        def add_issue(
+            level: str,
+            task_number: str,
+            person_name: str,
+            code: ErrorCode,
+            details: str,
+            row_number: int = 0,
+        ) -> None:
+            issues.append(
+                {
+                    "level": level,
+                    "levelLabel": {
+                        "error": "错误",
+                        "warning": "待复核",
+                        "pending": "待处理",
+                        "info": "信息",
+                    }.get(level, "提示"),
+                    "taskNumber": task_number or "-",
+                    "personName": person_name or "-",
+                    "code": code.value,
+                    "message": display_message(code),
+                    "details": details.strip() or display_message(code),
+                    "rowNumber": row_number,
+                }
+            )
+
+        raw_requests = result.get("rights_statement_requests")
+        requests = raw_requests if isinstance(raw_requests, list) else []
+        tasks_with_people = {
+            str(item.get("task_number") or "").strip()
+            for item in requests
+            if isinstance(item, dict)
+        }
+
+        raw_tasks = result.get("tasks")
+        tasks = raw_tasks if isinstance(raw_tasks, list) else []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            task_number = str(task.get("task_number") or "").strip()
+            parse_status = task.get("parse_status")
+            if isinstance(parse_status, dict):
+                code_text = str(parse_status.get("code") or "").strip()
+                if code_text and code_text != ErrorCode.SUCCESS.value:
+                    try:
+                        code = ErrorCode(code_text)
+                    except ValueError:
+                        code = ErrorCode.UNEXPECTED_ERROR
+                    add_issue(
+                        "error",
+                        task_number,
+                        "",
+                        code,
+                        str(
+                            parse_status.get("details")
+                            or parse_status.get("message")
+                            or "大模型解析失败"
+                        ),
+                    )
+                    continue
+            extraction = task.get("extraction")
+            if (
+                isinstance(extraction, dict)
+                and task_number not in tasks_with_people
+            ):
+                add_issue(
+                    "error",
+                    task_number,
+                    "",
+                    ErrorCode.AI_NO_PERSON_EXTRACTED,
+                    "申请标题和问题描述中未识别到可处理人员",
+                )
+
+        for row_number, item in enumerate(requests, start=2):
+            if not isinstance(item, dict):
+                continue
+            task_number = str(item.get("task_number") or "").strip()
+            person_name = str(item.get("name") or "").strip()
+            start_month = str(item.get("start_month") or "").strip()
+            end_month = str(item.get("end_month") or "").strip()
+            if not start_month or not end_month:
+                missing = []
+                if not start_month:
+                    missing.append("开始月份")
+                if not end_month:
+                    missing.append("结束月份")
+                add_issue(
+                    "error",
+                    task_number,
+                    person_name,
+                    ErrorCode.AI_DATE_MISSING,
+                    "模型未能确定" + "和".join(missing),
+                    row_number,
+                )
+            review_reasons = item.get("review_reasons")
+            if isinstance(review_reasons, list) and review_reasons:
+                add_issue(
+                    "warning",
+                    task_number,
+                    person_name,
+                    ErrorCode.AI_REVIEW_REQUIRED,
+                    "；".join(str(reason) for reason in review_reasons if reason),
+                    row_number,
+                )
+            warnings = item.get("warnings")
+            if isinstance(warnings, list) and warnings:
+                add_issue(
+                    "info",
+                    task_number,
+                    person_name,
+                    ErrorCode.AI_EXTRACTION_WARNING,
+                    "；".join(str(warning) for warning in warnings if warning),
+                    row_number,
+                )
+            if not str(item.get("social_security_number") or "").strip():
+                identity_match = item.get("identity_match")
+                if isinstance(identity_match, dict):
+                    code_text = str(identity_match.get("code") or "").strip()
+                    try:
+                        identity_code = ErrorCode(code_text)
+                    except ValueError:
+                        identity_code = ErrorCode.IDENTITY_MATCH_PENDING
+                    details = str(
+                        identity_match.get("details")
+                        or identity_match.get("message")
+                        or "人员身份证号尚未匹配"
+                    )
+                else:
+                    identity_code = ErrorCode.IDENTITY_MATCH_PENDING
+                    details = "需要通过人员库按姓名匹配身份证号"
+                add_issue(
+                    "pending",
+                    task_number,
+                    person_name,
+                    identity_code,
+                    details,
+                    row_number,
+                )
+        return issues
+
+    @staticmethod
+    def _row_status(issues: list[dict[str, object]]) -> str:
+        levels = {str(item.get("level") or "") for item in issues}
+        if levels & {"error", "pending"}:
+            return "error"
+        if "warning" in levels:
+            return "warning"
+        if "info" in levels:
+            return "info"
+        return "success"
+
+    @staticmethod
+    def _row_issue_tooltip(issues: list[dict[str, object]]) -> str:
+        if not issues:
+            return "数据校验正常"
+        blocks: list[str] = []
+        for item in issues:
+            label = str(item.get("levelLabel") or "提示")
+            message = str(item.get("message") or "").strip()
+            details = str(item.get("details") or "").strip()
+            title = f"{label}：{message}" if message else label
+            blocks.append(title + (f"\n{details}" if details else ""))
+        return "\n\n".join(blocks)
+
+    def _actionable_record_issue_count(self) -> int:
+        return sum(
+            item.get("level") in {"error", "warning", "pending"}
+            for item in self._record_issues
+        )
+
     def _save_preferences(self, **changes: object) -> bool:
         updated = replace(self._preferences, **changes)
         try:
@@ -873,7 +1490,32 @@ class DesktopViewModel(QObject):
                 self._preferences.download_timeout_seconds * 1000
             ),
         )
-        return replace(settings, rights_statement=rights_statement)
+        profile_id = (
+            self._preferences.ai_model_profile or settings.ai.profile_id.value
+        )
+        profile = next(
+            (
+                item
+                for item in settings.ai_models
+                if item.profile_id.value == profile_id
+            ),
+            settings.ai,
+        )
+        preferred_mode = self._preferences.ai_reasoning_mode
+        reasoning_mode = (
+            preferred_mode
+            if preferred_mode in profile.reasoning_modes
+            else profile.default_reasoning_mode
+        )
+        selected_settings = select_ai_model(
+            settings,
+            profile.profile_id.value,
+            reasoning_mode=reasoning_mode,
+        )
+        return replace(
+            selected_settings,
+            rights_statement=rights_statement,
+        )
 
     def _apply_automation_preferences(self) -> None:
         self._settings = self._settings_with_preferences(self._base_settings)
@@ -925,12 +1567,6 @@ class DesktopViewModel(QObject):
     def _url_path(url: QUrl) -> Path | None:
         local = url.toLocalFile()
         return Path(local).expanduser() if local else None
-
-    @staticmethod
-    def _mask_identity(identity: str) -> str:
-        if len(identity) <= 10:
-            return identity
-        return identity[:6] + "*" * (len(identity) - 10) + identity[-4:]
 
     @staticmethod
     def _format_file_size(size: int) -> str:

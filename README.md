@@ -55,6 +55,11 @@ Python 默认值。配置按命名空间分为：
 - `[common]`：两个自动化模块真正共用的参数；
 - `[rights_statement.*]`：智慧人社及单位权益单配置；
 - `[erp.*]`：ERP 登录、查询和附件上传配置。
+- `[ai]`：Ollama 公共连接、提示词与默认模型选择。
+
+每个模型的 Ollama 名称、上下文、输出长度、采样参数和可用推理模式单独
+保存在 `config/models/*.toml`。桌面端“系统设置 → 自动化设置”可切换模型，
+选择会写入当前用户的 `preferences.json`，重启后继续生效。
 
 该文件不保存账号密码或个人下载目录，因此纳入版本控制。浏览器资料目录、
 录制代码和下载文件仍在 `.gitignore` 中。
@@ -299,6 +304,70 @@ ERP 使用独立的 `data/erp-browser-profile/`，避免与智慧人社常驻浏
 
 当前分片字段根据单分片 HAR 及 ERP 的 2 MiB 分片参数实现；正式批量启用前，应分别用一个小于 2 MiB 和一个大于 2 MiB 的脱敏 PDF 做现场验证。
 
-## 7. 当前适配边界
+## 7. ERP 任务分页查询与大模型解析
+
+测试入口会先按组合条件分页读取 ERP“人力资源事务申请”，再严格按照 ERP
+返回顺序逐条调用 Ollama。任务编号、ERP 记录 ID、申请日期等由程序直接写入
+结果，不交给模型提取。
+
+只解析一条指定任务：
+
+```bash
+python scripts/run_erp_task_extraction.py \
+  --transaction-type "社保咨询" \
+  --status 50 \
+  --application-code RLSQ20260818-0004 \
+  --max-tasks 1 \
+  --reasoning-mode off \
+  --output ./output/erp_task_extraction.json
+```
+
+指定 Qwen3.5-9B 模型档案：
+
+```bash
+python scripts/run_erp_task_extraction.py \
+  --transaction-type "社保咨询" \
+  --application-code RLSQ20260818-0004 \
+  --model-profile qwen3_5_9b \
+  --reasoning-mode off
+```
+
+按申请日期分页查询并解析全部结果：
+
+```bash
+python scripts/run_erp_task_extraction.py \
+  --transaction-type "社保咨询" \
+  --status 50 \
+  --start-date 2026-08-01 \
+  --end-date 2026-08-20 \
+  --page-size 50 \
+  --reasoning-mode medium
+```
+
+推理模式按模型档案限制：Qwen3.5-9B 使用 `off`/`on`，Qwen3.8-27B
+使用 `off`/`low`/`medium`/`max`。命令行不传 `--model-profile` 和
+`--reasoning-mode` 时读取默认模型档案；桌面流程使用前端保存的选择。
+`--max-tasks 0` 表示解析查询到的全部任务；联调时建议先设置为 1。
+
+输出 JSON 包含两个主要数组：
+
+- `tasks`：每个 ERP 任务的原始数据、解析状态、结构化模型结果和耗时指标；
+- `rights_statement_requests`：按人员展开的权益单输入清单，包含任务编号、姓名、
+  起止月份、证据和复核标记。身份证/社会保障号码暂时为 `null`，后续由人员库补齐。
+
+模型响应由 Ollama JSON Schema 和 Python 运行时进行两层校验。字段缺失、月份
+格式错误、开始月份晚于结束月份等情况不会进入人员清单，而是在对应任务中写入
+稳定异常编码和中文失败原因。
+
+模型只识别姓名和月份，不生成身份证号。解析完成后，程序使用
+`View_NCC_HUM_HumanAccountCert` 人员视图按姓名精确查询：唯一匹配时自动补齐
+身份证；无结果、同名多条或身份证格式异常时保留待处理状态和中文原因。
+可使用以下命令单独验证人员查询，终端默认只显示脱敏身份证：
+
+```bash
+python scripts/run_erp_person_query.py "张三"
+```
+
+## 8. 当前适配边界
 
 已根据录制结果适配 Ant Design 年月选择、险种下拉框、查询结果转移、预览弹窗和下载事件。姓名输入框与已选人员表格目前仍使用录制所得的相对定位器，第一次连接真实网站时可能需要在 `config/settings.toml` 中做一次小幅调整。

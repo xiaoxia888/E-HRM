@@ -109,5 +109,20 @@ class ErpDeleteVerificationError(EhrmError):
     retryable = True
 
 
+class AiConnectionFailedError(EhrmError):
+    code = ErrorCode.AI_CONNECTION_FAILED
+    retryable = True
+
+
+class AiRequestFailedError(EhrmError):
+    code = ErrorCode.AI_REQUEST_FAILED
+    retryable = True
+
+
+class AiResponseInvalidError(EhrmError):
+    code = ErrorCode.AI_RESPONSE_INVALID
+    retryable = True
+
+
 class TaskCancelledError(EhrmError):
     code = ErrorCode.TASK_CANCELLED

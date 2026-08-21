@@ -5,12 +5,13 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
 
 from ehrm.core.logging import configure_logging
+from ehrm.core.runtime import application_data_root, configure_application_identity
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.gui.view_model import DesktopViewModel
 
@@ -43,16 +44,15 @@ def main(argv: list[str] | None = None) -> int:
         # current user's external ms-playwright cache.
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
     args = _parser().parse_args(argv)
+    # Keep all application controls visually identical on macOS and Windows.
+    # Native platform styles reject several QML customizations and can render
+    # the same form as unrelated controls (for example, a ComboBox as a
+    # macOS stepper). File dialogs remain native by design.
+    QQuickStyle.setStyle("Basic")
     application = QGuiApplication(sys.argv[:1])
-    application.setApplicationName("信息化人力工作台")
-    application.setOrganizationName("NJNCC")
+    configure_application_identity(application)
     try:
-        runtime_root = Path(
-            QStandardPaths.writableLocation(
-                QStandardPaths.StandardLocation.AppDataLocation
-            )
-        )
-        runtime_root.mkdir(parents=True, exist_ok=True)
+        runtime_root = application_data_root()
         logger = configure_logging(runtime_root / "logs")
         settings = load_settings(args.config, data_root=runtime_root)
         logger.info("系统配置已加载 path=%s", args.config.expanduser().resolve())
@@ -89,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         # Relying on Python's local-variable cleanup order can release the
         # backend first and make child-page bindings evaluate against null.
         backend.shutdown()
+        for root in engine.rootObjects():
+            root.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
         del engine
     return exit_code
 

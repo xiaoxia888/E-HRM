@@ -71,7 +71,12 @@ class ErpSession:
             raise RuntimeError("ERP 会话尚未启动")
         return self._browser.context.request
 
-    def ensure_authenticated(self, credentials: ErpCredentials) -> None:
+    def ensure_authenticated(
+        self,
+        credentials: ErpCredentials,
+        *,
+        force_login: bool = False,
+    ) -> None:
         page = self.page
         try:
             self._raise_if_cancelled()
@@ -82,12 +87,19 @@ class ErpSession:
                 timeout=self._navigation_timeout_ms(),
             )
             self._raise_if_cancelled()
-            self._progress("ERP：正在校验现有登录状态")
-            if self._wait_for_codec(timeout_ms=10_000) and self._api_session_valid():
-                self._logger.info("ERP 已存在有效登录状态")
-                self._progress("ERP：登录状态有效")
-                return
-            self._progress("ERP：登录状态已失效，正在自动重新登录")
+            if not force_login:
+                self._progress("ERP：正在校验现有登录状态")
+                if self._wait_for_codec(timeout_ms=10_000) and self._api_session_valid():
+                    self._logger.info("ERP 已存在有效登录状态")
+                    self._progress("ERP：登录状态有效")
+                    return
+                self._progress("ERP：登录状态已失效，正在自动重新登录")
+            else:
+                # A connection test must validate the credentials currently
+                # entered by the operator. Reusing a valid persisted session
+                # would make an arbitrary new password appear correct.
+                self._progress("ERP：正在使用当前账号密码重新验证")
+                self._logger.info("ERP 连接测试强制重新登录，不复用已有会话")
             self._clear_stale_auth_state()
             self._perform_login(credentials)
             self._raise_if_cancelled()

@@ -7,6 +7,8 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from ehrm.modules.rights_statement.excel_models import EmployeeRecord
+
 
 class RightsStatementTemplateService:
     HEADERS = (
@@ -97,6 +99,59 @@ class RightsStatementTemplateService:
         guide.column_dimensions["B"].width = 58
         guide.freeze_panes = "A2"
 
+        workbook.save(destination)
+        workbook.close()
+        return destination
+
+    def write_records(
+        self,
+        destination: Path,
+        records: list[EmployeeRecord],
+    ) -> Path:
+        """Writes ERP-derived records as a compact execution source workbook."""
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "ERP申请解析数据"
+        header_fill = PatternFill("solid", fgColor="1677FF")
+        for column, header in enumerate(self.HEADERS, start=1):
+            cell = sheet.cell(row=1, column=column, value=header)
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for record in records:
+            sheet.append(
+                [
+                    record.task_number,
+                    record.unit,
+                    record.department,
+                    record.name,
+                    record.identity_number,
+                    record.insurance_type,
+                    record.start_month,
+                    record.end_month,
+                ]
+            )
+            row = sheet.max_row
+            sheet.cell(row=row, column=1).number_format = "@"
+            sheet.cell(row=row, column=5).number_format = "@"
+            sheet.cell(row=row, column=7).number_format = "@"
+            sheet.cell(row=row, column=8).number_format = "@"
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = f"A1:H{max(1, sheet.max_row)}"
+        sheet.row_dimensions[1].height = 26
+        for column, width in {
+            "A": 24,
+            "B": 24,
+            "C": 18,
+            "D": 14,
+            "E": 24,
+            "F": 13,
+            "G": 16,
+            "H": 16,
+        }.items():
+            sheet.column_dimensions[column].width = width
         workbook.save(destination)
         workbook.close()
         return destination

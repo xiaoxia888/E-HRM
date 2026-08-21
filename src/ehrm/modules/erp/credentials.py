@@ -15,6 +15,11 @@ def resolve_erp_credentials(settings: AppSettings) -> ErpCredentials:
     password = ErpCredentialStore().load_password(username) if username else None
     if username and password:
         return ErpCredentials(username=username, password=password)
+    if username:
+        raise ConfigurationError(
+            "ERP 已保存账号但未找到对应密码",
+            details="请在“系统设置 → 账户与连接”中重新输入密码并保存。",
+        )
     try:
         return ErpCredentials.from_environment(settings.erp)
     except ConfigurationError as exc:

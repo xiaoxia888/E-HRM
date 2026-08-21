@@ -9,7 +9,11 @@ import pytest
 
 from ehrm.core.exceptions import ErpQueryFailedError, FileValidationError
 from ehrm.core.settings import load_settings
-from ehrm.modules.erp.client import ErpApplicationClient, ErpAttachmentClient
+from ehrm.modules.erp.client import (
+    ErpApplicationClient,
+    ErpAttachmentClient,
+    ErpPersonClient,
+)
 from ehrm.modules.erp.file_validation import ErpUploadFileValidator
 from ehrm.modules.erp.models import ErpApplicationRecord, ErpAttachmentRecord
 
@@ -99,6 +103,97 @@ def test_application_query_rejects_condition_injection(tmp_path: Path) -> None:
         client.find_by_code("RLSQ%' or 1=1 --")
 
     assert request.form is None
+
+
+def test_person_query_uses_har_view_and_returns_identity(tmp_path: Path) -> None:
+    request = QueryRequest(
+        [
+            {
+                "Id": "person-id",
+                "Code": "2025005",
+                "Name": "夏国玺",
+                "IdCard": "320830199709095235",
+                "DeptName": "技术中心",
+                "ZUnit": "南京南化建设有限公司（人员单位）",
+                "OwnProjName": "南京南化建设有限公司",
+                "Status": 0,
+                "IsQuit": 0,
+            }
+        ]
+    )
+    client = ErpPersonClient(
+        _erp_settings(tmp_path),
+        FakePage(),
+        request,
+        logging.getLogger("test.erp.person"),
+    )
+
+    result = client.query_by_name("夏国玺")
+
+    assert len(result) == 1
+    assert result[0].employee_code == "2025005"
+    assert result[0].identity_number == "320830199709095235"
+    assert result[0].department == "技术中心"
+    assert result[0].company == "南京南化建设有限公司（人员单位）"
+    assert request.form is not None
+    assert request.form["KeyWord"] == "View_NCC_HUM_HumanAccountCert"
+    assert request.form["KeyWordType"] == "ViewEntity"
+    assert request.form["swhere"] == "encoded: 1=1   and Name = '夏国玺'"
+
+
+def test_person_query_escapes_name_and_filters_exact_result(tmp_path: Path) -> None:
+    request = QueryRequest(
+        [
+            {"Id": "wrong", "Name": "O'Connor2", "IdCard": ""},
+            {"Id": "right", "Name": "O'Connor", "IdCard": "123456789012345"},
+        ]
+    )
+    client = ErpPersonClient(
+        _erp_settings(tmp_path),
+        FakePage(),
+        request,
+        logging.getLogger("test.erp.person.escape"),
+    )
+
+    result = client.query_by_name("O'Connor")
+
+    assert [item.id for item in result] == ["right"]
+    assert request.form is not None
+    assert request.form["swhere"] == "encoded: 1=1   and Name = 'O''Connor'"
+
+
+def test_person_query_uses_identity_as_exact_condition(tmp_path: Path) -> None:
+    identity = "320681199910100032"
+    request = QueryRequest(
+        [
+            {
+                "Id": "person-id",
+                "Code": "2026001",
+                "Name": "施瀛博",
+                "IdCard": identity,
+                "DeptName": "项目管理部",
+                "ZUnit": "南京南化建设有限公司（人员单位）",
+                "OwnProjName": "南京南化建设有限公司",
+            }
+        ]
+    )
+    client = ErpPersonClient(
+        _erp_settings(tmp_path),
+        FakePage(),
+        request,
+        logging.getLogger("test.erp.person.identity"),
+    )
+
+    result = client.query_by_identity_number(identity)
+
+    assert len(result) == 1
+    assert result[0].name == "施瀛博"
+    assert result[0].department == "项目管理部"
+    assert result[0].company == "南京南化建设有限公司（人员单位）"
+    assert request.form is not None
+    assert request.form["swhere"] == (
+        f"encoded: 1=1   and IdCard = '{identity}'"
+    )
 
 
 class UploadRequest:

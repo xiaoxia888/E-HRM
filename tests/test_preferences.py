@@ -15,6 +15,8 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
         upload_to_erp=True,
         open_output_folder=True,
         erp_username="tester",
+        ai_model_profile="qwen3_5_9b",
+        ai_reasoning_mode="max",
         execution_speed="stable",
         no_result_confirm_seconds=15,
         preview_download_delay_ms=2000,
@@ -37,6 +39,7 @@ def test_invalid_preferences_fall_back_to_safe_values(tmp_path: Path) -> None:
                 "batch_size": 999,
                 "upload_to_erp": "false",
                 "execution_speed": {"value": "fast"},
+                "ai_model_profile": "unknown_model",
             }
         ),
         encoding="utf-8",
@@ -48,3 +51,5 @@ def test_invalid_preferences_fall_back_to_safe_values(tmp_path: Path) -> None:
     assert preferences.batch_size == 100
     assert preferences.upload_to_erp is False
     assert preferences.execution_speed == "standard"
+    assert preferences.ai_model_profile == ""
+    assert preferences.ai_reasoning_mode == ""

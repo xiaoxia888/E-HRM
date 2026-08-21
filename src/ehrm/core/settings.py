@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from ehrm.core.error_catalog import configure_error_messages
 from ehrm.core.exceptions import ConfigurationError
+from ehrm.modules.ai.models import AiModelProfile
 
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.toml")
@@ -103,6 +104,38 @@ class ErpSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AiSamplingSettings:
+    temperature: float
+    top_p: float
+    top_k: int
+    min_p: float
+    presence_penalty: float
+    repeat_penalty: float
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaSettings:
+    profile_id: AiModelProfile
+    display_name: str
+    source_url: str
+    native_context_length: int
+    reasoning_modes: tuple[str, ...]
+    base_url: str
+    chat_path: str
+    model: str
+    prompt_path: Path
+    default_reasoning_mode: str
+    request_timeout_seconds: int
+    keep_alive: str
+    num_ctx: int
+    num_predict: int
+    retry_count: int
+    retry_delay_ms: int
+    non_thinking: AiSamplingSettings
+    thinking: AiSamplingSettings
+
+
+@dataclass(frozen=True, slots=True)
 class AppSettings:
     browser: BrowserSettings
     site: SiteSettings
@@ -110,6 +143,8 @@ class AppSettings:
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
     erp: ErpSettings
+    ai: OllamaSettings
+    ai_models: tuple[OllamaSettings, ...]
 
 
 def _required_section(
@@ -154,9 +189,208 @@ def _integer(section: dict[str, Any], key: str, section_name: str) -> int:
     return value
 
 
+def _number(section: dict[str, Any], key: str, section_name: str) -> float:
+    value = _required_value(section, key, section_name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigurationError(f"配置项 {section_name}.{key} 必须是数字")
+    return float(value)
+
+
+def _string_list(
+    section: dict[str, Any], key: str, section_name: str
+) -> tuple[str, ...]:
+    value = _required_value(section, key, section_name)
+    if not isinstance(value, list) or not value:
+        raise ConfigurationError(
+            f"配置项 {section_name}.{key} 必须是非空字符串数组"
+        )
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigurationError(
+                f"配置项 {section_name}.{key} 只能包含非空字符串"
+            )
+        normalized = item.strip().lower()
+        if normalized not in {"off", "on", "low", "medium", "max"}:
+            raise ConfigurationError(
+                f"配置项 {section_name}.{key} 包含不支持的推理模式：{item}"
+            )
+        if normalized not in result:
+            result.append(normalized)
+    return tuple(result)
+
+
 def _resolved_path(value: str, relative_root: Path) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else (relative_root / path).resolve()
+
+
+def select_ai_model(
+    settings: AppSettings,
+    profile_id: str,
+    *,
+    reasoning_mode: str | None = None,
+) -> AppSettings:
+    """Returns settings with one configured model profile selected."""
+    try:
+        normalized_id = AiModelProfile(profile_id.strip())
+    except ValueError as exc:
+        available = "、".join(item.value for item in AiModelProfile)
+        raise ConfigurationError(
+            f"未定义的大模型枚举值：{profile_id}",
+            details=f"可用模型枚举：{available}",
+        ) from exc
+    profile = next(
+        (item for item in settings.ai_models if item.profile_id == normalized_id),
+        None,
+    )
+    if profile is None:
+        available = "、".join(
+            item.profile_id.value for item in settings.ai_models
+        )
+        raise ConfigurationError(
+            f"未找到大模型配置：{normalized_id}",
+            details=f"可用模型配置：{available}",
+        )
+    selected_mode = (reasoning_mode or profile.default_reasoning_mode).strip().lower()
+    if selected_mode not in profile.reasoning_modes:
+        supported = "、".join(profile.reasoning_modes)
+        raise ConfigurationError(
+            f"模型 {profile.display_name} 不支持推理模式 {selected_mode}",
+            details=f"支持的模式：{supported}",
+        )
+    return replace(
+        settings,
+        ai=replace(profile, default_reasoning_mode=selected_mode),
+    )
+
+
+def _load_ai_models(
+    ai_root: dict[str, Any],
+    *,
+    config_dir: Path,
+) -> tuple[tuple[OllamaSettings, ...], AiModelProfile]:
+    ai_name = "ai"
+    provider = _text(ai_root, "provider", ai_name).lower()
+    if provider != "ollama":
+        raise ConfigurationError("配置项 ai.provider 目前只支持 ollama")
+    active_model_value = _text(ai_root, "active_model", ai_name)
+    try:
+        active_model = AiModelProfile(active_model_value)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"ai.active_model 不是已定义的模型枚举：{active_model_value}"
+        ) from exc
+    models_dir = _resolved_path(_text(ai_root, "models_dir", ai_name), config_dir)
+    if not models_dir.is_dir():
+        raise ConfigurationError(f"大模型配置目录不存在：{models_dir}")
+
+    base_url = _text(ai_root, "base_url", ai_name).rstrip("/")
+    chat_path = _text(ai_root, "chat_path", ai_name)
+    prompt_path = _resolved_path(_text(ai_root, "prompt_path", ai_name), config_dir)
+    profiles: list[OllamaSettings] = []
+    seen_ids: set[AiModelProfile] = set()
+
+    def sampling(
+        section: dict[str, Any], section_name: str
+    ) -> AiSamplingSettings:
+        return AiSamplingSettings(
+            temperature=_number(section, "temperature", section_name),
+            top_p=_number(section, "top_p", section_name),
+            top_k=_integer(section, "top_k", section_name),
+            min_p=_number(section, "min_p", section_name),
+            presence_penalty=_number(section, "presence_penalty", section_name),
+            repeat_penalty=_number(section, "repeat_penalty", section_name),
+        )
+
+    for profile_path in sorted(models_dir.glob("*.toml")):
+        try:
+            with profile_path.open("rb") as stream:
+                profile_data = tomllib.load(stream)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigurationError(
+                f"大模型配置 TOML 格式错误：{profile_path.name}",
+                details=str(exc),
+            ) from exc
+        model = _required_section(profile_data, "model")
+        sampling_root = _required_section(profile_data, "sampling")
+        non_thinking = _required_section(
+            sampling_root, "non_thinking", parent="sampling"
+        )
+        thinking = _required_section(sampling_root, "thinking", parent="sampling")
+        section_name = f"{profile_path.name}:model"
+        profile_id_value = _text(model, "id", section_name)
+        try:
+            profile_id = AiModelProfile(profile_id_value)
+        except ValueError as exc:
+            raise ConfigurationError(
+                f"模型配置使用了未定义的枚举值：{profile_id_value}"
+            ) from exc
+        if profile_id in seen_ids:
+            raise ConfigurationError(f"大模型配置 ID 重复：{profile_id}")
+        seen_ids.add(profile_id)
+        reasoning_modes = _string_list(
+            model, "reasoning_modes", section_name
+        )
+        default_mode = _text(
+            model, "default_reasoning_mode", section_name
+        ).lower()
+        if default_mode not in reasoning_modes:
+            raise ConfigurationError(
+                f"配置项 {section_name}.default_reasoning_mode "
+                "必须存在于 reasoning_modes 中"
+            )
+        request_timeout = _integer(
+            model, "request_timeout_seconds", section_name
+        )
+        num_ctx = _integer(model, "num_ctx", section_name)
+        num_predict = _integer(model, "num_predict", section_name)
+        if request_timeout == 0 or num_ctx == 0 or num_predict == 0:
+            raise ConfigurationError(
+                f"配置 {profile_path.name} 的超时、num_ctx 和 num_predict 必须大于 0"
+            )
+        profiles.append(
+            OllamaSettings(
+                profile_id=profile_id,
+                display_name=_text(model, "display_name", section_name),
+                source_url=_text(model, "source_url", section_name),
+                native_context_length=_integer(
+                    model, "native_context_length", section_name
+                ),
+                reasoning_modes=reasoning_modes,
+                base_url=base_url,
+                chat_path=chat_path,
+                model=_text(model, "ollama_name", section_name),
+                prompt_path=prompt_path,
+                default_reasoning_mode=default_mode,
+                request_timeout_seconds=request_timeout,
+                keep_alive=_text(model, "keep_alive", section_name),
+                num_ctx=num_ctx,
+                num_predict=num_predict,
+                retry_count=_integer(model, "retry_count", section_name),
+                retry_delay_ms=_integer(model, "retry_delay_ms", section_name),
+                non_thinking=sampling(
+                    non_thinking,
+                    f"{profile_path.name}:sampling.non_thinking",
+                ),
+                thinking=sampling(
+                    thinking,
+                    f"{profile_path.name}:sampling.thinking",
+                ),
+            )
+        )
+    if not profiles:
+        raise ConfigurationError(f"大模型配置目录中没有 TOML 文件：{models_dir}")
+    missing_profiles = set(AiModelProfile) - seen_ids
+    if missing_profiles:
+        missing = "、".join(
+            item.value
+            for item in sorted(missing_profiles, key=lambda value: value.value)
+        )
+        raise ConfigurationError(f"模型枚举缺少对应配置文件：{missing}")
+    if active_model not in seen_ids:
+        raise ConfigurationError(f"ai.active_model 指定了不存在的模型：{active_model}")
+    return tuple(profiles), active_model
 
 
 def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
@@ -205,6 +439,8 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         erp_selectors, "login", parent="erp.selectors"
     )
 
+    ai_root = _required_section(data, "ai")
+
     relative_root = data_root or Path.cwd()
     common_name = "common"
     rights_browser_name = "rights_statement.browser"
@@ -223,6 +459,14 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     page_url = _text(rights_site, "page_url", rights_site_name)
     if not login_url:
         raise ConfigurationError("配置项 rights_statement.site.login_url 不能为空")
+
+    ai_models, active_ai_model = _load_ai_models(
+        ai_root,
+        config_dir=path.parent.resolve(),
+    )
+    active_ai = next(
+        item for item in ai_models if item.profile_id == active_ai_model
+    )
 
     return AppSettings(
         browser=BrowserSettings(
@@ -357,4 +601,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
                 submit=_text(erp_login, "submit", erp_login_name),
             ),
         ),
+        ai=active_ai,
+        ai_models=ai_models,
     )

@@ -28,12 +28,12 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 105
+            Layout.preferredHeight: page.height < 700 ? 82 : 105
             color: "#f9fbfd"
             border.color: "#d6dde7"
             Column {
                 anchors.left: parent.left
-                anchors.leftMargin: 32
+                anchors.leftMargin: page.width < 1000 ? 18 : 32
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
                 Text {
@@ -53,13 +53,13 @@ Item {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 24
-            Layout.topMargin: 20
-            spacing: 16
+            Layout.margins: page.height < 700 ? 12 : 24
+            Layout.topMargin: page.height < 700 ? 10 : 20
+            spacing: page.height < 700 ? 10 : 16
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 78
+                Layout.preferredHeight: page.height < 700 ? 62 : 78
                 radius: 9
                 color: "#fbfcfe"
                 border.color: "#d3dbe6"
@@ -100,7 +100,7 @@ Item {
                             }
                             Rectangle {
                                 visible: stepItem.index < 2
-                                Layout.preferredWidth: 112
+                                Layout.preferredWidth: page.width < 1100 ? 52 : 112
                                 Layout.preferredHeight: 2
                                 color: stepItem.modelData.active ? "#1677ff" : "#cfd7e2"
                             }
@@ -123,8 +123,8 @@ Item {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 20
-                        spacing: 15
+                        anchors.margins: page.height < 700 ? 14 : 20
+                        spacing: page.height < 700 ? 10 : 15
 
                         Text {
                             text: "待上传文件"
@@ -190,7 +190,7 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 170
+                            Layout.preferredHeight: page.height < 700 ? 118 : 170
                             radius: 9
                             color: "#f7faff"
                             border.width: 1
@@ -249,7 +249,7 @@ Item {
                 }
 
                 Rectangle {
-                    Layout.preferredWidth: 330
+                    Layout.preferredWidth: page.width < 1100 ? 280 : 330
                     Layout.fillHeight: true
                     radius: 10
                     color: "#fbfcfe"
@@ -257,8 +257,8 @@ Item {
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 20
-                        spacing: 14
+                        anchors.margins: page.height < 700 ? 14 : 20
+                        spacing: page.height < 700 ? 9 : 14
                         Text {
                             text: "上传说明"
                             color: "#202632"
@@ -275,7 +275,7 @@ Item {
                                 id: instructionItem
                                 required property var modelData
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 104
+                                Layout.preferredHeight: page.height < 700 ? 78 : 104
                                 radius: 8
                                 color: "#f7f9fc"
                                 border.color: "#d7e0ea"
@@ -308,8 +308,8 @@ Item {
 
     Dialog {
         id: taskNumberDialog
-        width: 540
-        height: 430
+        width: Math.min(540, page.width - 32)
+        height: Math.min(430, page.height - 32)
         x: Math.round((page.width - width) / 2)
         y: Math.round((page.height - height) / 2)
         modal: true
@@ -432,8 +432,8 @@ Item {
 
     Dialog {
         id: uploadResultDialog
-        width: 560
-        height: 330
+        width: Math.min(560, page.width - 32)
+        height: Math.min(330, page.height - 32)
         x: Math.round((page.width - width) / 2)
         y: Math.round((page.height - height) / 2)
         modal: true

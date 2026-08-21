@@ -4,6 +4,8 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from ehrm.modules.ai.models import AiModelProfile
+
 
 @dataclass(frozen=True, slots=True)
 class UserPreferences:
@@ -13,6 +15,8 @@ class UserPreferences:
     upload_to_erp: bool = False
     open_output_folder: bool = False
     erp_username: str = ""
+    ai_model_profile: str = ""
+    ai_reasoning_mode: str = ""
     execution_speed: str = "standard"
     no_result_confirm_seconds: int = 10
     preview_download_delay_ms: int = 1500
@@ -50,9 +54,16 @@ class UserPreferencesStore:
         for key in ("upload_to_erp", "open_output_folder"):
             if not isinstance(values[key], bool):
                 values[key] = defaults[key]
-        for key in ("output_path", "erp_username"):
+        for key in ("output_path", "erp_username", "ai_model_profile"):
             if not isinstance(values[key], str):
                 values[key] = defaults[key]
+        valid_model_profiles = {"", *(item.value for item in AiModelProfile)}
+        if values["ai_model_profile"] not in valid_model_profiles:
+            values["ai_model_profile"] = ""
+        if not isinstance(values["ai_reasoning_mode"], str) or values[
+            "ai_reasoning_mode"
+        ] not in {"", "off", "on", "low", "medium", "max"}:
+            values["ai_reasoning_mode"] = ""
         if not isinstance(values["export_mode"], str) or values[
             "export_mode"
         ] not in {"individual", "batch"}:

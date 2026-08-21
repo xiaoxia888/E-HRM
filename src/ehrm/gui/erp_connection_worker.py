@@ -40,7 +40,9 @@ class ErpConnectionWorker(QThread):
                 self.status_changed.emit,
                 self._cancel_requested.is_set,
             ) as session:
-                session.ensure_authenticated(self._credentials)
+                # Connection tests are credential tests, so they must never
+                # succeed solely because a previous browser session is valid.
+                session.ensure_authenticated(self._credentials, force_login=True)
             self.succeeded.emit()
         except EhrmError as exc:
             summary = display_message(exc.code, exc.message)

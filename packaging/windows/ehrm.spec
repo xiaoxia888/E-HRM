@@ -33,6 +33,16 @@ pw_datas = [
 datas = pw_datas + [
     (str(PROJECT_ROOT / "config" / "settings.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "error_messages.toml"), "config"),
+    (str(PROJECT_ROOT / "config" / "models"), "config/models"),
+    (
+        str(
+            PROJECT_ROOT
+            / "config"
+            / "prompts"
+            / "erp_task_extraction_system.txt"
+        ),
+        "config/prompts",
+    ),
     (str(SOURCE_ROOT / "ehrm" / "gui" / "qml"), "ehrm/gui/qml"),
     (str(SOURCE_ROOT / "ehrm" / "gui" / "assets"), "ehrm/gui/assets"),
     (

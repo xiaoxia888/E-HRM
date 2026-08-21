@@ -20,6 +20,12 @@ def main() -> int:
         bundle / "E-HRM.exe",
         resource_root / "config" / "settings.toml",
         resource_root / "config" / "error_messages.toml",
+        resource_root / "config" / "models" / "qwen3_5_9b.toml",
+        resource_root / "config" / "models" / "qwen3_8_27b.toml",
+        resource_root
+        / "config"
+        / "prompts"
+        / "erp_task_extraction_system.txt",
         resource_root / "ehrm" / "gui" / "qml" / "Main.qml",
         resource_root / "ehrm" / "gui" / "qml" / "SystemSettingsPage.qml",
         resource_root / "playwright" / "driver" / "node.exe",

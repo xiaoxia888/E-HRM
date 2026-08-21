@@ -10,8 +10,8 @@ ApplicationWindow {
     required property var backend
     width: 1480
     height: 900
-    minimumWidth: 1180
-    minimumHeight: 720
+    minimumWidth: 900
+    minimumHeight: 500
     visible: true
     title: "信息化人力工作台"
     color: "#edf2f7"
@@ -20,7 +20,8 @@ ApplicationWindow {
     property int activeModule: 0
 
     onClosing: function(close) {
-        if (window.backend.running || window.backend.erpUploading) {
+        if (window.backend.running || window.backend.erpUploading
+                || window.backend.erpTaskExtractionRunning) {
             close.accepted = false
             runningCloseDialog.open()
         }
@@ -58,7 +59,7 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: window.width < 1180 ? 184 : 220
             Layout.fillHeight: true
             color: "#ffffff"
             border.color: "#d6dde7"
@@ -146,14 +147,14 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 105
+                        Layout.preferredHeight: window.height < 700 ? 82 : 105
                         color: "#f9fbfd"
                         border.color: "#d6dde7"
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 32
-                            anchors.rightMargin: 28
+                            anchors.leftMargin: window.width < 1100 ? 18 : 32
+                            anchors.rightMargin: window.width < 1100 ? 16 : 28
                             Column {
                                 Layout.fillWidth: true
                                 spacing: 6
@@ -164,10 +165,18 @@ ApplicationWindow {
                                     font.weight: Font.Bold
                                 }
                                 Text {
-                                    text: "导入人员信息，自动查询并下载单位权益单"
+                                    text: "从 Excel 或 ERP 获取人员信息，自动查询并下载单位权益单"
                                     color: "#6b7380"
                                     font.pixelSize: 14
                                 }
+                            }
+                            AppButton {
+                                text: window.width < 1160 ? "获取申请" : "获取申请信息"
+                                primary: true
+                                enabled: !window.backend.running
+                                         && !window.backend.erpUploading
+                                         && !window.backend.erpTaskExtractionRunning
+                                onClicked: erpTaskQueryDialog.open()
                             }
                             AppButton {
                                 text: "下载 Excel 模板"
@@ -186,8 +195,8 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.margins: 24
-                        Layout.topMargin: 20
+                        Layout.margins: window.height < 700 ? 12 : 24
+                        Layout.topMargin: window.height < 700 ? 10 : 20
                         spacing: 18
 
                         Rectangle {
@@ -219,31 +228,32 @@ ApplicationWindow {
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: window.backend.imported
-                                        text: "· 校验通过"
-                                        color: "#12a150"
+                                        visible: window.backend.hasRecords
+                                        text: window.backend.recordStatusLabel
+                                        color: window.backend.recordIssueCount > 0
+                                            ? "#c77800" : "#12a150"
                                         font.pixelSize: 15
                                         font.weight: Font.DemiBold
                                     }
                                 }
 
-                                Row {
+                                RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 12
                                     MetricCard {
-                                        width: 205
+                                        Layout.fillWidth: true
                                         title: "人员"
                                         value: window.backend.peopleCount.toString()
                                         iconSource: "../assets/people.svg"
                                     }
                                     MetricCard {
-                                        width: 205
+                                        Layout.fillWidth: true
                                         title: "查询条件"
                                         value: window.backend.conditionCount + " 组"
                                         iconSource: "../assets/list.svg"
                                     }
                                     MetricCard {
-                                        width: 205
+                                        Layout.fillWidth: true
                                         title: "预计 PDF"
                                         value: window.backend.expectedPdfCount + " 份"
                                         iconSource: "../assets/document.svg"
@@ -252,17 +262,17 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: warningText.implicitHeight + 24
+                                    Layout.preferredHeight: Math.max(66, warningText.implicitHeight + 24)
                                     radius: 7
                                     color: "#fff8e8"
                                     border.color: "#ffc866"
-                                    Row {
+                                    RowLayout {
                                         anchors.fill: parent
                                         anchors.margins: 12
                                         spacing: 10
                                         Rectangle {
-                                            width: 19
-                                            height: 19
+                                            Layout.preferredWidth: 19
+                                            Layout.preferredHeight: 19
                                             radius: 10
                                             color: "transparent"
                                             border.color: "#b87503"
@@ -276,18 +286,25 @@ ApplicationWindow {
                                         }
                                         Text {
                                             id: warningText
-                                            width: parent.width - 34
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
                                             text: window.backend.planMessage
                                             color: "#9a6200"
                                             font.pixelSize: 14
                                             wrapMode: Text.WordWrap
                                         }
+                                        AppButton {
+                                            visible: window.backend.recordDetailCount > 0
+                                            text: window.backend.recordIssueCount > 0
+                                                ? "查看问题 (" + window.backend.recordIssueCount + ")"
+                                                : "查看提示"
+                                            onClicked: recordIssuesDialog.openForRow(0)
+                                        }
                                     }
                                 }
 
                                 Text {
-                                    text: "导入数据预览"
+                                    text: "数据预览"
                                     color: "#202632"
                                     font.pixelSize: 18
                                     font.weight: Font.Bold
@@ -302,8 +319,8 @@ ApplicationWindow {
                                     border.color: "#cfd8e4"
                                     clip: true
 
-                                    property var ratios: [0.16, 0.14, 0.11, 0.09, 0.18, 0.08, 0.12, 0.12]
-                                    property var headers: ["任务编号", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
+                                    property var ratios: [0.045, 0.15, 0.13, 0.105, 0.085, 0.17, 0.075, 0.12, 0.12]
+                                    property var headers: ["状态", "任务编号", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
 
                                     Column {
                                         anchors.fill: parent
@@ -349,10 +366,74 @@ ApplicationWindow {
                                                 required property var modelData
                                                 width: recordList.width
                                                 height: 50
-                                                color: recordRow.index % 2 ? "#f6f8fb" : "#ffffff"
-                                                border.color: "#e1e7ef"
+                                                color: modelData.rowStatus === "error" ? "#fff7f6"
+                                                    : modelData.rowStatus === "warning" ? "#fffaf0"
+                                                    : modelData.rowStatus === "info" ? "#f5f9ff"
+                                                    : recordRow.index % 2 ? "#f6f8fb" : "#ffffff"
+                                                border.color: modelData.rowStatus === "error" ? "#f2c5c1"
+                                                    : modelData.rowStatus === "warning" ? "#efd9a5"
+                                                    : "#e1e7ef"
                                                 Row {
                                                     anchors.fill: parent
+                                                    Item {
+                                                        width: tablePanel.width * tablePanel.ratios[0]
+                                                        height: 50
+
+                                                        Rectangle {
+                                                            id: statusIcon
+                                                            anchors.centerIn: parent
+                                                            width: 21
+                                                            height: 21
+                                                            radius: 11
+                                                            color: "transparent"
+                                                            border.width: 1.5
+                                                            border.color: recordRow.modelData.rowStatus === "error" ? "#d92d20"
+                                                                : recordRow.modelData.rowStatus === "warning" ? "#d98b00"
+                                                                : recordRow.modelData.rowStatus === "info" ? "#1677ff"
+                                                                : "#2e9b61"
+                                                            Text {
+                                                                anchors.centerIn: parent
+                                                                text: recordRow.modelData.rowStatus === "error" ? "!"
+                                                                    : recordRow.modelData.rowStatus === "success" ? "✓" : "i"
+                                                                color: statusIcon.border.color
+                                                                font.pixelSize: recordRow.modelData.rowStatus === "success" ? 12 : 13
+                                                                font.weight: Font.Bold
+                                                            }
+                                                        }
+
+                                                        MouseArea {
+                                                            id: statusMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: recordRow.modelData.rowIssueCount > 0
+                                                                ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                            onClicked: {
+                                                                if (recordRow.modelData.rowIssueCount > 0)
+                                                                    recordIssuesDialog.openForRow(recordRow.modelData.rowNumber)
+                                                            }
+
+                                                            ToolTip {
+                                                                visible: statusMouse.containsMouse
+                                                                delay: 280
+                                                                timeout: 12000
+                                                                y: statusMouse.height + 4
+                                                                contentItem: Text {
+                                                                    width: 330
+                                                                    text: recordRow.modelData.rowStatusLabel + "\n"
+                                                                        + recordRow.modelData.rowIssueTooltip
+                                                                    color: "#f8fafc"
+                                                                    font.pixelSize: 13
+                                                                    lineHeight: 1.25
+                                                                    wrapMode: Text.WordWrap
+                                                                }
+                                                                background: Rectangle {
+                                                                    color: "#243247"
+                                                                    radius: 7
+                                                                    border.color: "#3d4c61"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                     Repeater {
                                                         model: [
                                                             recordRow.modelData.taskNumber, recordRow.modelData.unit,
@@ -365,19 +446,17 @@ ApplicationWindow {
                                                             id: dataCell
                                                             required property int index
                                                             required property string modelData
-                                                            width: tablePanel.width * tablePanel.ratios[dataCell.index]
+                                                            width: tablePanel.width * tablePanel.ratios[dataCell.index + 1]
                                                             height: 50
-                                                            Text {
+                                                            SelectableElidedText {
                                                                 anchors.fill: parent
                                                                 anchors.leftMargin: 10
                                                                 anchors.rightMargin: 8
-                                                                verticalAlignment: Text.AlignVCenter
                                                                 horizontalAlignment: dataCell.index >= 5 ? Text.AlignHCenter : Text.AlignLeft
                                                                 text: dataCell.modelData
-                                                                color: "#303744"
-                                                                font.pixelSize: 13
-                                                                font.weight: dataCell.index === 0 ? Font.Medium : Font.Normal
-                                                                elide: Text.ElideRight
+                                                                textColor: "#303744"
+                                                                pixelSize: 13
+                                                                emphasized: dataCell.index === 0
                                                             }
                                                         }
                                                     }
@@ -414,7 +493,9 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            Layout.preferredWidth: 360
+                            id: exportPanel
+                            Layout.preferredWidth: window.width < 1180 ? 310 : 360
+                            Layout.minimumWidth: 285
                             Layout.fillHeight: true
                             radius: 10
                             color: "#fbfcfe"
@@ -422,8 +503,8 @@ ApplicationWindow {
 
                             ColumnLayout {
                                 anchors.fill: parent
-                                anchors.margins: 20
-                                spacing: 14
+                                anchors.margins: window.height < 700 ? 14 : 20
+                                spacing: 10
 
                                 Text {
                                     text: "导出设置"
@@ -432,130 +513,123 @@ ApplicationWindow {
                                     font.weight: Font.Bold
                                 }
 
-                                ModeCard {
+                                ScrollView {
                                     Layout.fillWidth: true
-                                    title: "相同查询条件合并"
-                                    helper: "预计生成 " + window.backend.batchExpectedPdfCount + " 份 PDF"
-                                    selected: window.backend.exportMode === "batch"
-                                    onClicked: window.backend.setExportMode("batch")
-                                }
-                                ModeCard {
-                                    Layout.fillWidth: true
-                                    title: "每人单独一份"
-                                    helper: "预计生成 " + window.backend.peopleCount + " 份 PDF"
-                                    selected: window.backend.exportMode === "individual"
-                                    onClicked: window.backend.setExportMode("individual")
-                                }
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    contentWidth: availableWidth
+                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 116
-                                    radius: 8
-                                    color: "#f5f8fc"
-                                    border.color: "#d7e0ea"
                                     Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 15
-                                        spacing: 11
-                                        Text {
-                                            text: "高级设置"
-                                            color: "#29303d"
-                                            font.pixelSize: 15
-                                            font.weight: Font.DemiBold
-                                        }
-                                        RowLayout {
+                                        width: exportPanel.width - (window.height < 700 ? 28 : 40)
+                                        spacing: 12
+
+                                        ModeCard {
                                             width: parent.width
-                                            Text {
-                                                Layout.fillWidth: true
-                                                text: "单批最多人数"
-                                                color: "#303744"
-                                                font.pixelSize: 14
-                                            }
-                                            BatchSizeControl {
-                                                from: 1
-                                                to: 100
-                                                value: window.backend.batchSize
-                                                enabled: window.backend.exportMode === "batch"
-                                                onValueEdited: function(value) {
-                                                    window.backend.setBatchSize(value)
+                                            title: "相同查询条件合并"
+                                            helper: "预计生成 " + window.backend.batchExpectedPdfCount + " 份 PDF"
+                                            selected: window.backend.exportMode === "batch"
+                                            onClicked: window.backend.setExportMode("batch")
+                                        }
+                                        ModeCard {
+                                            width: parent.width
+                                            title: "每人单独一份"
+                                            helper: "预计生成 " + window.backend.peopleCount + " 份 PDF"
+                                            selected: window.backend.exportMode === "individual"
+                                            onClicked: window.backend.setExportMode("individual")
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            height: 116
+                                            radius: 8
+                                            color: "#f5f8fc"
+                                            border.color: "#d7e0ea"
+                                            Column {
+                                                anchors.fill: parent
+                                                anchors.margins: 15
+                                                spacing: 11
+                                                Text {
+                                                    text: "高级设置"
+                                                    color: "#29303d"
+                                                    font.pixelSize: 15
+                                                    font.weight: Font.DemiBold
+                                                }
+                                                RowLayout {
+                                                    width: parent.width
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: "单批最多人数"
+                                                        color: "#303744"
+                                                        font.pixelSize: 14
+                                                    }
+                                                    BatchSizeControl {
+                                                        from: 1
+                                                        to: 100
+                                                        value: window.backend.batchSize
+                                                        enabled: window.backend.exportMode === "batch"
+                                                        onValueEdited: function(value) {
+                                                            window.backend.setBatchSize(value)
+                                                        }
+                                                    }
+                                                }
+                                                Text {
+                                                    text: "每份 PDF 最多包含 1–100 人"
+                                                    color: "#8a93a2"
+                                                    font.pixelSize: 12
                                                 }
                                             }
                                         }
-                                        Text {
-                                            text: "每份 PDF 最多包含 1–100 人"
-                                            color: "#8a93a2"
-                                            font.pixelSize: 12
-                                        }
-                                    }
-                                }
 
-                                Text {
-                                    text: "保存位置"
-                                    color: "#303744"
-                                    font.pixelSize: 14
-                                    font.weight: Font.Medium
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 42
-                                        radius: 7
-                                        color: "#ffffff"
-                                        border.color: "#cbd5e1"
                                         Text {
-                                            anchors.fill: parent
-                                            anchors.leftMargin: 12
-                                            anchors.rightMargin: 12
-                                            verticalAlignment: Text.AlignVCenter
-                                            text: window.backend.outputPath
-                                            color: "#394150"
-                                            font.pixelSize: 13
-                                            elide: Text.ElideMiddle
-                                        }
-                                    }
-                                    AppButton {
-                                        text: "更改"
-                                        onClicked: outputDialog.open()
-                                    }
-                                }
-
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 3
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 7
-                                        CheckBox {
-                                            id: erpUploadCheck
-                                            checked: window.backend.uploadToErp
-                                            enabled: !window.backend.running
-                                            onToggled: window.backend.setUploadToErp(checked)
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "下载完成后自动上传至 ERP"
+                                            text: "保存位置"
                                             color: "#303744"
                                             font.pixelSize: 14
                                             font.weight: Font.Medium
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                enabled: !window.backend.running
-                                                onClicked: window.backend.setUploadToErp(!window.backend.uploadToErp)
+                                        }
+                                        RowLayout {
+                                            width: parent.width
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 42
+                                                radius: 7
+                                                color: "#ffffff"
+                                                border.color: "#cbd5e1"
+                                                Text {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 12
+                                                    anchors.rightMargin: 12
+                                                    verticalAlignment: Text.AlignVCenter
+                                                    text: window.backend.outputPath
+                                                    color: "#394150"
+                                                    font.pixelSize: 13
+                                                    elide: Text.ElideMiddle
+                                                }
+                                            }
+                                            AppButton {
+                                                text: "更改"
+                                                onClicked: outputDialog.open()
                                             }
                                         }
-                                    }
-                                    Text {
-                                        Layout.fillWidth: true
-                                        Layout.leftMargin: 34
-                                        text: "按 Excel 任务编号匹配申请并静默上传 PDF"
-                                        color: "#7a8493"
-                                        font.pixelSize: 12
-                                        wrapMode: Text.WordWrap
+
+                                        Item {
+                                            width: 1
+                                            height: 4
+                                        }
                                     }
                                 }
 
-                                Item { Layout.fillHeight: true }
+                                SettingsToggle {
+                                    Layout.fillWidth: true
+                                    checked: window.backend.uploadToErp
+                                    enabled: !window.backend.running
+                                    text: "下载完成后自动上传至 ERP"
+                                    description: "按任务编号匹配申请并静默上传 PDF"
+                                    onToggled: function(value) {
+                                        window.backend.setUploadToErp(value)
+                                    }
+                                }
 
                                 AppButton {
                                     Layout.fillWidth: true
@@ -567,7 +641,10 @@ ApplicationWindow {
                                             : "停止任务"
                                     primary: !window.backend.running
                                     danger: window.backend.running
-                                    enabled: window.backend.imported && !window.backend.stopping
+                                    enabled: !window.backend.stopping
+                                        && (window.backend.running
+                                            || (window.backend.hasRecords
+                                                && window.backend.recordIssueCount === 0))
                                     onClicked: {
                                         if (window.backend.running)
                                             stopTaskDialog.open()
@@ -582,7 +659,7 @@ ApplicationWindow {
             }
 
             ErpUploadPage {
-                backend: window.backend
+                backend: appBackend
             }
             PlaceholderPage {
                 title: "任务记录"
@@ -590,9 +667,24 @@ ApplicationWindow {
                 description: "后续将支持按人员、时间和状态筛选，并可仅重试失败项目。"
             }
             SystemSettingsPage {
-                backend: window.backend
+                backend: appBackend
             }
         }
+    }
+
+    ErpTaskQueryDialog {
+        id: erpTaskQueryDialog
+        backend: appBackend
+    }
+
+    ErpTaskProgressDialog {
+        id: erpTaskProgressDialog
+        backend: appBackend
+    }
+
+    RecordIssuesDialog {
+        id: recordIssuesDialog
+        backend: appBackend
     }
 
     Dialog {
@@ -891,10 +983,14 @@ ApplicationWindow {
                 AppButton {
                     text: "停止任务"
                     danger: true
-                    enabled: window.backend.erpUploading || !window.backend.stopping
+                    enabled: window.backend.erpUploading
+                             || window.backend.erpTaskExtractionRunning
+                             || !window.backend.stopping
                     onClicked: {
                         runningCloseDialog.close()
-                        if (window.backend.erpUploading)
+                        if (window.backend.erpTaskExtractionRunning)
+                            window.backend.requestErpTaskExtractionStop()
+                        else if (window.backend.erpUploading)
                             window.backend.requestManualErpStop()
                         else
                             stopTaskDialog.open()
@@ -924,6 +1020,16 @@ ApplicationWindow {
             resultDialog.message = message
             resultDialog.details = details
             resultDialog.open()
+        }
+        function onErpTaskExtractionStarted() {
+            erpTaskQueryDialog.close()
+            erpTaskProgressDialog.open()
+        }
+        function onErpTaskExtractionFinished(title, message) {
+            erpTaskProgressDialog.close()
+            messageDialog.heading = title
+            messageDialog.message = message
+            messageDialog.open()
         }
     }
 }

@@ -105,3 +105,18 @@ password_env = "EHRM_ERP_PASSWORD"
 username = 'input[name="usercode"], #usercode'
 password = 'input[name="userpass"], #userpass, input[type="password"]'
 submit = 'button:has-text("登录"), button:has-text("登 录"), input[type="submit"]'
+
+# -----------------------------------------------------------------------------
+# AI / ERP 事务解析模块
+# -----------------------------------------------------------------------------
+
+[ai]
+# 只在这里选择默认模型；每个模型的运行和采样参数位于 models 目录。
+provider = "ollama"
+active_model = "qwen3_8_27b"
+models_dir = "models"
+
+# Ollama 连接和业务提示词由所有模型共用。
+base_url = "http://192.168.31.201:11434"
+chat_path = "/api/chat"
+prompt_path = "prompts/erp_task_extraction_system.txt"

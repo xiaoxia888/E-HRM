@@ -3,6 +3,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from ehrm.gui.template_service import RightsStatementTemplateService
+from ehrm.modules.rights_statement.excel_models import EmployeeRecord
 
 
 def test_template_contains_required_columns_and_insurance_dropdown(
@@ -30,5 +31,41 @@ def test_template_contains_required_columns_and_insurance_dropdown(
         assert validations[0].formula1 == '"养老,工伤,失业"'
         assert "F2:F1001" in str(validations[0].sqref)
         assert "填写说明" in workbook.sheetnames
+    finally:
+        workbook.close()
+
+
+def test_erp_records_can_be_written_as_execution_source(tmp_path: Path) -> None:
+    destination = RightsStatementTemplateService().write_records(
+        tmp_path / "ERP申请解析数据.xlsx",
+        [
+            EmployeeRecord(
+                row_number=2,
+                unit="南京南化建设有限公司",
+                department="技术中心",
+                name="张三",
+                identity_number="320101199001011234",
+                insurance_type="养老",
+                start_month="2025-07",
+                end_month="2026-07",
+                task_number="RLSQ20260818-0004",
+            )
+        ],
+    )
+
+    workbook = load_workbook(destination, data_only=True)
+    try:
+        sheet = workbook["ERP申请解析数据"]
+        assert sheet.max_row == 2
+        assert [cell.value for cell in sheet[2]] == [
+            "RLSQ20260818-0004",
+            "南京南化建设有限公司",
+            "技术中心",
+            "张三",
+            "320101199001011234",
+            "养老",
+            "2025-07",
+            "2026-07",
+        ]
     finally:
         workbook.close()

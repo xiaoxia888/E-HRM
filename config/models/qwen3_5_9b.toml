@@ -1,0 +1,36 @@
+# Qwen3.5-9B 模型档案
+# 官方原生上下文为 262144；本项目输入较短，运行时先使用 32768。
+
+[model]
+id = "qwen3_5_9b"
+display_name = "Qwen3.5-9B"
+ollama_name = "qwen3.5:9b"
+source_url = "https://www.modelscope.cn/models/Qwen/Qwen3.5-9B"
+native_context_length = 262144
+reasoning_modes = ["off", "on"]
+default_reasoning_mode = "off"
+
+request_timeout_seconds = 300
+keep_alive = "10m"
+num_ctx = 32768
+num_predict = 8192
+retry_count = 1
+retry_delay_ms = 1000
+
+# Qwen3.5 官方推荐的通用非思考采样参数。
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0
+
+# Qwen3.5 官方推荐的通用思考采样参数。
+[sampling.thinking]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+repeat_penalty = 1.0

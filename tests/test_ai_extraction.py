@@ -1,0 +1,630 @@
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import pytest
+
+from ehrm.core.exceptions import AiResponseInvalidError
+from ehrm.core.settings import load_settings
+from ehrm.modules.ai.models import (
+    ExtractedPerson,
+    ExtractionResponse,
+    ModelMetrics,
+    ReasoningMode,
+    TaskExtraction,
+    validate_extraction_payload,
+)
+from ehrm.modules.erp.extraction_service import ErpTaskExtractionService
+from ehrm.modules.erp.models import (
+    ErpCredentials,
+    ErpPersonRecord,
+    ErpTaskQueryResult,
+    ErpTaskRecord,
+)
+from ehrm.modules.erp.person_service import ErpPersonLookupService
+
+
+def test_reasoning_modes_use_ollama_native_values() -> None:
+    assert ReasoningMode.OFF.ollama_think is False
+    assert ReasoningMode.LOW.ollama_think == "low"
+    assert ReasoningMode.MEDIUM.ollama_think == "medium"
+    assert ReasoningMode.MAX.value == "max"
+    assert ReasoningMode.MAX.ollama_think == "max"
+
+
+def test_extraction_payload_is_strictly_validated() -> None:
+    result = validate_extraction_payload(
+        {
+            "people": [
+                {
+                    "name": "张三",
+                    "social_security_number": "320101199001011234",
+                    "start_month": "2025-08",
+                    "end_month": "2026-07",
+                    "time_expression": "近一年",
+                    "evidence": "张三需打印近一年社保",
+                    "date_basis": "relative_months",
+                    "confidence": 0.96,
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    assert result.people[0].name == "张三"
+    assert result.people[0].social_security_number == "320101199001011234"
+    assert result.people[0].end_month == "2026-07"
+
+
+def test_extraction_rejects_reversed_month_range() -> None:
+    with pytest.raises(AiResponseInvalidError, match="开始月份晚于结束月份"):
+        validate_extraction_payload(
+            {
+                "people": [
+                    {
+                        "name": "张三",
+                        "social_security_number": None,
+                        "start_month": "2026-08",
+                        "end_month": "2026-07",
+                        "time_expression": "",
+                        "evidence": "张三",
+                        "date_basis": "explicit_range",
+                        "confidence": 0.8,
+                    }
+                ],
+                "needs_review": False,
+                "review_reasons": [],
+                "warnings": [],
+            }
+        )
+
+
+def test_query_and_model_extraction_preserves_order_and_flattens_people(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = (
+        ErpTaskRecord(
+            id="id-2",
+            code="RLSQ-002",
+            initiated_date="2026-08-20",
+            title="张三社保打印",
+            description="近一年",
+            transaction_type="社保咨询",
+            status="0",
+            originator="申请人",
+            department="技术中心",
+        ),
+        ErpTaskRecord(
+            id="id-1",
+            code="RLSQ-001",
+            initiated_date="2026-08-19",
+            title="李四社保打印",
+            description="近半年",
+            transaction_type="社保咨询",
+            status="0",
+            originator="申请人",
+            department="技术中心",
+        ),
+    )
+    calls: list[str] = []
+
+    class FakeQueryService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def query_tasks(self, *args, **kwargs) -> ErpTaskQueryResult:
+            return ErpTaskQueryResult(
+                transaction_type="社保咨询",
+                records=records,
+                total_count=2,
+                pages_fetched=1,
+            )
+
+    class FakeModelClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def ensure_available(self) -> None:
+            pass
+
+        def extract(
+            self, record: ErpTaskRecord, mode: ReasoningMode
+        ) -> ExtractionResponse:
+            calls.append(record.code)
+            person_name = "张三" if record.code == "RLSQ-002" else "李四"
+            return ExtractionResponse(
+                extraction=TaskExtraction(
+                    people=(
+                        ExtractedPerson(
+                            name=person_name,
+                            start_month="2025-08",
+                            end_month="2026-07",
+                            time_expression="近一年",
+                            evidence=f"{person_name}近一年",
+                            date_basis="relative_months",
+                            confidence=0.9,
+                        ),
+                    ),
+                    needs_review=False,
+                    review_reasons=(),
+                    warnings=(),
+                ),
+                metrics=ModelMetrics(
+                    model="qwen3.8:27b",
+                    reasoning_mode=mode.value,
+                    ollama_think=mode.ollama_think,
+                    done_reason="stop",
+                    total_duration_ns=1,
+                    prompt_eval_count=10,
+                    eval_count=20,
+                    thinking_characters=0,
+                ),
+            )
+
+    class FakePersonLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            return {}, {
+                name: (
+                    ErpPersonRecord(
+                        id=f"person-{name}",
+                        employee_code=f"code-{name}",
+                        name=name,
+                        identity_number=(
+                            "320101199001011234"
+                            if name == "张三"
+                            else "320101199002021235"
+                        ),
+                        department="技术中心",
+                        company="测试公司",
+                        status="0",
+                        is_quit="0",
+                    ),
+                )
+                for name in names
+            }
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpTaskQueryService",
+        FakeQueryService,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.OllamaTaskExtractionClient",
+        FakeModelClient,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        FakePersonLookupService,
+    )
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+
+    result = ErpTaskExtractionService(
+        settings,
+        logging.getLogger("test.ai.workflow"),
+    ).run("社保咨询", reasoning_mode="medium")
+
+    assert calls == ["RLSQ-002", "RLSQ-001"]
+    assert result["summary"] == {
+        "tasks_total": 2,
+        "tasks_succeeded": 2,
+        "tasks_failed": 0,
+        "tasks_needing_review": 0,
+        "people_extracted": 2,
+        "identities_matched": 2,
+        "identities_pending": 0,
+        "tasks_processed": 2,
+        "tasks_unprocessed": 0,
+        "stopped": False,
+    }
+    requests = result["rights_statement_requests"]
+    assert isinstance(requests, list)
+    assert [item["task_number"] for item in requests] == [
+        "RLSQ-002",
+        "RLSQ-001",
+    ]
+    assert requests[0]["social_security_number"] == "320101199001011234"
+    assert requests[0]["identity_match"]["code"] == "SUCCESS"
+
+
+def test_stop_after_active_model_request_preserves_completed_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = tuple(
+        ErpTaskRecord(
+            id=f"id-{index}",
+            code=f"RLSQ-{index:03d}",
+            initiated_date="2026-08-20",
+            title=f"人员{index}社保打印",
+            description="近一年",
+            transaction_type="社保咨询",
+            status="0",
+            originator="申请人",
+            department="技术中心",
+        )
+        for index in range(1, 4)
+    )
+    cancelled = False
+
+    class FakeQueryService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def query_tasks(self, *args, **kwargs) -> ErpTaskQueryResult:
+            return ErpTaskQueryResult("社保咨询", records, 3, 1)
+
+    class FakeModelClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def ensure_available(self) -> None:
+            pass
+
+        def extract(
+            self, record: ErpTaskRecord, mode: ReasoningMode
+        ) -> ExtractionResponse:
+            nonlocal cancelled
+            cancelled = True
+            return ExtractionResponse(
+                extraction=TaskExtraction(
+                    people=(
+                        ExtractedPerson(
+                            name="张三",
+                            start_month="2025-08",
+                            end_month="2026-07",
+                            time_expression="近一年",
+                            evidence="张三近一年",
+                            date_basis="relative_months",
+                            confidence=0.9,
+                        ),
+                    ),
+                    needs_review=False,
+                    review_reasons=(),
+                    warnings=(),
+                ),
+                metrics=ModelMetrics(
+                    model="qwen3.8:27b",
+                    reasoning_mode=mode.value,
+                    ollama_think=mode.ollama_think,
+                    done_reason="stop",
+                    total_duration_ns=1,
+                    prompt_eval_count=1,
+                    eval_count=1,
+                    thinking_characters=0,
+                ),
+            )
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpTaskQueryService",
+        FakeQueryService,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.OllamaTaskExtractionClient",
+        FakeModelClient,
+    )
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+
+    result = ErpTaskExtractionService(
+        settings,
+        logging.getLogger("test.ai.stop"),
+        cancel_check=lambda: cancelled,
+    ).run("社保咨询")
+
+    assert result["summary"]["stopped"] is True
+    assert result["summary"]["tasks_processed"] == 1
+    assert result["summary"]["tasks_unprocessed"] == 2
+    assert len(result["tasks"]) == 1
+    assert len(result["rights_statement_requests"]) == 1
+
+
+def test_identity_enrichment_does_not_guess_when_name_is_ambiguous(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePersonLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            return {}, {
+                "张三": (
+                    ErpPersonRecord(
+                        "id-1", "001", "张三", "320101199001011234",
+                        "一部", "测试公司", "0", "0",
+                    ),
+                    ErpPersonRecord(
+                        "id-2", "002", "张三", "320101199002021235",
+                        "二部", "测试公司", "0", "0",
+                    ),
+                ),
+                "李四": (),
+            }
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        FakePersonLookupService,
+    )
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.identity"),
+    )
+    requests: list[dict[str, object]] = [
+        {"name": "张三", "social_security_number": None},
+        {"name": "李四", "social_security_number": None},
+    ]
+
+    stopped = service._enrich_identities(requests, credentials=None)
+
+    assert stopped is False
+    assert requests[0]["social_security_number"] is None
+    assert requests[0]["identity_match"]["code"] == "ERP_PERSON_AMBIGUOUS"
+    assert len(requests[0]["identity_match"]["candidates"]) == 2
+    assert requests[1]["identity_match"]["code"] == "ERP_PERSON_NOT_FOUND"
+
+
+def test_identity_from_application_text_queries_person_by_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class IdentityPersonLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            assert list(identity_numbers) == ["320681199910100032"]
+            assert list(names) == []
+            return {
+                "320681199910100032": (
+                    ErpPersonRecord(
+                        "person-id",
+                        "2026001",
+                        "施瀛博",
+                        "320681199910100032",
+                        "项目管理部",
+                        "南京南化建设有限公司",
+                        "0",
+                        "0",
+                    ),
+                )
+            }, {}
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        IdentityPersonLookupService,
+    )
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.source_identity"),
+    )
+    record = ErpTaskRecord(
+        id="erp-id",
+        code="RLSQ20260818-0006",
+        initiated_date="2026-08-18",
+        title="查询施瀛博8月医保权益单",
+        description="请查询施瀛博（320681199910100032）8月医保权益单",
+        transaction_type="社保咨询",
+        status="20",
+        originator="申请人",
+        department="项目管理公司",
+    )
+
+    identity = service._identity_from_application_text(
+        record,
+        "施瀛博",
+        "320681199910100032",
+    )
+    requests: list[dict[str, object]] = [
+        {"name": "施瀛博", "social_security_number": identity}
+    ]
+
+    stopped = service._enrich_identities(requests, credentials=None)
+
+    assert stopped is False
+    assert requests[0]["social_security_number"] == "320681199910100032"
+    assert requests[0]["identity_match"] == {
+        "code": "SUCCESS",
+        "message": "处理成功",
+        "details": "已使用申请原文身份证精确匹配 ERP 人员信息",
+        "source": "application_identity",
+        "employee_code": "2026001",
+        "department": "项目管理部",
+        "company": "南京南化建设有限公司",
+    }
+
+
+def test_identity_lookup_keeps_source_id_and_empty_org_when_person_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyIdentityLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            assert list(identity_numbers) == ["320681199910100032"]
+            assert list(names) == []
+            return {"320681199910100032": ()}, {}
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        EmptyIdentityLookupService,
+    )
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.source_identity.not_found"),
+    )
+    requests: list[dict[str, object]] = [
+        {
+            "name": "施瀛博",
+            "social_security_number": "320681199910100032",
+        }
+    ]
+
+    stopped = service._enrich_identities(requests, credentials=None)
+
+    assert stopped is False
+    assert requests[0]["social_security_number"] == "320681199910100032"
+    assert requests[0]["identity_match"]["code"] == "ERP_PERSON_NOT_FOUND"
+    assert requests[0]["identity_match"]["department"] == ""
+    assert requests[0]["identity_match"]["company"] == ""
+
+
+def test_identity_from_application_text_recovers_id_when_model_omits_it(
+    tmp_path: Path,
+) -> None:
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.source_identity.fallback"),
+    )
+    record = ErpTaskRecord(
+        id="erp-id",
+        code="RLSQ20260818-0006",
+        initiated_date="2026-08-18",
+        title="查询施瀛博8月医保权益单",
+        description="请查询施瀛博（320681199910100032）8月医保权益单",
+        transaction_type="社保咨询",
+        status="20",
+        originator="申请人",
+        department="项目管理公司",
+    )
+
+    assert service._identity_from_application_text(record, "施瀛博", None) == (
+        "320681199910100032"
+    )
+
+
+def test_identity_from_application_text_rejects_another_persons_id(
+    tmp_path: Path,
+) -> None:
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.source_identity.wrong_person"),
+    )
+    record = ErpTaskRecord(
+        id="erp-id",
+        code="RLSQ20260818-0004",
+        initiated_date="2026-08-18",
+        title="项目投标需人员社保",
+        description="陈文 340322198712011234\n蔡进\n人员社保打印",
+        transaction_type="社保咨询",
+        status="50",
+        originator="申请人",
+        department="项目管理公司",
+    )
+
+    assert service._identity_from_application_text(
+        record,
+        "蔡进",
+        "340322198712011234",
+    ) is None
+
+
+def test_identity_lookup_rejects_person_name_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MismatchedIdentityLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            return {
+                "340322198712011234": (
+                    ErpPersonRecord(
+                        "person-id",
+                        "employee-code",
+                        "陈文",
+                        "340322198712011234",
+                        "华南经营分公司",
+                        "南京南化建设有限公司",
+                        "0",
+                        "0",
+                    ),
+                )
+            }, {}
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        MismatchedIdentityLookupService,
+    )
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.identity_name_mismatch"),
+    )
+    requests: list[dict[str, object]] = [
+        {
+            "name": "蔡进",
+            "social_security_number": "340322198712011234",
+        }
+    ]
+
+    service._enrich_identities(requests, credentials=None)
+
+    assert requests[0]["social_security_number"] is None
+    assert requests[0]["identity_match"]["code"] == (
+        "ERP_PERSON_IDENTITY_NAME_MISMATCH"
+    )
+    assert requests[0]["identity_match"]["department"] == ""
+    assert requests[0]["identity_match"]["company"] == ""
+
+
+def test_person_lookup_progress_counts_identity_and_name_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress: list[str] = []
+
+    class FakeSession:
+        page = object()
+        request = object()
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            pass
+
+        def ensure_authenticated(self, credentials) -> None:
+            pass
+
+    class FakePersonClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def query_by_identity_number(self, identity):
+            return ()
+
+        def query_by_name(self, name):
+            return ()
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.person_service.ErpSession",
+        FakeSession,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.person_service.ErpPersonClient",
+        FakePersonClient,
+    )
+    service = ErpPersonLookupService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.erp.person.progress"),
+        progress_callback=progress.append,
+    )
+
+    service.lookup_people(
+        identity_numbers=["340322198712011234"],
+        names=[f"人员{index}" for index in range(1, 10)],
+        credentials=ErpCredentials("user", "password"),
+    )
+
+    assert "1/10" in progress[0]
+    assert "10/10" in progress[-1]
