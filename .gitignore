@@ -20,6 +20,9 @@ auth.json
 downloads/
 logs/
 artifacts/
+output/
+test/
+artifacts/
 screenshots/
 
 # Windows build outputs and generated metadata

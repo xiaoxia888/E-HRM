@@ -122,7 +122,7 @@ submit = 'button:has-text("登录"), button:has-text("登 录"), input[type="sub
 [ai]
 # 只在这里选择默认模型；每个模型的运行和采样参数位于 models 目录。
 provider = "ollama"
-active_model = "qwen3_8_27b"
+active_model = "qwen3_5_9b"
 models_dir = "models"
 
 # Ollama 连接和业务提示词由所有模型共用。
