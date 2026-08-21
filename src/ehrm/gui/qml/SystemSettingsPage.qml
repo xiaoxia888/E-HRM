@@ -9,7 +9,16 @@ import QtQuick.Layouts
 Item {
     id: page
     required property var backend
+    focus: true
     property int categoryIndex: 0
+    property int accountSiteIndex: 0
+
+    // Background clicks should dismiss the active editor. This MouseArea is
+    // declared before all controls, so real inputs and buttons remain above it.
+    MouseArea {
+        anchors.fill: parent
+        onClicked: page.forceActiveFocus()
+    }
 
     function resetErpAccountEditor() {
         erpUsernameField.text = appBackend.erpUsername
@@ -19,12 +28,28 @@ Item {
         page.forceActiveFocus()
     }
 
+    function resetRightsAccountEditor() {
+        rightsCreditCodeField.text = appBackend.rightsCreditCode
+        rightsMobileField.text = appBackend.rightsMobile
+        rightsPasswordField.text = ""
+        rightsPasswordField.revealPassword = false
+        rightsPasswordField.inputItem.focus = false
+        page.forceActiveFocus()
+    }
+
     onCategoryIndexChanged: {
         resetErpAccountEditor()
+        resetRightsAccountEditor()
+    }
+    onAccountSiteIndexChanged: {
+        resetErpAccountEditor()
+        resetRightsAccountEditor()
     }
     onVisibleChanged: {
-        if (!visible)
+        if (!visible) {
             resetErpAccountEditor()
+            resetRightsAccountEditor()
+        }
     }
 
     readonly property color titleColor: "#1d2939"
@@ -245,6 +270,36 @@ Item {
         }
     }
 
+    component AccountSiteTab: Rectangle {
+        id: accountTab
+        property bool selected: false
+        property string text: ""
+        signal chosen()
+
+        implicitWidth: 170
+        implicitHeight: 44
+        radius: 7
+        color: selected ? "#e8f2ff" : tabMouse.containsMouse
+            ? "#f2f6fb" : "#ffffff"
+        border.width: selected ? 2 : 1
+        border.color: selected ? page.blue : page.borderColor
+
+        Text {
+            anchors.centerIn: parent
+            text: accountTab.text
+            color: accountTab.selected ? page.blue : page.bodyColor
+            font.pixelSize: 14
+            font.weight: accountTab.selected ? Font.DemiBold : Font.Normal
+        }
+        MouseArea {
+            id: tabMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: accountTab.chosen()
+        }
+    }
+
     component SettingRow: Rectangle {
         default property alias content: rowContent.data
         property string title: ""
@@ -297,6 +352,13 @@ Item {
         Item {
             width: pane.availableWidth
             height: contentColumn.implicitHeight + pane.contentMargin * 2
+
+            // ScrollView consumes pointer events inside its viewport, so it
+            // needs its own background target for clearing input focus.
+            MouseArea {
+                anchors.fill: parent
+                onClicked: page.forceActiveFocus()
+            }
 
             ColumnLayout {
                 id: contentColumn
@@ -427,11 +489,194 @@ Item {
                 StackLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: page.categoryIndex
+                    currentIndex: page.categoryIndex === 0
+                        ? page.accountSiteIndex
+                        : page.categoryIndex + 1
 
-                    // 账户与连接
+                    // 江苏智慧人社
                     SettingsPane {
                         contentSpacing: 18
+
+                            SectionTitle {
+                                title: "账号与密码"
+                                description: "每个网站独立保存账号和密码"
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 0
+                                    text: "江苏智慧人社"
+                                    onChosen: page.accountSiteIndex = 0
+                                }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 1
+                                    text: "ERP"
+                                    onChosen: page.accountSiteIndex = 1
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            SectionTitle {
+                                title: "江苏智慧人社"
+                                description: "用于自动填写单位登录信息；图形安全验证仍需人工完成"
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 430
+                                radius: 9
+                                color: "#fbfcfe"
+                                border.color: page.borderColor
+
+                                GridLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    columns: 2
+                                    columnSpacing: 20
+                                    rowSpacing: 10
+
+                                    FieldLabel {
+                                        Layout.columnSpan: 2
+                                        text: "统一社会信用代码 / 单位编号 / 机构编号"
+                                    }
+                                    SettingsInput {
+                                        id: rightsCreditCodeField
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        text: appBackend.rightsCreditCode
+                                        placeholderText: "请输入统一社会信用代码、单位编号或机构编号"
+                                    }
+
+                                    FieldLabel {
+                                        Layout.columnSpan: 2
+                                        text: "证件号码 / 移动电话"
+                                    }
+                                    SettingsInput {
+                                        id: rightsMobileField
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        text: appBackend.rightsMobile
+                                        placeholderText: "请输入证件号码或移动电话"
+                                    }
+                                    FieldLabel {
+                                        Layout.columnSpan: 2
+                                        text: "密码"
+                                    }
+                                    SettingsInput {
+                                        id: rightsPasswordField
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        passwordMode: true
+                                        placeholderText: appBackend.rightsPasswordStored
+                                            ? "••••••••  已安全保存"
+                                            : "请输入智慧人社密码"
+                                        onEditingStarted: {
+                                            if (text.length === 0 && appBackend.rightsPasswordStored)
+                                                text = appBackend.loadSavedRightsPassword(
+                                                    rightsCreditCodeField.text,
+                                                    rightsMobileField.text
+                                                )
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        text: Qt.platform.os === "windows"
+                                            ? "密码已加密保存在 Windows 凭据管理器，软件登录时会自动填写三项信息。"
+                                            : "密码已加密保存在 macOS 钥匙串，软件登录时会自动填写三项信息。"
+                                        color: page.secondaryColor
+                                        font.pixelSize: 12
+                                    }
+
+                                    RowLayout {
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: 8
+                                        spacing: 10
+                                        Rectangle {
+                                            width: 9
+                                            height: 9
+                                            radius: 5
+                                            color: appBackend.rightsPasswordStored
+                                                ? "#12a150" : "#98a2b3"
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: appBackend.rightsPasswordStored
+                                                ? "账号已保存，登录时将自动填写"
+                                                : "尚未保存账号"
+                                            color: appBackend.rightsPasswordStored
+                                                ? "#12834a" : page.bodyColor
+                                            font.pixelSize: 13
+                                        }
+                                        AppButton {
+                                            text: "保存账号"
+                                            primary: true
+                                            onClicked: appBackend.saveRightsAccount(
+                                                rightsCreditCodeField.text,
+                                                rightsMobileField.text,
+                                                rightsPasswordField.text
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 82
+                                radius: 8
+                                color: "#fff9eb"
+                                border.color: "#f1c76a"
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 18
+                                    anchors.rightMargin: 18
+                                    spacing: 12
+                                    Text {
+                                        text: "i"
+                                        color: "#b86b00"
+                                        font.pixelSize: 18
+                                        font.weight: Font.Bold
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "自动点击登录后，程序会停留在安全验证窗口，完成图形验证后自动继续。"
+                                        color: "#8a5700"
+                                        font.pixelSize: 13
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                    }
+
+                    // ERP 账号
+                    SettingsPane {
+                        contentSpacing: 18
+
+                            SectionTitle {
+                                title: "账号与密码"
+                                description: "每个网站独立保存账号和密码"
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 0
+                                    text: "江苏智慧人社"
+                                    onChosen: page.accountSiteIndex = 0
+                                }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 1
+                                    text: "ERP"
+                                    onChosen: page.accountSiteIndex = 1
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
 
                             SectionTitle {
                                 title: "ERP 账号"

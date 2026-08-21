@@ -18,6 +18,7 @@ def authenticated_browser(
     *,
     username: str | None = None,
     password: str | None = None,
+    mobile: str | None = None,
 ) -> Iterator[BrowserManager]:
     """Uses headless mode when a saved session is valid, otherwise hands off to a human."""
 
@@ -38,7 +39,11 @@ def authenticated_browser(
     print("登录状态已失效，即将打开可见浏览器供人工登录。")
     with BrowserManager(settings.browser, headless=False) as browser:
         _restore_storage_state(browser, settings)
-        LoginService(browser.page, settings).ensure_authenticated(username, password)
+        LoginService(browser.page, settings).ensure_authenticated(
+            username,
+            password,
+            mobile,
+        )
         _save_storage_state(browser, settings)
         print("登录成功，程序将在当前浏览器中继续自动执行。")
         try:

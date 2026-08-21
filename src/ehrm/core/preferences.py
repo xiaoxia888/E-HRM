@@ -15,6 +15,8 @@ class UserPreferences:
     upload_to_erp: bool = False
     open_output_folder: bool = False
     erp_username: str = ""
+    rights_credit_code: str = ""
+    rights_mobile: str = ""
     ai_model_profile: str = ""
     ai_reasoning_mode: str = ""
     execution_speed: str = "standard"
@@ -54,7 +56,13 @@ class UserPreferencesStore:
         for key in ("upload_to_erp", "open_output_folder"):
             if not isinstance(values[key], bool):
                 values[key] = defaults[key]
-        for key in ("output_path", "erp_username", "ai_model_profile"):
+        for key in (
+            "output_path",
+            "erp_username",
+            "rights_credit_code",
+            "rights_mobile",
+            "ai_model_profile",
+        ):
             if not isinstance(values[key], str):
                 values[key] = defaults[key]
         valid_model_profiles = {"", *(item.value for item in AiModelProfile)}

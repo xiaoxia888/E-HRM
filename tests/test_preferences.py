@@ -15,6 +15,8 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
         upload_to_erp=True,
         open_output_folder=True,
         erp_username="tester",
+        rights_credit_code="91320000TEST000001",
+        rights_mobile="13800000000",
         ai_model_profile="qwen3_5_9b",
         ai_reasoning_mode="max",
         execution_speed="stable",

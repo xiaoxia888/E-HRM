@@ -27,12 +27,21 @@ storage_state_path = "data/session-state.json"
 login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
 page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
 
+[rights_statement.credentials]
+# 这里只保存环境变量名称，不保存真实账号密码。
+credit_code_env = "EHRM_RIGHTS_CREDIT_CODE"
+mobile_env = "EHRM_RIGHTS_MOBILE"
+password_env = "EHRM_RIGHTS_PASSWORD"
+
 [rights_statement.selectors.login]
-unit_login_tab = "text=单位登录"
-# 账号和安全验证由用户在浏览器中完成，这三项保持为空。
-username = ""
-password = ""
-submit = ""
+unit_login_tab = 'text="单位登录"'
+account_password_tab = 'text="账号密码" >> nth=1'
+# 以下定位器来自 Playwright 对智慧人社真实登录页的录制结果。
+# 图形安全验证仍由用户手动完成。
+credit_code = 'role=textbox[name="统一社会信用代码/单位编号/机构编号"]'
+mobile = 'role=textbox[name="证件号码/移动电话"]'
+password = 'role=textbox[name="请输入密码"]'
+submit = 'role=button[name="登录"]'
 authenticated_marker = "text=省本级"
 
 [rights_statement.selectors.navigation]

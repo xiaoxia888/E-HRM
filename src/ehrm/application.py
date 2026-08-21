@@ -32,12 +32,16 @@ class EhrmApplication:
         *,
         username: str | None = None,
         password: str | None = None,
+        mobile: str | None = None,
     ) -> object:
         if task_name == RIGHTS_STATEMENT_DOWNLOAD:
             if not isinstance(payload, RightsStatementQuery):
                 raise ConfigurationError("单位权益单任务参数类型错误")
             return self._rights_statement.execute(
-                payload, username=username, password=password
+                payload,
+                username=username,
+                password=password,
+                mobile=mobile,
             )
         if task_name == RIGHTS_STATEMENT_EXCEL_EXPORT:
             if not isinstance(payload, ExcelTaskRequest):

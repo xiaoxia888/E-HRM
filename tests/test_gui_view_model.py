@@ -485,3 +485,49 @@ def test_erp_password_is_delegated_to_system_credential_store(
     assert view_model.erpPasswordStored
     assert view_model.loadSavedErpPassword("erp-user") == "secret-value"
     assert view_model.loadSavedErpPassword("another-user") == ""
+
+
+def test_rights_password_is_delegated_to_system_credential_store(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+
+    class FakeCredentialStore:
+        saved: tuple[str, str] | None = None
+
+        def load_password(self, username: str) -> str | None:
+            if self.saved is not None and self.saved[0] == username:
+                return self.saved[1]
+            return None
+
+        def save_password(self, username: str, password: str) -> None:
+            self.saved = (username, password)
+
+        def delete_password(self, username: str) -> None:
+            self.saved = None
+
+    store = FakeCredentialStore()
+    view_model._rights_credential_store = store
+
+    view_model.saveRightsAccount(
+        "91320000TEST000001",
+        "13800000000",
+        "rights-secret",
+    )
+
+    assert application is not None
+    assert store.saved == (
+        "91320000TEST000001|13800000000",
+        "rights-secret",
+    )
+    preferences_path = (
+        view_model._settings.browser.user_data_dir.parent / "preferences.json"
+    )
+    assert "rights-secret" not in preferences_path.read_text(encoding="utf-8")
+    assert view_model.rightsCreditCode == "91320000TEST000001"
+    assert view_model.rightsMobile == "13800000000"
+    assert view_model.rightsPasswordStored
+    assert view_model.loadSavedRightsPassword(
+        "91320000TEST000001", "13800000000"
+    ) == "rights-secret"

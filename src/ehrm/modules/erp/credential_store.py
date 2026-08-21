@@ -25,10 +25,12 @@ class _WindowsCredential(ctypes.Structure):
     ]
 
 
-class ErpCredentialStore:
-    """Stores ERP passwords in the operating system credential vault."""
+class SystemCredentialStore:
+    """Stores one website's passwords in the operating system vault."""
 
-    SERVICE = "NJNCC.EHRM.ERP"
+    def __init__(self, service: str, display_name: str) -> None:
+        self.service = service
+        self.display_name = display_name
 
     def save_password(self, username: str, password: str) -> None:
         system = platform.system()
@@ -38,23 +40,29 @@ class ErpCredentialStore:
         if system == "Windows":
             self._windows_save(username, password)
             return
-        raise ConfigurationError("当前操作系统暂不支持安全保存 ERP 密码")
+        raise ConfigurationError(
+            f"当前操作系统暂不支持安全保存{self.display_name}密码"
+        )
 
     def load_password(self, username: str) -> str | None:
         if not username:
             return None
         system = platform.system()
         if system == "Darwin":
+            command = [
+                "security",
+                "find-generic-password",
+                "-s",
+                self.service,
+                "-a",
+                username,
+                "-w",
+            ]
+            keychain = self._mac_default_keychain()
+            if keychain:
+                command.append(keychain)
             result = subprocess.run(
-                [
-                    "security",
-                    "find-generic-password",
-                    "-s",
-                    self.SERVICE,
-                    "-a",
-                    username,
-                    "-w",
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -69,15 +77,19 @@ class ErpCredentialStore:
             return
         system = platform.system()
         if system == "Darwin":
+            command = [
+                "security",
+                "delete-generic-password",
+                "-s",
+                self.service,
+                "-a",
+                username,
+            ]
+            keychain = self._mac_default_keychain()
+            if keychain:
+                command.append(keychain)
             subprocess.run(
-                [
-                    "security",
-                    "delete-generic-password",
-                    "-s",
-                    self.SERVICE,
-                    "-a",
-                    username,
-                ],
+                command,
                 capture_output=True,
                 check=False,
             )
@@ -92,28 +104,47 @@ class ErpCredentialStore:
             advapi32.CredDeleteW(self._windows_target(username), 1, 0)
 
     def _mac_save(self, username: str, password: str) -> None:
+        command = [
+            "security",
+            "add-generic-password",
+            "-U",
+            "-s",
+            self.service,
+            "-a",
+            username,
+            "-w",
+            password,
+        ]
+        keychain = self._mac_default_keychain()
+        if keychain:
+            command.append(keychain)
         result = subprocess.run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-s",
-                self.SERVICE,
-                "-a",
-                username,
-                "-w",
-                password,
-            ],
+            command,
             capture_output=True,
             text=True,
             check=False,
         )
         if result.returncode != 0:
-            raise ConfigurationError("无法将 ERP 密码保存到 macOS 钥匙串")
+            raise ConfigurationError(
+                f"无法将{self.display_name}密码保存到 macOS 钥匙串",
+                details=result.stderr.strip() or None,
+            )
 
     @staticmethod
-    def _windows_target(username: str) -> str:
-        return f"{ErpCredentialStore.SERVICE}:{username}"
+    def _mac_default_keychain() -> str | None:
+        result = subprocess.run(
+            ["security", "default-keychain", "-d", "user"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        value = result.stdout.strip().strip('"')
+        return value or None
+
+    def _windows_target(self, username: str) -> str:
+        return f"{self.service}:{username}"
 
     def _windows_save(self, username: str, password: str) -> None:
         blob = password.encode("utf-16-le")
@@ -134,7 +165,9 @@ class ErpCredentialStore:
         ]
         advapi32.CredWriteW.restype = wintypes.BOOL
         if not advapi32.CredWriteW(ctypes.byref(credential), 0):
-            raise ConfigurationError("无法将 ERP 密码保存到 Windows 凭据管理器")
+            raise ConfigurationError(
+                f"无法将{self.display_name}密码保存到 Windows 凭据管理器"
+            )
 
     def _windows_load(self, username: str) -> str | None:
         pointer = ctypes.POINTER(_WindowsCredential)()
@@ -160,3 +193,13 @@ class ErpCredentialStore:
             return raw.decode("utf-16-le")
         finally:
             advapi32.CredFree(pointer)
+
+
+class ErpCredentialStore(SystemCredentialStore):
+    def __init__(self) -> None:
+        super().__init__("NJNCC.EHRM.ERP", "ERP")
+
+
+class RightsCredentialStore(SystemCredentialStore):
+    def __init__(self) -> None:
+        super().__init__("NJNCC.EHRM.JSHRSS", "江苏智慧人社")

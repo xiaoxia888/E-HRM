@@ -63,10 +63,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         settings = load_settings(args.config)
-        username = os.getenv("EHRM_USERNAME")
-        password = os.getenv("EHRM_PASSWORD")
+        username = os.getenv(settings.rights_credentials.credit_code_env)
+        mobile = os.getenv(settings.rights_credentials.mobile_env)
+        password = os.getenv(settings.rights_credentials.password_env)
         if args.ask_password:
-            username = username or input("登录账号：").strip()
+            username = username or input("统一信用代码：").strip()
+            mobile = mobile or input("移动号码：").strip()
             password = getpass.getpass("登录密码：")
 
         request = RightsStatementQuery(
@@ -81,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             request,
             username=username,
             password=password,
+            mobile=mobile,
         )
     except EhrmError as exc:
         message = display_message(exc.code, exc.message)

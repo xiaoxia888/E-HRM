@@ -32,9 +32,21 @@ class SiteSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class RightsCredentialsSettings:
+    credit_code_env: str
+    mobile_env: str
+    password_env: str
+    credit_code: str = ""
+    mobile: str = ""
+    password: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class LoginSelectors:
     unit_login_tab: str
-    username: str
+    account_password_tab: str
+    credit_code: str
+    mobile: str
     password: str
     submit: str
     authenticated_marker: str
@@ -139,6 +151,7 @@ class OllamaSettings:
 class AppSettings:
     browser: BrowserSettings
     site: SiteSettings
+    rights_credentials: RightsCredentialsSettings
     login: LoginSelectors
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
@@ -416,6 +429,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         rights_root, "browser", parent="rights_statement"
     )
     rights_site = _required_section(rights_root, "site", parent="rights_statement")
+    rights_credentials = _required_section(
+        rights_root, "credentials", parent="rights_statement"
+    )
     rights_selectors = _required_section(
         rights_root, "selectors", parent="rights_statement"
     )
@@ -445,6 +461,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     common_name = "common"
     rights_browser_name = "rights_statement.browser"
     rights_site_name = "rights_statement.site"
+    rights_credentials_name = "rights_statement.credentials"
     rights_login_name = "rights_statement.selectors.login"
     rights_navigation_name = "rights_statement.selectors.navigation"
     rights_page_name = "rights_statement.selectors.page"
@@ -497,9 +514,32 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             login_url=login_url,
             rights_statement_url=page_url,
         ),
+        rights_credentials=RightsCredentialsSettings(
+            credit_code_env=_text(
+                rights_credentials,
+                "credit_code_env",
+                rights_credentials_name,
+            ),
+            mobile_env=_text(
+                rights_credentials,
+                "mobile_env",
+                rights_credentials_name,
+            ),
+            password_env=_text(
+                rights_credentials,
+                "password_env",
+                rights_credentials_name,
+            ),
+        ),
         login=LoginSelectors(
             unit_login_tab=_text(rights_login, "unit_login_tab", rights_login_name),
-            username=_text(rights_login, "username", rights_login_name),
+            account_password_tab=_text(
+                rights_login,
+                "account_password_tab",
+                rights_login_name,
+            ),
+            credit_code=_text(rights_login, "credit_code", rights_login_name),
+            mobile=_text(rights_login, "mobile", rights_login_name),
             password=_text(rights_login, "password", rights_login_name),
             submit=_text(rights_login, "submit", rights_login_name),
             authenticated_marker=_text(

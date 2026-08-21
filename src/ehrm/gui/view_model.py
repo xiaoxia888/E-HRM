@@ -29,7 +29,10 @@ from ehrm.modules.erp.file_validation import (
     ErpUploadFileValidator,
     ValidatedUploadFile,
 )
-from ehrm.modules.erp.credential_store import ErpCredentialStore
+from ehrm.modules.erp.credential_store import (
+    ErpCredentialStore,
+    RightsCredentialStore,
+)
 from ehrm.modules.erp.models import ErpCredentials, ErpUploadResult
 from ehrm.modules.rights_statement.excel_models import (
     EmployeeRecord,
@@ -60,6 +63,7 @@ class DesktopViewModel(QObject):
     erpUploadStatusChanged = Signal()
     preferencesChanged = Signal()
     erpAccountChanged = Signal()
+    rightsAccountChanged = Signal()
     erpConnectionChanged = Signal()
     erpTaskExtractionChanged = Signal()
 
@@ -85,6 +89,7 @@ class DesktopViewModel(QObject):
         )
         self._preferences = self._preferences_store.load()
         self._credential_store = ErpCredentialStore()
+        self._rights_credential_store = RightsCredentialStore()
         self._base_settings = settings
         self._settings = self._settings_with_preferences(settings)
         self._logger = logger
@@ -132,6 +137,14 @@ class DesktopViewModel(QObject):
         self._erp_task_extraction_task = ""
         self._erp_password_stored = bool(
             self._credential_store.load_password(self._preferences.erp_username)
+        )
+        self._rights_password_stored = bool(
+            self._rights_credential_store.load_password(
+                self._rights_account_key(
+                    self._preferences.rights_credit_code,
+                    self._preferences.rights_mobile,
+                )
+            )
         )
         self._worker_enabled = start_worker
         if start_worker:
@@ -335,6 +348,30 @@ class DesktopViewModel(QObject):
         if not normalized or normalized != self._preferences.erp_username:
             return ""
         return self._credential_store.load_password(normalized) or ""
+
+    @Property(str, notify=rightsAccountChanged)
+    def rightsCreditCode(self) -> str:
+        return self._preferences.rights_credit_code
+
+    @Property(str, notify=rightsAccountChanged)
+    def rightsMobile(self) -> str:
+        return self._preferences.rights_mobile
+
+    @Property(bool, notify=rightsAccountChanged)
+    def rightsPasswordStored(self) -> bool:
+        return self._rights_password_stored
+
+    @Slot(str, str, result=str)
+    def loadSavedRightsPassword(self, credit_code: str, mobile: str) -> str:
+        normalized_credit = credit_code.strip()
+        normalized_mobile = mobile.strip()
+        if (
+            normalized_credit != self._preferences.rights_credit_code
+            or normalized_mobile != self._preferences.rights_mobile
+        ):
+            return ""
+        key = self._rights_account_key(normalized_credit, normalized_mobile)
+        return self._rights_credential_store.load_password(key) or ""
 
     @Property(bool, notify=erpConnectionChanged)
     def erpConnectionBusy(self) -> bool:
@@ -685,6 +722,68 @@ class DesktopViewModel(QObject):
         self.erpAccountChanged.emit()
         self.erpConnectionChanged.emit()
         self.notification.emit("保存成功", "ERP 账号已安全保存")
+
+    @Slot(str, str, str)
+    def saveRightsAccount(
+        self,
+        credit_code: str,
+        mobile: str,
+        password: str,
+    ) -> None:
+        normalized_credit = credit_code.strip()
+        normalized_mobile = mobile.strip()
+        if not normalized_credit:
+            self.notification.emit(
+                "账号不能为空",
+                "请输入统一社会信用代码、单位编号或机构编号",
+            )
+            return
+        if not normalized_mobile:
+            self.notification.emit("证件信息不能为空", "请输入证件号码或移动电话")
+            return
+
+        new_key = self._rights_account_key(normalized_credit, normalized_mobile)
+        old_key = self._rights_account_key(
+            self._preferences.rights_credit_code,
+            self._preferences.rights_mobile,
+        )
+        existing_password = (
+            self._rights_credential_store.load_password(new_key)
+            if new_key == old_key
+            else None
+        )
+        if not password and not existing_password:
+            self.notification.emit("密码不能为空", "请输入江苏智慧人社密码")
+            return
+        try:
+            if password:
+                if old_key and old_key != new_key:
+                    self._rights_credential_store.delete_password(old_key)
+                self._rights_credential_store.save_password(new_key, password)
+                verified_password = self._rights_credential_store.load_password(
+                    new_key
+                )
+                if verified_password != password:
+                    raise OSError("密码写入系统凭据库后无法读取，请重新保存")
+            if not self._save_preferences(
+                rights_credit_code=normalized_credit,
+                rights_mobile=normalized_mobile,
+            ):
+                return
+        except (EhrmError, OSError) as exc:
+            if isinstance(exc, EhrmError):
+                message = exc.message
+                if exc.details:
+                    message += f"\n{exc.details}"
+            else:
+                message = str(exc)
+            self.notification.emit("智慧人社账号保存失败", message)
+            return
+
+        self._rights_password_stored = True
+        self._apply_automation_preferences()
+        self.rightsAccountChanged.emit()
+        self.notification.emit("保存成功", "江苏智慧人社账号已安全保存")
 
     @Slot(str, str)
     def testErpConnection(self, username: str, password: str) -> None:
@@ -1515,7 +1614,27 @@ class DesktopViewModel(QObject):
         return replace(
             selected_settings,
             rights_statement=rights_statement,
+            rights_credentials=replace(
+                selected_settings.rights_credentials,
+                credit_code=self._preferences.rights_credit_code,
+                mobile=self._preferences.rights_mobile,
+                password=self._rights_credential_store.load_password(
+                    self._rights_account_key(
+                        self._preferences.rights_credit_code,
+                        self._preferences.rights_mobile,
+                    )
+                )
+                or "",
+            ),
         )
+
+    @staticmethod
+    def _rights_account_key(credit_code: str, mobile: str) -> str:
+        normalized_credit = credit_code.strip()
+        normalized_mobile = mobile.strip()
+        if not normalized_credit or not normalized_mobile:
+            return ""
+        return f"{normalized_credit}|{normalized_mobile}"
 
     def _apply_automation_preferences(self) -> None:
         self._settings = self._settings_with_preferences(self._base_settings)

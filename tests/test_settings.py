@@ -13,6 +13,9 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
 
     assert settings.browser.action_timeout_ms == 30_000
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
+    assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
+    assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
+    assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
     assert settings.erp.base_url == "https://erp.njncc.com"
     assert settings.erp.headless is True
     assert settings.ai.model == "qwen3.8:27b"

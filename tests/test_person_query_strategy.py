@@ -107,3 +107,34 @@ def test_unchanged_group_filters_are_not_selected_again() -> None:
         (settings.rights_statement.end_month, same_start_new_end.end_month),
         (settings.rights_statement.start_month, same_start_new_end.start_month),
     ]
+
+
+def test_person_condition_is_filled_before_group_filters() -> None:
+    settings = load_settings(Path("config/settings.toml"))
+    page = RightsStatementPage(FakePage(), settings, object())  # type: ignore[arg-type]
+    calls: list[str] = []
+    actual: dict[str, str | None] = {
+        "insurance": None,
+        settings.rights_statement.start_month: None,
+        settings.rights_statement.end_month: None,
+    }
+
+    page._fill_person_query = lambda record: calls.append("identity")  # type: ignore[method-assign]
+    page._insurance_matches = lambda value: actual["insurance"] == value  # type: ignore[method-assign]
+    page._month_matches = lambda selector, value: actual[selector] == value  # type: ignore[method-assign]
+
+    def select_insurance(value: str) -> None:
+        calls.append("insurance")
+        actual["insurance"] = value
+
+    def set_month(selector: str, value: str) -> None:
+        calls.append("start" if selector == settings.rights_statement.start_month else "end")
+        actual[selector] = value
+
+    page._select_insurance = select_insurance  # type: ignore[method-assign]
+    page._set_month = set_month  # type: ignore[method-assign]
+
+    first = record("320101199001011234")
+    page.prepare_group(WorkGroup(1, (first,)))
+
+    assert calls == ["identity", "insurance", "start", "end"]

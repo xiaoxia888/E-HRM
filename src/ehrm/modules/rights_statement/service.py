@@ -30,12 +30,16 @@ class RightsStatementService:
         *,
         username: str | None = None,
         password: str | None = None,
+        mobile: str | None = None,
     ) -> ExecutionResult:
         request.validate()
         page: Page | None = None
         try:
             with authenticated_browser(
-                self.settings, username=username, password=password
+                self.settings,
+                username=username,
+                password=password,
+                mobile=mobile,
             ) as browser:
                 page = browser.page
                 statement_page = RightsStatementPage(

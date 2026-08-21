@@ -70,6 +70,7 @@ class RightsStatementPage:
         self._current_insurance: str | None = None
         self._current_start_month: str | None = None
         self._current_end_month: str | None = None
+        self._prepared_person_key: tuple[str, str] | None = None
 
     def open(self, *, reset: bool = False) -> None:
         self._raise_if_cancelled()
@@ -105,6 +106,15 @@ class RightsStatementPage:
     def prepare_group(self, group: WorkGroup) -> None:
         self._raise_if_cancelled()
         first = group.first
+        # Fill the most specific person condition first. Insurance and month
+        # controls are handled afterwards so the page sees the intended query
+        # order before the query button is clicked.
+        self._fill_person_query(first)
+        self._prepared_person_key = self._person_query_key(first)
+        _LOGGER.info(
+            "已优先填写人员查询条件 类型=%s",
+            "社会保障号码" if first.identity_number else "姓名",
+        )
         actual_insurance = self._read_insurance()
         actual_start = self._read_month(self.selectors.start_month)
         actual_end = self._read_month(self.selectors.end_month)
@@ -203,12 +213,20 @@ class RightsStatementPage:
         query_button = self._required(self.selectors.query_button, "query_button")
         try:
             self._raise_if_cancelled()
-            self._fill_person_query(record)
+            record_key = self._person_query_key(record)
+            if self._prepared_person_key != record_key:
+                self._fill_person_query(record)
+            else:
+                _LOGGER.info("复用已优先填写的人员查询条件 row=%s", record.row_number)
+            self._prepared_person_key = None
             self._pause()
             self.page.locator(query_button).click()
-            # Give the current request a chance to replace the previous table
-            # before inspecting rows. This prevents reading stale workbench data.
-            self._pause()
+            # A query can briefly expose an old result table below the loading
+            # mask. Never inspect rows until every visible mask has disappeared
+            # and the page has remained stable for consecutive samples.
+            self._wait_for_loading_to_finish(
+                self.selectors.query_result_timeout_ms
+            )
             row = self._wait_for_employee_row(record)
             self._check_row(row)
             self._pause()
@@ -254,6 +272,12 @@ class RightsStatementPage:
         if self.selectors.social_security_number:
             self.page.locator(self.selectors.social_security_number).fill("")
         employee.fill(record.name)
+
+    @staticmethod
+    def _person_query_key(record: EmployeeRecord) -> tuple[str, str]:
+        if record.identity_number:
+            return "identity", record.identity_number.strip().upper()
+        return "name", record.name.strip()
 
     def download_selected(
         self,
@@ -498,6 +522,9 @@ class RightsStatementPage:
         self._pause()
         back = self._reverse_transfer_arrow()
         back.click(timeout=3_000)
+        self._wait_for_loading_to_finish(
+            self.selectors.transfer_result_timeout_ms
+        )
 
         deadline = (
             time.monotonic()
@@ -586,6 +613,9 @@ class RightsStatementPage:
             # A minimum business-step pause still prevents the next picker from
             # being opened during the closing animation.
             pass
+        self._wait_for_loading_to_finish(
+            self.selectors.query_result_timeout_ms
+        )
         self._pause()
 
     def _select_insurance(self, insurance_type: str) -> None:
@@ -596,6 +626,9 @@ class RightsStatementPage:
             tag_name = locator.evaluate("element => element.tagName")
             if str(tag_name).upper() == "SELECT":
                 locator.select_option(label=value)
+                self._wait_for_loading_to_finish(
+                    self.selectors.query_result_timeout_ms
+                )
                 self._pause()
                 return
             locator.click()
@@ -609,6 +642,9 @@ class RightsStatementPage:
                 option.wait_for(state="hidden", timeout=5_000)
             except PlaywrightTimeoutError:
                 pass
+            self._wait_for_loading_to_finish(
+                self.selectors.query_result_timeout_ms
+            )
             self._pause()
         except PlaywrightError as exc:
             raise WebsiteStructureChangedError(
@@ -733,17 +769,32 @@ class RightsStatementPage:
         )
 
     def _wait_for_spinner_to_finish(self, timeout_ms: int) -> None:
+        self._wait_for_loading_to_finish(timeout_ms)
+
+    def _wait_for_loading_to_finish(self, timeout_ms: int) -> None:
+        """Waits until all loading masks are gone and the state stays stable."""
         if not self.selectors.loading_indicator:
             self.page.wait_for_timeout(600)
             return
-        spinner = self.page.locator(self.selectors.loading_indicator).first
+        spinners = self.page.locator(self.selectors.loading_indicator)
         deadline = time.monotonic() + timeout_ms / 1000
+        stable_samples = 0
         while time.monotonic() < deadline:
             self._raise_if_cancelled()
-            if not self._visible(spinner):
-                self.page.wait_for_timeout(600)
-                return
-            self.page.wait_for_timeout(200)
+            visible = any(
+                self._visible(spinners.nth(index))
+                for index in range(spinners.count())
+            )
+            if visible:
+                stable_samples = 0
+            else:
+                stable_samples += 1
+                if stable_samples >= 3:
+                    # Final buffer covers the loading-mask exit animation and
+                    # prevents the next field click from racing a DOM repaint.
+                    self.page.wait_for_timeout(300)
+                    return
+            self.page.wait_for_timeout(150)
         raise QueryResultTimeoutError("等待页面加载完成超时")
 
     def _select_all_chosen_people(self) -> None:
@@ -850,6 +901,7 @@ class RightsStatementPage:
         self._current_insurance = None
         self._current_start_month = None
         self._current_end_month = None
+        self._prepared_person_key = None
 
     @staticmethod
     def _check_row(row: Locator) -> None:
