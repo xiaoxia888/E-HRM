@@ -11,6 +11,52 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
+function Compress-DirectoryWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath,
+        [int]$MaxAttempts = 15,
+        [int]$RetryDelaySeconds = 2
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt++) {
+        try {
+            if (Test-Path $DestinationPath) {
+                Remove-Item -Force $DestinationPath
+            }
+
+            Compress-Archive `
+                -Path $SourcePath `
+                -DestinationPath $DestinationPath `
+                -CompressionLevel Optimal `
+                -ErrorAction Stop
+            return
+        } catch {
+            $FailureMessage = $_.Exception.Message
+            if ($Attempt -eq $MaxAttempts) {
+                if (Test-Path $DestinationPath) {
+                    Remove-Item -Force $DestinationPath -ErrorAction SilentlyContinue
+                }
+                throw (
+                    "Failed to create the portable ZIP after $MaxAttempts attempts. " +
+                    "Close any running E-HRM process and temporarily pause real-time " +
+                    "antivirus scanning for the build directory, then try again. " +
+                    "Last error: $FailureMessage"
+                )
+            }
+
+            Write-Warning (
+                "A build file is temporarily locked. ZIP attempt " +
+                "$Attempt/$MaxAttempts failed; retrying in " +
+                "$RetryDelaySeconds seconds."
+            )
+            Start-Sleep -Seconds $RetryDelaySeconds
+        }
+    }
+}
+
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     throw "Windows EXE must be built on a Windows system."
 }
@@ -80,14 +126,9 @@ if ($LASTEXITCODE -ne 0) {
 
 $ZipPath = Join-Path $ReleaseDir "E-HRM-$Version-windows-x64.zip"
 
-if (Test-Path $ZipPath) {
-    Remove-Item -Force $ZipPath
-}
-
-Compress-Archive `
-    -Path $BundleDir `
-    -DestinationPath $ZipPath `
-    -CompressionLevel Optimal
+Compress-DirectoryWithRetry `
+    -SourcePath $BundleDir `
+    -DestinationPath $ZipPath
 
 Write-Host "Portable ZIP package: $ZipPath" -ForegroundColor Green
 
