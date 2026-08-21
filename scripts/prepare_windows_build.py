@@ -2,18 +2,40 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
+import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GENERATED_DIR = PROJECT_ROOT / "packaging" / "windows" / "generated"
 
 
-def _version() -> str:
+def _source_version() -> str:
     from ehrm import __version__
 
     return __version__
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="生成 Windows 图标和版本资源",
+    )
+    parser.add_argument(
+        "--version",
+        help="本次构建版本，例如 0.2.0；不传时读取项目版本",
+    )
+    return parser
+
+
+def _validated_version(value: str) -> str:
+    normalized = value.strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", normalized):
+        raise ValueError("版本号必须为 0.2.0 或 0.2.0.0 格式")
+    if any(int(part) > 65535 for part in normalized.split(".")):
+        raise ValueError("版本号的每一段必须在 0–65535 之间")
+    return normalized
 
 
 def _generate_icon(target: Path) -> None:
@@ -74,11 +96,16 @@ VSVersionInfo(
     target.write_text(content, encoding="utf-8")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-    version = _version()
+    version = _validated_version(args.version or _source_version())
     _generate_icon(GENERATED_DIR / "app.ico")
     _generate_version_file(GENERATED_DIR / "version_info.txt", version)
+    (GENERATED_DIR / "build_version.txt").write_text(
+        version,
+        encoding="utf-8",
+    )
     print(version)
     return 0
 

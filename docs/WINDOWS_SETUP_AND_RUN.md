@@ -186,13 +186,14 @@ conda activate ehrm
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\build_windows.ps1
+    -File .\scripts\build_windows.ps1 `
+    -Version 0.2.0
 ```
 
 最终安装程序位于：
 
 ```text
-dist\windows-installer\E-HRM-Setup-<版本>.exe
+dist\E-HRM-Setup-0.2.0\E-HRM-Setup-0.2.0.exe
 ```
 
 完整打包说明见：
@@ -209,7 +210,8 @@ packaging\windows\README.md
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\build_windows.ps1
+    -File .\scripts\build_windows.ps1 `
+    -Version 0.2.0
 ```
 
 ### Conda 环境无法激活

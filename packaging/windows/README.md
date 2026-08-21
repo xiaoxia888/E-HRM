@@ -2,9 +2,9 @@
 
 Windows 版本采用 **PyInstaller onedir + Inno Setup 安装程序**：
 
-- `dist/windows/E-HRM/` 是实际运行目录；
-- `dist/E-HRM-<版本>-windows-x64.zip` 是免安装便携版；
-- `dist/windows-installer/E-HRM-Setup-<版本>.exe` 是交付给普通用户的安装程序。
+- `build/windows-dist/E-HRM/` 是构建过程中的实际运行目录；
+- `dist/E-HRM-Setup-<版本>/` 是该版本的最终交付目录；
+- 最终目录中同时包含免安装 ZIP 和安装程序 EXE。
 
 这不是 PyInstaller 的 onefile 模式。安装程序虽然是单个 EXE，但安装后会保留
 Qt、QML、Playwright 和 Chromium 的运行目录，启动速度和稳定性更适合本项目。
@@ -28,20 +28,31 @@ conda activate ehrm
 在项目根目录打开 PowerShell：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0
 ```
+
+最终目录结构：
+
+```text
+dist\
+└─ E-HRM-Setup-0.2.0\
+   ├─ E-HRM-Setup-0.2.0.exe
+   └─ E-HRM-0.2.0-windows-x64.zip
+```
+
+`-Version` 支持 `0.2.0` 或 `0.2.0.0` 格式。不传时继续读取项目内置版本号。
 
 常用参数：
 
 ```powershell
 # 暂时跳过测试
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -SkipTests
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0 -SkipTests
 
 # 只生成目录版和 ZIP，不调用 Inno Setup
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -SkipInstaller
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0 -SkipInstaller
 
 # 调试构建：启动软件时保留控制台窗口
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Console
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0 -Console
 ```
 
 构建脚本会自动完成：

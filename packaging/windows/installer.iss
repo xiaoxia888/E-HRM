@@ -1,6 +1,12 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
 #endif
+#ifndef MySourceDir
+  #define MySourceDir "..\..\build\windows-dist\E-HRM"
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "..\..\dist\E-HRM-Setup-" + MyAppVersion
+#endif
 
 #define MyAppName "信息化人力工作台"
 #define MyAppPublisher "NJNCC"
@@ -15,7 +21,7 @@ DefaultDirName={localappdata}\Programs\E-HRM
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputDir=..\..\dist\windows-installer
+OutputDir={#MyOutputDir}
 OutputBaseFilename=E-HRM-Setup-{#MyAppVersion}
 SetupIconFile=generated\app.ico
 Compression=lzma2/ultra64
@@ -35,7 +41,7 @@ Name: "chinesesimplified"; MessagesFile: "languages\ChineseSimplified.isl"
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
 
 [Files]
-Source: "..\..\dist\windows\E-HRM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

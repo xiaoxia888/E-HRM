@@ -11,6 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
+from ehrm import __version__
 from ehrm.core.error_catalog import ErrorCode, display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.preferences import UserPreferences, UserPreferencesStore
@@ -465,7 +466,7 @@ class DesktopViewModel(QObject):
 
     @Property(str, constant=True)
     def appVersion(self) -> str:
-        return "0.1.0"
+        return __version__
 
     @Property(bool, notify=runningChanged)
     def running(self) -> bool:

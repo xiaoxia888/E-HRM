@@ -34,6 +34,7 @@ datas = pw_datas + [
     (str(PROJECT_ROOT / "config" / "settings.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "error_messages.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "models"), "config/models"),
+    (str(GENERATED_DIR / "build_version.txt"), "ehrm"),
     (
         str(
             PROJECT_ROOT

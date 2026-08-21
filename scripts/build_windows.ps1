@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidatePattern('^\d+\.\d+\.\d+(\.\d+)?$')]
+    [string]$Version,
     [switch]$SkipTests,
     [switch]$SkipInstaller,
     [switch]$Console
@@ -38,12 +40,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to download Chromium."
 }
 
-$Version = python scripts/prepare_windows_build.py
+$PrepareArgs = @("scripts/prepare_windows_build.py")
+if ($Version) {
+    $PrepareArgs += @("--version", $Version)
+}
+
+$PreparedVersion = python @PrepareArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to generate Windows icon or version information."
 }
 
-$Version = $Version.Trim()
+$Version = $PreparedVersion.Trim()
+$ReleaseDir = Join-Path $ProjectRoot "dist/E-HRM-Setup-$Version"
+New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
 
 if ($Console) {
     $env:EHRM_BUILD_CONSOLE = "1"
@@ -54,22 +63,22 @@ if ($Console) {
 python -m PyInstaller `
     --noconfirm `
     --clean `
-    --distpath dist/windows `
-    --workpath build/windows `
+    --distpath build/windows-dist `
+    --workpath build/windows-work `
     packaging/windows/ehrm.spec
 
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed."
 }
 
-$BundleDir = Join-Path $ProjectRoot "dist/windows/E-HRM"
+$BundleDir = Join-Path $ProjectRoot "build/windows-dist/E-HRM"
 
 python scripts/verify_windows_bundle.py $BundleDir
 if ($LASTEXITCODE -ne 0) {
     throw "Frozen bundle structure validation failed."
 }
 
-$ZipPath = Join-Path $ProjectRoot "dist/E-HRM-$Version-windows-x64.zip"
+$ZipPath = Join-Path $ReleaseDir "E-HRM-$Version-windows-x64.zip"
 
 if (Test-Path $ZipPath) {
     Remove-Item -Force $ZipPath
@@ -93,7 +102,11 @@ if (-not $SkipInstaller) {
         Select-Object -First 1
 
     if ($Iscc) {
-        & $Iscc "/DMyAppVersion=$Version" "packaging/windows/installer.iss"
+        & $Iscc `
+            "/DMyAppVersion=$Version" `
+            "/DMySourceDir=$BundleDir" `
+            "/DMyOutputDir=$ReleaseDir" `
+            "packaging/windows/installer.iss"
 
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to generate the Inno Setup installer."
@@ -101,7 +114,7 @@ if (-not $SkipInstaller) {
 
         Write-Host (
             "Installer: " +
-            (Join-Path $ProjectRoot "dist/windows-installer/E-HRM-Setup-$Version.exe")
+            (Join-Path $ReleaseDir "E-HRM-Setup-$Version.exe")
         ) -ForegroundColor Green
     } else {
         Write-Warning "Inno Setup 6 is not installed. Only the portable ZIP package will be generated."
@@ -109,4 +122,5 @@ if (-not $SkipInstaller) {
     }
 }
 
+Write-Host "Release directory: $ReleaseDir" -ForegroundColor Green
 Write-Host "Windows packaging completed successfully." -ForegroundColor Green

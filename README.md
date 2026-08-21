@@ -75,7 +75,7 @@ onefile 每次启动都解压几百 MB 浏览器文件。
 ```powershell
 conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
-powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0
 ```
 
 完整说明见 `packaging/windows/README.md`。
