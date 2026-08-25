@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 
 Rectangle {
     id: control
@@ -6,6 +7,7 @@ Rectangle {
     property url iconSource: ""
     property bool selected: false
     property bool reserved: false
+    property bool compact: false
     signal clicked()
 
     implicitHeight: 52
@@ -22,8 +24,9 @@ Rectangle {
     }
 
     Row {
-        anchors.left: parent.left
-        anchors.leftMargin: 18
+        anchors.left: control.compact ? undefined : parent.left
+        anchors.leftMargin: control.compact ? 0 : 18
+        anchors.horizontalCenter: control.compact ? parent.horizontalCenter : undefined
         anchors.verticalCenter: parent.verticalCenter
         spacing: 12
         Image {
@@ -34,13 +37,14 @@ Rectangle {
         }
         Text {
             id: title
+            visible: !control.compact
             anchors.verticalCenter: parent.verticalCenter
             color: control.selected ? "#1677ff" : "#303540"
             font.pixelSize: 15
             font.weight: control.selected ? Font.DemiBold : Font.Normal
         }
         Rectangle {
-            visible: control.reserved
+            visible: control.reserved && !control.compact
             anchors.verticalCenter: parent.verticalCenter
             width: reservedText.implicitWidth + 12
             height: 24
@@ -63,5 +67,13 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: control.clicked()
+    }
+
+    ToolTip {
+        visible: control.compact && mouseArea.containsMouse
+        text: control.text
+        delay: 350
+        x: control.width + 6
+        y: Math.round((control.height - implicitHeight) / 2)
     }
 }

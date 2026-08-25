@@ -18,6 +18,7 @@ ApplicationWindow {
     font.family: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : "PingFang SC"
 
     property int activeModule: 0
+    property bool navigationCollapsed: false
 
     onClosing: function(close) {
         if (window.backend.running || window.backend.erpUploading
@@ -59,7 +60,10 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
-            Layout.preferredWidth: window.width < 1180 ? 184 : 220
+            id: navigationPanel
+            z: 2
+            Layout.preferredWidth: window.navigationCollapsed
+                ? 72 : (window.width < 1180 ? 184 : 220)
             Layout.fillHeight: true
             color: "#ffffff"
             border.color: "#d6dde7"
@@ -73,8 +77,10 @@ ApplicationWindow {
                     width: parent.width
                     height: 82
                     Row {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 9
+                        anchors.left: window.navigationCollapsed ? undefined : parent.left
+                        anchors.leftMargin: window.navigationCollapsed ? 0 : 9
+                        anchors.horizontalCenter: window.navigationCollapsed
+                            ? parent.horizontalCenter : undefined
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 13
                         Rectangle {
@@ -90,8 +96,9 @@ ApplicationWindow {
                             }
                         }
                         Text {
+                            visible: !window.navigationCollapsed
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "信息化人力"
+                            text: "南化建人力"
                             color: "#1e2430"
                             font.pixelSize: 20
                             font.weight: Font.Bold
@@ -104,6 +111,7 @@ ApplicationWindow {
                     text: "权益单获取"
                     iconSource: "../assets/document.svg"
                     selected: window.activeModule === 0
+                    compact: window.navigationCollapsed
                     onClicked: window.activeModule = 0
                 }
                 NavItem {
@@ -111,6 +119,7 @@ ApplicationWindow {
                     text: "上传至 ERP"
                     iconSource: "../assets/upload.svg"
                     selected: window.activeModule === 1
+                    compact: window.navigationCollapsed
                     onClicked: window.activeModule = 1
                 }
                 NavItem {
@@ -118,6 +127,7 @@ ApplicationWindow {
                     text: "任务记录"
                     iconSource: "../assets/history.svg"
                     selected: window.activeModule === 2
+                    compact: window.navigationCollapsed
                     onClicked: window.activeModule = 2
                 }
 
@@ -128,8 +138,38 @@ ApplicationWindow {
                     text: "系统设置"
                     iconSource: "../assets/settings.svg"
                     selected: window.activeModule === 3
+                    compact: window.navigationCollapsed
                     onClicked: window.activeModule = 3
                 }
+            }
+
+            Rectangle {
+                id: navigationCollapseHandle
+                z: 5
+                anchors.right: parent.right
+                anchors.rightMargin: -12
+                anchors.verticalCenter: parent.verticalCenter
+                width: 24
+                height: 52
+                radius: 12
+                color: collapseMouse.containsMouse ? "#eaf3ff" : "#f8fafc"
+                border.color: "#cfd8e4"
+                Text {
+                    anchors.centerIn: parent
+                    text: window.navigationCollapsed ? "›" : "‹"
+                    color: "#506174"
+                    font.pixelSize: 23
+                }
+                MouseArea {
+                    id: collapseMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: window.navigationCollapsed = !window.navigationCollapsed
+                }
+                ToolTip.visible: collapseMouse.containsMouse
+                ToolTip.text: window.navigationCollapsed ? "展开导航" : "收起导航"
+                ToolTip.delay: 350
             }
         }
 
@@ -242,7 +282,7 @@ ApplicationWindow {
                                     spacing: 12
                                     MetricCard {
                                         Layout.fillWidth: true
-                                        title: "人员"
+                                        title: window.backend.peopleMetricTitle
                                         value: window.backend.peopleCount.toString()
                                         iconSource: "../assets/people.svg"
                                     }
@@ -319,8 +359,8 @@ ApplicationWindow {
                                     border.color: "#cfd8e4"
                                     clip: true
 
-                                    property var ratios: [0.045, 0.15, 0.13, 0.105, 0.085, 0.17, 0.075, 0.12, 0.12]
-                                    property var headers: ["状态", "任务编号", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
+                                    property var ratios: [0.045, 0.065, 0.135, 0.115, 0.095, 0.075, 0.165, 0.07, 0.115, 0.12]
+                                    property var headers: ["状态", "打印组", "任务编号", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"]
 
                                     Column {
                                         anchors.fill: parent
@@ -355,6 +395,7 @@ ApplicationWindow {
 
                                         ListView {
                                             id: recordList
+                                            objectName: "recordList"
                                             width: parent.width
                                             height: parent.height - 48
                                             clip: true
@@ -364,6 +405,7 @@ ApplicationWindow {
                                                 id: recordRow
                                                 required property int index
                                                 required property var modelData
+                                                objectName: "previewRecordRow_" + String(index)
                                                 width: recordList.width
                                                 height: 50
                                                 color: modelData.rowStatus === "error" ? "#fff7f6"
@@ -373,6 +415,7 @@ ApplicationWindow {
                                                 border.color: modelData.rowStatus === "error" ? "#f2c5c1"
                                                     : modelData.rowStatus === "warning" ? "#efd9a5"
                                                     : "#e1e7ef"
+
                                                 Row {
                                                     anchors.fill: parent
                                                     Item {
@@ -436,6 +479,7 @@ ApplicationWindow {
                                                     }
                                                     Repeater {
                                                         model: [
+                                                            recordRow.modelData.printGroup,
                                                             recordRow.modelData.taskNumber, recordRow.modelData.unit,
                                                             recordRow.modelData.department,
                                                             recordRow.modelData.name, recordRow.modelData.identity,
@@ -449,6 +493,9 @@ ApplicationWindow {
                                                             width: tablePanel.width * tablePanel.ratios[dataCell.index + 1]
                                                             height: 50
                                                             SelectableElidedText {
+                                                                objectName: "previewCell_"
+                                                                    + String(recordRow.index) + "_"
+                                                                    + String(dataCell.index)
                                                                 anchors.fill: parent
                                                                 anchors.leftMargin: 10
                                                                 anchors.rightMargin: 8
@@ -457,6 +504,10 @@ ApplicationWindow {
                                                                 textColor: "#303744"
                                                                 pixelSize: 13
                                                                 emphasized: dataCell.index === 0
+                                                                onDoubleClicked: {
+                                                                    if (!window.backend.running)
+                                                                        recordEditDialog.openForRecord(recordRow.modelData)
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -527,6 +578,7 @@ ApplicationWindow {
 
                                         ModeCard {
                                             width: parent.width
+                                            visible: !window.backend.erpRecordSource
                                             title: "相同查询条件合并"
                                             helper: "预计生成 " + window.backend.batchExpectedPdfCount + " 份 PDF"
                                             selected: window.backend.exportMode === "batch"
@@ -534,10 +586,104 @@ ApplicationWindow {
                                         }
                                         ModeCard {
                                             width: parent.width
+                                            visible: !window.backend.erpRecordSource
                                             title: "每人单独一份"
                                             helper: "预计生成 " + window.backend.peopleCount + " 份 PDF"
                                             selected: window.backend.exportMode === "individual"
                                             onClicked: window.backend.setExportMode("individual")
+                                        }
+
+                                        Text {
+                                            visible: window.backend.erpRecordSource
+                                            text: "申请打印组"
+                                            color: "#29303d"
+                                            font.pixelSize: 15
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Repeater {
+                                            model: window.backend.erpRecordSource
+                                                ? window.backend.printGroups : []
+                                            delegate: Rectangle {
+                                                id: printGroupCard
+                                                required property var modelData
+                                                width: parent.width
+                                                height: 128
+                                                radius: 8
+                                                color: modelData.modeRequired
+                                                    ? "#fffaf0" : "#f5f8fc"
+                                                border.color: modelData.modeRequired
+                                                    ? "#e5b34f" : "#d7e0ea"
+
+                                                ColumnLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 7
+
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: printGroupCard.modelData.taskNumber
+                                                                + " · "
+                                                                + printGroupCard.modelData.label
+                                                                + " · "
+                                                                + printGroupCard.modelData.peopleCount
+                                                                + "人"
+                                                            color: "#243247"
+                                                            font.pixelSize: 13
+                                                            font.weight: Font.DemiBold
+                                                            elide: Text.ElideMiddle
+                                                        }
+                                                        Text {
+                                                            text: printGroupCard.modelData.modeLabel
+                                                            color: printGroupCard.modelData.modeRequired
+                                                                ? "#b87503" : "#5d6878"
+                                                            font.pixelSize: 12
+                                                        }
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: printGroupCard.modelData.insurance
+                                                            + " · "
+                                                            + printGroupCard.modelData.startMonth
+                                                            + " 至 "
+                                                            + printGroupCard.modelData.endMonth
+                                                            + " · 预计 "
+                                                            + printGroupCard.modelData.pdfCount
+                                                            + " 份 PDF"
+                                                        color: "#6d7787"
+                                                        font.pixelSize: 12
+                                                        elide: Text.ElideRight
+                                                    }
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+                                                        AppButton {
+                                                            Layout.fillWidth: true
+                                                            Layout.preferredHeight: 34
+                                                            text: "合并打印"
+                                                            primary: printGroupCard.modelData.resolvedMode === "combined"
+                                                            outline: printGroupCard.modelData.resolvedMode !== "combined"
+                                                            onClicked: window.backend.setPrintGroupMode(
+                                                                printGroupCard.modelData.groupId,
+                                                                "combined"
+                                                            )
+                                                        }
+                                                        AppButton {
+                                                            Layout.fillWidth: true
+                                                            Layout.preferredHeight: 34
+                                                            text: "每人一份"
+                                                            primary: printGroupCard.modelData.resolvedMode === "individual"
+                                                            outline: printGroupCard.modelData.resolvedMode !== "individual"
+                                                            onClicked: window.backend.setPrintGroupMode(
+                                                                printGroupCard.modelData.groupId,
+                                                                "individual"
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         Rectangle {
@@ -568,14 +714,15 @@ ApplicationWindow {
                                                         from: 1
                                                         to: 100
                                                         value: window.backend.batchSize
-                                                        enabled: window.backend.exportMode === "batch"
+                                                        enabled: window.backend.erpRecordSource
+                                                            || window.backend.exportMode === "batch"
                                                         onValueEdited: function(value) {
                                                             window.backend.setBatchSize(value)
                                                         }
                                                     }
                                                 }
                                                 Text {
-                                                    text: "每份 PDF 最多包含 1–100 人"
+                                                    text: "每份合并 PDF 最多包含 1–100 人"
                                                     color: "#8a93a2"
                                                     font.pixelSize: 12
                                                 }
@@ -643,8 +790,7 @@ ApplicationWindow {
                                     danger: window.backend.running
                                     enabled: !window.backend.stopping
                                         && (window.backend.running
-                                            || (window.backend.hasRecords
-                                                && window.backend.recordIssueCount === 0))
+                                            || window.backend.hasRecords)
                                     onClicked: {
                                         if (window.backend.running)
                                             stopTaskDialog.open()
@@ -684,6 +830,16 @@ ApplicationWindow {
 
     RecordIssuesDialog {
         id: recordIssuesDialog
+        backend: appBackend
+    }
+
+    RecordEditDialog {
+        id: recordEditDialog
+        backend: appBackend
+    }
+
+    PdfPreviewDialog {
+        id: pdfPreviewDialog
         backend: appBackend
     }
 
@@ -817,7 +973,7 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             spacing: 15
             Text {
-                text: "Excel 数据校验失败"
+                text: "数据校验失败"
                 color: "#202632"
                 font.pixelSize: 21
                 font.weight: Font.Bold
@@ -831,7 +987,7 @@ ApplicationWindow {
             }
             Text {
                 visible: validationDialog.details.length > 0
-                text: "请修改以下内容后重新导入："
+                text: "请修改以下内容后重试："
                 color: "#737c8b"
                 font.pixelSize: 13
             }
@@ -908,7 +1064,22 @@ ApplicationWindow {
                 Layout.alignment: Qt.AlignRight
                 spacing: 10
                 AppButton { text: "关闭"; onClicked: resultDialog.close() }
-                AppButton { text: "打开结果文件夹"; primary: true; onClicked: window.backend.openFolder(window.backend.lastOutputPath) }
+                AppButton {
+                    visible: window.backend.hasPreviewablePdfs
+                    text: "预览 PDF（" + window.backend.lastPdfCount + "）"
+                    primary: true
+                    onClicked: {
+                        if (window.backend.preparePdfPreview()) {
+                            resultDialog.close()
+                            pdfPreviewDialog.openPreview()
+                        }
+                    }
+                }
+                AppButton {
+                    text: "打开结果文件夹"
+                    outline: true
+                    onClicked: window.backend.openFolder(window.backend.lastOutputPath)
+                }
             }
         }
     }

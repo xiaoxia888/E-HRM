@@ -87,6 +87,8 @@ class ErpTaskExtractionService:
         succeeded = 0
         failed = 0
         review_tasks = 0
+        print_groups = 0
+        print_groups_pending_mode = 0
         total = len(records)
         processed = 0
         stopped = self._is_cancelled()
@@ -129,41 +131,80 @@ class ErpTaskExtractionService:
                 succeeded += 1
                 if extraction.needs_review:
                     review_tasks += 1
-                assigned_identities: set[str] = set()
-                for person_index, person in enumerate(extraction.people, start=1):
-                    source_identity = self._identity_from_application_text(
-                        record,
-                        person.name,
-                        person.social_security_number,
-                    )
-                    if source_identity in assigned_identities:
-                        self._logger.warning(
-                            "忽略申请内重复分配的身份证 code=%s name=%s",
-                            record.code,
+                print_groups += len(extraction.groups)
+                for group_index, group in enumerate(
+                    extraction.groups,
+                    start=1,
+                ):
+                    group_id = self._group_id(record, group_index)
+                    resolved_print_mode = group.print_mode
+                    if resolved_print_mode is None and len(group.people) == 1:
+                        resolved_print_mode = "individual"
+                    if resolved_print_mode is None:
+                        print_groups_pending_mode += 1
+                    assigned_identities: set[str] = set()
+                    for person_index, person in enumerate(
+                        group.people,
+                        start=1,
+                    ):
+                        source_identity = self._identity_from_application_text(
+                            record,
                             person.name,
+                            person.social_security_number,
                         )
-                        source_identity = None
-                    elif source_identity:
-                        assigned_identities.add(source_identity)
-                    rights_requests.append(
-                        {
-                            "task_number": record.code,
-                            "erp_record_id": record.id,
-                            "application_date": record.initiated_date,
-                            "person_sequence": person_index,
-                            "name": person.name,
-                            "social_security_number": source_identity,
-                            "start_month": person.start_month,
-                            "end_month": person.end_month,
-                            "time_expression": person.time_expression,
-                            "evidence": person.evidence,
-                            "date_basis": person.date_basis,
-                            "confidence": person.confidence,
-                            "needs_review": extraction.needs_review,
-                            "review_reasons": list(extraction.review_reasons),
-                            "warnings": list(extraction.warnings),
-                        }
-                    )
+                        if source_identity in assigned_identities:
+                            self._logger.warning(
+                                "忽略同一打印组内重复分配的身份证 "
+                                "code=%s group=%s name=%s",
+                                record.code,
+                                group_id,
+                                person.name,
+                            )
+                            source_identity = None
+                        elif source_identity:
+                            assigned_identities.add(source_identity)
+                        print_mode_reason = (
+                            "原文未说明多人合并打印还是每人单独打印"
+                        )
+                        review_reasons = [
+                            reason
+                            for reason in group.review_reasons
+                            if reason != print_mode_reason
+                        ]
+                        warnings = list(
+                            dict.fromkeys(
+                                [*extraction.warnings, *group.warnings]
+                            )
+                        )
+                        rights_requests.append(
+                            {
+                                "task_number": record.code,
+                                "erp_record_id": record.id,
+                                "application_date": record.initiated_date,
+                                "group_id": group_id,
+                                "group_sequence": group_index,
+                                "group_people_count": len(group.people),
+                                "source_print_mode": group.print_mode,
+                                "resolved_print_mode": resolved_print_mode,
+                                "group_evidence": group.evidence,
+                                "person_sequence": person_index,
+                                "name": person.name,
+                                "social_security_number": source_identity,
+                                "insurance_type": group.insurance_type,
+                                "start_month": group.start_month,
+                                "end_month": group.end_month,
+                                "time_expression": group.time_expression,
+                                "evidence": person.evidence,
+                                "date_basis": group.date_basis,
+                                "relative_month_count": (
+                                    group.relative_month_count
+                                ),
+                                "confidence": person.confidence,
+                                "needs_review": bool(review_reasons),
+                                "review_reasons": review_reasons,
+                                "warnings": warnings,
+                            }
+                        )
             except EhrmError as exc:
                 failed += 1
                 self._logger.error(
@@ -239,6 +280,8 @@ class ErpTaskExtractionService:
                 "tasks_succeeded": succeeded,
                 "tasks_failed": failed,
                 "tasks_needing_review": review_tasks,
+                "print_groups_extracted": print_groups,
+                "print_groups_pending_mode": print_groups_pending_mode,
                 "people_extracted": len(rights_requests),
                 "identities_matched": identities_matched,
                 "identities_pending": len(rights_requests) - identities_matched,
@@ -277,6 +320,8 @@ class ErpTaskExtractionService:
             str(item.get("name") or "").strip()
             for item in missing_requests
         ]
+        identities = list(dict.fromkeys(identities))
+        names = list(dict.fromkeys(names))
         try:
             matches_by_identity, matches_by_name = ErpPersonLookupService(
                 self._settings,
@@ -323,6 +368,11 @@ class ErpTaskExtractionService:
                 queried_by_identity=False,
             )
         return False
+
+    @staticmethod
+    def _group_id(record: ErpTaskRecord, sequence: int) -> str:
+        prefix = record.code.strip() or record.id.strip() or "ERP"
+        return f"{prefix}-G{sequence:02d}"
 
     @staticmethod
     def _candidate_payload(match: ErpPersonRecord) -> dict[str, str]:

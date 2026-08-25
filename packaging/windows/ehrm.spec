@@ -53,6 +53,7 @@ datas = pw_datas + [
 ]
 
 hiddenimports = pw_hiddenimports + [
+    "PySide6.QtPdf",
     "PySide6.QtQuick",
     "PySide6.QtQuickControls2",
     "PySide6.QtSvg",

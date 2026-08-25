@@ -9,6 +9,7 @@ Item {
     property int pixelSize: 13
     property int horizontalAlignment: Text.AlignLeft
     property bool emphasized: false
+    signal doubleClicked()
 
     Text {
         id: displayText
@@ -44,6 +45,13 @@ Item {
         onActiveFocusChanged: {
             if (!activeFocus)
                 deselect()
+        }
+
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            exclusiveSignals: TapHandler.DoubleTap
+            onDoubleTapped: root.doubleClicked()
         }
     }
 

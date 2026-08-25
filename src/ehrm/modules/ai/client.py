@@ -20,6 +20,7 @@ from ehrm.modules.ai.models import (
     ExtractionResponse,
     ModelMetrics,
     ReasoningMode,
+    resolve_relative_month_ranges,
     validate_extraction_payload,
 )
 from ehrm.modules.erp.models import ErpTaskRecord
@@ -101,7 +102,11 @@ class OllamaTaskExtractionClient:
                     payload=request_payload,
                     operation="解析 ERP 任务",
                 )
-                return self._parse_response(response, mode)
+                return self._parse_response(
+                    response,
+                    mode,
+                    application_date=record.initiated_date,
+                )
             except (AiRequestFailedError, AiResponseInvalidError) as exc:
                 last_error = exc
         assert last_error is not None
@@ -111,6 +116,8 @@ class OllamaTaskExtractionClient:
         self,
         payload: dict[str, Any],
         mode: ReasoningMode,
+        *,
+        application_date: str,
     ) -> ExtractionResponse:
         message = payload.get("message")
         if not isinstance(message, dict):
@@ -132,7 +139,10 @@ class OllamaTaskExtractionClient:
                 "模型返回的内容不是合法 JSON",
                 details=str(exc),
             ) from exc
-        extraction = validate_extraction_payload(raw_extraction)
+        extraction = resolve_relative_month_ranges(
+            validate_extraction_payload(raw_extraction),
+            application_date,
+        )
         thinking = message.get("thinking")
         metrics = ModelMetrics(
             model=str(payload.get("model") or self.settings.model),

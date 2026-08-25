@@ -67,6 +67,7 @@ class DesktopViewModel(QObject):
     rightsAccountChanged = Signal()
     erpConnectionChanged = Signal()
     erpTaskExtractionChanged = Signal()
+    pdfPreviewChanged = Signal()
 
     validationFailed = Signal(str, str)
     notification = Signal(str, str)
@@ -97,6 +98,7 @@ class DesktopViewModel(QObject):
         self._loader = RightsStatementExcelLoader()
         self._template = RightsStatementTemplateService()
         self._records: list[EmployeeRecord] = []
+        self._records_edited = False
         self._record_source = ""
         self._erp_task_result: dict[str, object] | None = None
         self._record_issues: list[dict[str, object]] = []
@@ -120,6 +122,7 @@ class DesktopViewModel(QObject):
         self._progress_total = 1
         self._pending_output_dir: Path | None = None
         self._last_output_dir: Path | None = None
+        self._last_pdf_files: list[Path] = []
         self._generated_source_excel: Path | None = None
         self._worker: AutomationWorker | None = None
         self._erp_upload_file: ValidatedUploadFile | None = None
@@ -192,6 +195,12 @@ class DesktopViewModel(QObject):
                     "待确认" if self._record_source == "erp" else ""
                 ),
                 "taskNumber": record.task_number,
+                "printGroup": (
+                    f"组{record.print_group_sequence}"
+                    if record.print_group_sequence
+                    else "-"
+                ),
+                "printGroupId": record.print_group_id,
             })
         return rows
 
@@ -201,7 +210,75 @@ class DesktopViewModel(QObject):
 
     @Property(int, notify=planChanged)
     def conditionCount(self) -> int:
+        if self._record_source == "erp":
+            return len(
+                {
+                    (record.task_number, record.print_group_id)
+                    for record in self._records
+                    if record.print_group_id
+                }
+            )
         return len({record.group_key for record in self._records})
+
+    @Property(bool, notify=fileChanged)
+    def erpRecordSource(self) -> bool:
+        return self._record_source == "erp"
+
+    @Property(str, notify=fileChanged)
+    def peopleMetricTitle(self) -> str:
+        return "人员记录" if self._record_source == "erp" else "人员"
+
+    @Property(int, notify=planChanged)
+    def uniquePeopleCount(self) -> int:
+        identities = {
+            record.identity_number or f"name:{record.name}"
+            for record in self._records
+        }
+        return len(identities)
+
+    @Property("QVariantList", notify=planChanged)
+    def printGroups(self) -> list[dict[str, object]]:
+        grouped: dict[tuple[str, str], list[EmployeeRecord]] = {}
+        for record in self._records:
+            if not record.print_group_id:
+                continue
+            grouped.setdefault(
+                (record.task_number, record.print_group_id), []
+            ).append(record)
+        summaries: list[dict[str, object]] = []
+        for records in grouped.values():
+            first = records[0]
+            mode = first.resolved_print_mode
+            pdf_count = (
+                len(records)
+                if mode == "individual"
+                else (
+                    (len(records) + self._batch_size - 1) // self._batch_size
+                    if mode == "combined"
+                    else 0
+                )
+            )
+            summaries.append(
+                {
+                    "groupId": first.print_group_id,
+                    "sequence": first.print_group_sequence,
+                    "label": f"组{first.print_group_sequence}",
+                    "taskNumber": first.task_number,
+                    "peopleCount": len(records),
+                    "insurance": first.insurance_type,
+                    "startMonth": first.start_month or "待确认",
+                    "endMonth": first.end_month or "待确认",
+                    "sourceMode": first.source_print_mode,
+                    "resolvedMode": mode,
+                    "modeLabel": {
+                        "combined": "合并打印",
+                        "individual": "每人单独一份",
+                    }.get(mode, "待选择"),
+                    "modeRequired": not bool(mode),
+                    "pdfCount": pdf_count,
+                }
+            )
+        return summaries
 
     @Property(int, notify=planChanged)
     def expectedPdfCount(self) -> int:
@@ -218,7 +295,7 @@ class DesktopViewModel(QObject):
     @Property(str, notify=fileChanged)
     def fileSummary(self) -> str:
         if self._record_source == "erp":
-            return f"ERP 申请解析结果 · {len(self._records)} 人"
+            return f"ERP 申请解析结果 · {len(self._records)} 条人员记录"
         if self._source_excel is None:
             return "尚未导入 Excel"
         return f"{self._source_excel.name} · {len(self._records)} 人"
@@ -289,6 +366,26 @@ class DesktopViewModel(QObject):
     @Property(str, notify=outputPathChanged)
     def outputPath(self) -> str:
         return str(self._output_path)
+
+    @Property("QVariantList", notify=pdfPreviewChanged)
+    def lastPdfFiles(self) -> list[dict[str, object]]:
+        return [
+            {
+                "name": path.name,
+                "path": str(path),
+                "url": QUrl.fromLocalFile(str(path)),
+                "directory": str(path.parent),
+            }
+            for path in self._last_pdf_files
+        ]
+
+    @Property(int, notify=pdfPreviewChanged)
+    def lastPdfCount(self) -> int:
+        return len(self._last_pdf_files)
+
+    @Property(bool, notify=pdfPreviewChanged)
+    def hasPreviewablePdfs(self) -> bool:
+        return bool(self._last_pdf_files)
 
     @Property(bool, notify=uploadToErpChanged)
     def uploadToErp(self) -> bool:
@@ -497,7 +594,11 @@ class DesktopViewModel(QObject):
                     f"ERP 申请已解析，发现 {issue_count} 项待处理问题。"
                     "请查看问题明细后再继续。"
                 )
-            return "ERP 申请已解析并校验通过，可以获取权益单。"
+            return (
+                f"ERP 申请已拆分为 {self.conditionCount} 个打印组，"
+                f"共 {len(self._records)} 条人员记录、"
+                f"{self.uniquePeopleCount} 名实际人员。"
+            )
         if not self._records:
             return "批量模式仅合并任务编号、险种及起止年月完全相同的人员。"
         if self._mode is ExportMode.INDIVIDUAL:
@@ -512,6 +613,8 @@ class DesktopViewModel(QObject):
 
     @Property("QVariantList", notify=planChanged)
     def conditionSummaries(self) -> list[dict[str, object]]:
+        if self._record_source == "erp":
+            return self.printGroups
         counts = Counter(record.group_key for record in self._records)
         summaries: list[dict[str, object]] = []
         for (task_number, insurance, start, end), count in counts.items():
@@ -531,6 +634,117 @@ class DesktopViewModel(QObject):
                 }
             )
         return summaries
+
+    @Slot(str, str)
+    def setPrintGroupMode(self, group_id: str, value: str) -> None:
+        normalized_group = group_id.strip()
+        normalized_mode = value.strip()
+        if normalized_mode not in {"combined", "individual"}:
+            return
+        if not normalized_group:
+            return
+        changed = False
+        updated: list[EmployeeRecord] = []
+        for record in self._records:
+            if record.print_group_id == normalized_group:
+                changed = changed or record.resolved_print_mode != normalized_mode
+                updated.append(
+                    replace(record, resolved_print_mode=normalized_mode)
+                )
+            else:
+                updated.append(record)
+        if not changed:
+            return
+        self._records = updated
+        if self._erp_task_result is not None:
+            requests = self._erp_task_result.get("rights_statement_requests")
+            if isinstance(requests, list):
+                for item in requests:
+                    if (
+                        isinstance(item, dict)
+                        and str(item.get("group_id") or "") == normalized_group
+                    ):
+                        item["resolved_print_mode"] = normalized_mode
+        self._record_issues = [
+            issue
+            for issue in self._record_issues
+            if not (
+                issue.get("code") == ErrorCode.AI_PRINT_MODE_REQUIRED.value
+                and issue.get("groupId") == normalized_group
+            )
+        ]
+        self.recordsChanged.emit()
+        self._refresh_plan()
+
+    @Slot(int, str, str, str, str, str, str, str, result=bool)
+    def updateRecord(
+        self,
+        row_number: int,
+        unit: str,
+        department: str,
+        name: str,
+        identity: str,
+        insurance: str,
+        start_month: str,
+        end_month: str,
+    ) -> bool:
+        target = next(
+            (
+                record
+                for record in self._records
+                if record.row_number == row_number
+            ),
+            None,
+        )
+        if target is None or self._running:
+            return False
+        candidate = replace(
+            target,
+            unit=unit,
+            department=department,
+            name=name,
+            identity_number=identity,
+            insurance_type=insurance,
+            start_month=start_month,
+            end_month=end_month,
+        )
+        try:
+            candidate = self._loader.normalize_record(candidate)
+            updated = [
+                (
+                    replace(
+                        record,
+                        insurance_type=candidate.insurance_type,
+                        start_month=candidate.start_month,
+                        end_month=candidate.end_month,
+                    )
+                    if target.print_group_id
+                    and record.print_group_id == target.print_group_id
+                    and record.task_number == target.task_number
+                    else record
+                )
+                for record in self._records
+            ]
+            updated = [
+                candidate if record.row_number == row_number else record
+                for record in updated
+            ]
+            updated = self._loader.validate_records(updated)
+        except (ValueError, EhrmError) as exc:
+            details = getattr(exc, "details", None) or str(exc)
+            self.validationFailed.emit("修改内容校验失败", details)
+            return False
+
+        self._records = updated
+        self._records_edited = True
+        self._sync_edited_records_to_erp_result(row_number, target.print_group_id)
+        if self._erp_task_result is not None:
+            self._record_issues = self._build_erp_record_issues(
+                self._erp_task_result
+            )
+        self.recordsChanged.emit()
+        self._refresh_plan()
+        return True
 
     @Property(str, notify=confirmationChanged)
     def confirmationOutputPath(self) -> str:
@@ -593,6 +807,7 @@ class DesktopViewModel(QObject):
         self._erp_task_result = None
         self._record_issues = []
         self._records = records
+        self._records_edited = False
         self.fileChanged.emit()
         self.recordsChanged.emit()
         self._refresh_plan()
@@ -985,17 +1200,38 @@ class DesktopViewModel(QObject):
 
     @Slot()
     def prepareExecution(self) -> None:
-        if not self._records or not self._groups:
+        if not self._records:
             self.notification.emit(
                 "尚无可执行数据",
                 "请先导入 Excel 或获取并解析 ERP 申请信息",
             )
             return
+        try:
+            self._records = self._loader.validate_records(self._records)
+            self._refresh_plan()
+        except EhrmError as exc:
+            self.validationFailed.emit(
+                exc.message or "数据校验失败",
+                exc.details or exc.message,
+            )
+            return
         issue_count = self._actionable_record_issue_count()
         if issue_count:
-            self.notification.emit(
-                "存在待处理问题",
-                f"当前有 {issue_count} 项问题，请查看问题明细后再执行",
+            details = "\n".join(
+                f"{item.get('taskNumber', '-')} · "
+                f"{item.get('personName', '-')}：{item.get('details', '')}"
+                for item in self._record_issues
+                if str(item.get("level") or "") != "info"
+            )
+            self.validationFailed.emit(
+                f"当前有 {issue_count} 项待处理问题",
+                details,
+            )
+            return
+        if not self._groups:
+            self.validationFailed.emit(
+                "没有可执行的打印组",
+                "请检查每个打印组的打印方式和查询条件",
             )
             return
         if self._record_source == "excel" and self._source_excel is None:
@@ -1016,9 +1252,9 @@ class DesktopViewModel(QObject):
         ):
             return
         source_excel = self._source_excel
-        if self._record_source == "erp":
+        if self._record_source == "erp" or self._records_edited:
             try:
-                source_excel = self._create_erp_source_workbook()
+                source_excel = self._create_records_source_workbook()
             except Exception as exc:
                 self._logger.exception("生成 ERP 解析结果源工作簿失败")
                 self.notification.emit("执行准备失败", str(exc))
@@ -1033,6 +1269,9 @@ class DesktopViewModel(QObject):
             source_excel=source_excel,
             upload_to_erp=self._upload_to_erp,
         )
+        if self._last_pdf_files:
+            self._last_pdf_files = []
+            self.pdfPreviewChanged.emit()
         self._last_output_dir = self._pending_output_dir
         self.confirmationChanged.emit()
         self._set_running(True)
@@ -1059,6 +1298,28 @@ class DesktopViewModel(QObject):
     def openFolder(self, path: str) -> None:
         if path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    @Slot(str)
+    def openFileLocation(self, path: str) -> None:
+        if not path:
+            return
+        target = Path(path).expanduser()
+        directory = target.parent if target.suffix else target
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
+    @Slot(result=bool)
+    def preparePdfPreview(self) -> bool:
+        available = [path for path in self._last_pdf_files if path.is_file()]
+        if available != self._last_pdf_files:
+            self._last_pdf_files = available
+            self.pdfPreviewChanged.emit()
+        if available:
+            return True
+        self.notification.emit(
+            "无法预览 PDF",
+            "本次生成的 PDF 已被移动或删除，请打开结果文件夹确认。",
+        )
+        return False
 
     def shutdown(self) -> None:
         """Stops the worker after Qt's UI event loop has finished.
@@ -1117,17 +1378,62 @@ class DesktopViewModel(QObject):
         )
         self.planChanged.emit()
 
-    def _create_erp_source_workbook(self) -> Path:
+    def _create_records_source_workbook(self) -> Path:
         self._cleanup_generated_source_workbook()
         task_dir = self._settings.browser.user_data_dir.parent / "tasks"
         source = task_dir / (
-            f"ERP申请解析数据_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
+            f"临时执行数据_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
         )
         self._generated_source_excel = self._template.write_records(
             source,
             self._records,
+            include_print_groups=self._record_source == "erp",
         )
         return self._generated_source_excel
+
+    def _sync_edited_records_to_erp_result(
+        self,
+        edited_row_number: int,
+        edited_group_id: str,
+    ) -> None:
+        if self._erp_task_result is None:
+            return
+        raw_requests = self._erp_task_result.get("rights_statement_requests")
+        if not isinstance(raw_requests, list):
+            return
+        records_by_row = {record.row_number: record for record in self._records}
+        for raw_index, raw_item in enumerate(raw_requests, start=2):
+            if not isinstance(raw_item, dict):
+                continue
+            record = records_by_row.get(raw_index)
+            if record is None:
+                continue
+            same_group = bool(edited_group_id) and (
+                record.print_group_id == edited_group_id
+            )
+            if same_group:
+                raw_item["insurance_type"] = record.insurance_type
+                raw_item["start_month"] = record.start_month
+                raw_item["end_month"] = record.end_month
+                raw_item["needs_review"] = False
+                raw_item["review_reasons"] = []
+            if raw_index != edited_row_number:
+                continue
+            raw_item["name"] = record.name
+            raw_item["social_security_number"] = record.identity_number
+            raw_item["insurance_type"] = record.insurance_type
+            raw_item["start_month"] = record.start_month
+            raw_item["end_month"] = record.end_month
+            raw_item["needs_review"] = False
+            raw_item["review_reasons"] = []
+            raw_item["identity_match"] = {
+                "code": ErrorCode.SUCCESS.value,
+                "message": display_message(ErrorCode.SUCCESS),
+                "details": "人员信息已在数据预览中人工确认",
+                "source": "manual_edit",
+                "company": record.unit,
+                "department": record.department,
+            }
 
     def _cleanup_generated_source_workbook(self) -> None:
         source = self._generated_source_excel
@@ -1146,6 +1452,7 @@ class DesktopViewModel(QObject):
     def _clear_import(self) -> None:
         self._cleanup_generated_source_workbook()
         self._records = []
+        self._records_edited = False
         self._groups = []
         self._source_excel = None
         self._record_source = ""
@@ -1171,6 +1478,19 @@ class DesktopViewModel(QObject):
     def _on_completed(self, result: ExcelRunResult) -> None:
         self._set_running(False)
         self._set_stopping(False)
+        unique_pdf_files: list[Path] = []
+        seen_pdf_files: set[Path] = set()
+        for item in result.items:
+            if not item.success or item.file_path is None:
+                continue
+            path = item.file_path.expanduser().resolve()
+            if path.suffix.lower() != ".pdf" or path in seen_pdf_files:
+                continue
+            seen_pdf_files.add(path)
+            if path.is_file():
+                unique_pdf_files.append(path)
+        self._last_pdf_files = unique_pdf_files
+        self.pdfPreviewChanged.emit()
         cancelled = sum(
             item.code == str(ErrorCode.TASK_CANCELLED) for item in result.items
         )
@@ -1321,15 +1641,30 @@ class DesktopViewModel(QObject):
                         identity_number=str(
                             item.get("social_security_number") or ""
                         ).strip(),
-                        insurance_type="养老",
+                        insurance_type=str(
+                            item.get("insurance_type") or "养老"
+                        ).strip(),
                         start_month=str(item.get("start_month") or "").strip(),
                         end_month=str(item.get("end_month") or "").strip(),
                         task_number=task_number,
+                        print_group_id=str(
+                            item.get("group_id") or ""
+                        ).strip(),
+                        print_group_sequence=int(
+                            item.get("group_sequence") or 0
+                        ),
+                        source_print_mode=str(
+                            item.get("source_print_mode") or ""
+                        ).strip(),
+                        resolved_print_mode=str(
+                            item.get("resolved_print_mode") or ""
+                        ).strip(),
                     )
                 )
         self._source_excel = None
         self._record_source = "erp"
         self._records = records
+        self._records_edited = False
         self._record_issues = self._build_erp_record_issues(result)
         self.fileChanged.emit()
         self.recordsChanged.emit()
@@ -1340,6 +1675,7 @@ class DesktopViewModel(QObject):
         processed = int(summary.get("tasks_processed") or 0)
         total = int(summary.get("tasks_total") or 0)
         people = int(summary.get("people_extracted") or 0)
+        print_groups = int(summary.get("print_groups_extracted") or 0)
         failed = int(summary.get("tasks_failed") or 0)
         stopped = bool(summary.get("stopped"))
         self._erp_task_extraction_running = False
@@ -1349,11 +1685,17 @@ class DesktopViewModel(QObject):
         self._erp_task_extraction_status = (
             f"已停止：已解析 {processed}/{total} 条申请"
             if stopped
-            else f"解析完成：{total} 条申请，{people} 人"
+            else (
+                f"解析完成：{total} 条申请，{print_groups} 个打印组，"
+                f"{people} 条人员记录"
+            )
         )
         self.erpTaskExtractionChanged.emit()
         title = "已安全停止" if stopped else "申请信息获取完成"
-        message = f"已处理 {processed}/{total} 条申请，解析出 {people} 人"
+        message = (
+            f"已处理 {processed}/{total} 条申请，拆分为 {print_groups} 个打印组，"
+            f"包含 {people} 条人员记录"
+        )
         if failed:
             message += f"，{failed} 条解析失败"
         self.erpTaskExtractionFinished.emit(title, message)
@@ -1397,6 +1739,7 @@ class DesktopViewModel(QObject):
             code: ErrorCode,
             details: str,
             row_number: int = 0,
+            group_id: str = "",
         ) -> None:
             issues.append(
                 {
@@ -1413,6 +1756,7 @@ class DesktopViewModel(QObject):
                     "message": display_message(code),
                     "details": details.strip() or display_message(code),
                     "rowNumber": row_number,
+                    "groupId": group_id,
                 }
             )
 
@@ -1463,11 +1807,35 @@ class DesktopViewModel(QObject):
                     "申请标题和问题描述中未识别到可处理人员",
                 )
 
+        unresolved_groups: set[str] = set()
         for row_number, item in enumerate(requests, start=2):
             if not isinstance(item, dict):
                 continue
             task_number = str(item.get("task_number") or "").strip()
             person_name = str(item.get("name") or "").strip()
+            group_id = str(item.get("group_id") or "").strip()
+            group_sequence = int(item.get("group_sequence") or 0)
+            resolved_print_mode = str(
+                item.get("resolved_print_mode") or ""
+            ).strip()
+            group_people_count = int(item.get("group_people_count") or 0)
+            if (
+                group_id
+                and group_people_count > 1
+                and not resolved_print_mode
+                and group_id not in unresolved_groups
+            ):
+                unresolved_groups.add(group_id)
+                add_issue(
+                    "warning",
+                    task_number,
+                    f"组{group_sequence}",
+                    ErrorCode.AI_PRINT_MODE_REQUIRED,
+                    "原文未说明该组多人合并打印还是每人单独打印，"
+                    "请在导出设置中选择。",
+                    row_number,
+                    group_id,
+                )
             start_month = str(item.get("start_month") or "").strip()
             end_month = str(item.get("end_month") or "").strip()
             if not start_month or not end_month:
@@ -1483,6 +1851,7 @@ class DesktopViewModel(QObject):
                     ErrorCode.AI_DATE_MISSING,
                     "模型未能确定" + "和".join(missing),
                     row_number,
+                    group_id,
                 )
             review_reasons = item.get("review_reasons")
             if isinstance(review_reasons, list) and review_reasons:
@@ -1493,6 +1862,7 @@ class DesktopViewModel(QObject):
                     ErrorCode.AI_REVIEW_REQUIRED,
                     "；".join(str(reason) for reason in review_reasons if reason),
                     row_number,
+                    group_id,
                 )
             warnings = item.get("warnings")
             if isinstance(warnings, list) and warnings:
@@ -1503,6 +1873,7 @@ class DesktopViewModel(QObject):
                     ErrorCode.AI_EXTRACTION_WARNING,
                     "；".join(str(warning) for warning in warnings if warning),
                     row_number,
+                    group_id,
                 )
             if not str(item.get("social_security_number") or "").strip():
                 identity_match = item.get("identity_match")
@@ -1527,6 +1898,7 @@ class DesktopViewModel(QObject):
                     identity_code,
                     details,
                     row_number,
+                    group_id,
                 )
         return issues
 

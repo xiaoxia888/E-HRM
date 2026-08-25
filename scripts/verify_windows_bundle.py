@@ -27,7 +27,15 @@ def main() -> int:
         / "prompts"
         / "erp_task_extraction_system.txt",
         resource_root / "ehrm" / "gui" / "qml" / "Main.qml",
+        resource_root / "ehrm" / "gui" / "qml" / "PdfPreviewDialog.qml",
         resource_root / "ehrm" / "gui" / "qml" / "SystemSettingsPage.qml",
+        resource_root
+        / "PySide6"
+        / "Qt"
+        / "qml"
+        / "QtQuick"
+        / "Pdf"
+        / "qmldir",
         resource_root / "playwright" / "driver" / "node.exe",
         resource_root
         / "playwright"
@@ -45,6 +53,12 @@ def main() -> int:
     )
     if not browser_executables:
         missing.append(browser_root / "<chrome.exe>")
+    pdf_runtime = list(resource_root.rglob("Qt6Pdf.dll"))
+    if not pdf_runtime:
+        missing.append(resource_root / "<Qt6Pdf.dll>")
+    pdf_quick_plugin = list(resource_root.rglob("pdfquickplugin.dll"))
+    if not pdf_quick_plugin:
+        missing.append(resource_root / "<pdfquickplugin.dll>")
     if missing:
         print("Windows 打包结构校验失败：")
         for path in missing:
@@ -52,6 +66,7 @@ def main() -> int:
         return 1
     print(f"Windows 打包结构校验通过：{bundle}")
     print(f"已包含 Chromium：{browser_executables[0]}")
+    print(f"已包含 Qt PDF：{pdf_runtime[0]}")
     return 0
 
 

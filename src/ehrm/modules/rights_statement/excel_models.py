@@ -21,9 +21,21 @@ class EmployeeRecord:
     start_month: str
     end_month: str
     task_number: str
+    print_group_id: str = ""
+    print_group_sequence: int = 0
+    source_print_mode: str = ""
+    resolved_print_mode: str = ""
 
     @property
-    def group_key(self) -> tuple[str, str, str, str]:
+    def group_key(self) -> tuple[str, ...]:
+        if self.print_group_id:
+            return (
+                self.task_number,
+                self.print_group_id,
+                self.insurance_type,
+                self.start_month,
+                self.end_month,
+            )
         return self.task_number, self.insurance_type, self.start_month, self.end_month
 
 
@@ -31,6 +43,7 @@ class EmployeeRecord:
 class WorkGroup:
     sequence: int
     records: tuple[EmployeeRecord, ...]
+    mode: ExportMode | None = None
 
     @property
     def first(self) -> EmployeeRecord:

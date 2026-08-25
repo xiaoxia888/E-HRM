@@ -9,10 +9,12 @@ from ehrm.core.exceptions import AiResponseInvalidError
 from ehrm.core.settings import load_settings
 from ehrm.modules.ai.models import (
     ExtractedPerson,
+    ExtractedPrintGroup,
     ExtractionResponse,
     ModelMetrics,
     ReasoningMode,
     TaskExtraction,
+    resolve_relative_month_ranges,
     validate_extraction_payload,
 )
 from ehrm.modules.erp.extraction_service import ErpTaskExtractionService
@@ -36,16 +38,27 @@ def test_reasoning_modes_use_ollama_native_values() -> None:
 def test_extraction_payload_is_strictly_validated() -> None:
     result = validate_extraction_payload(
         {
-            "people": [
+            "groups": [
                 {
-                    "name": "张三",
-                    "social_security_number": "320101199001011234",
+                    "print_mode": "combined",
+                    "insurance_type": "养老",
                     "start_month": "2025-08",
                     "end_month": "2026-07",
                     "time_expression": "近一年",
-                    "evidence": "张三需打印近一年社保",
                     "date_basis": "relative_months",
-                    "confidence": 0.96,
+                    "relative_month_count": 12,
+                    "evidence": "张三需打印近一年社保",
+                    "people": [
+                        {
+                            "name": "张三",
+                            "social_security_number": "320101199001011234",
+                            "evidence": "张三需打印",
+                            "confidence": 0.96,
+                        }
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
                 }
             ],
             "needs_review": False,
@@ -54,25 +67,162 @@ def test_extraction_payload_is_strictly_validated() -> None:
         }
     )
 
-    assert result.people[0].name == "张三"
-    assert result.people[0].social_security_number == "320101199001011234"
-    assert result.people[0].end_month == "2026-07"
+    assert result.groups[0].people[0].name == "张三"
+    assert (
+        result.groups[0].people[0].social_security_number
+        == "320101199001011234"
+    )
+    assert result.groups[0].end_month == "2026-07"
+
+
+def test_relative_month_range_is_calculated_from_application_date() -> None:
+    extraction = validate_extraction_payload(
+        {
+            "groups": [
+                {
+                    "print_mode": None,
+                    "insurance_type": "养老",
+                    "start_month": "2025-10",
+                    "end_month": "2026-07",
+                    "time_expression": "近半年",
+                    "date_basis": "relative_months",
+                    "relative_month_count": 6,
+                    "evidence": "艾文成近半年社保缴费证明",
+                    "people": [
+                        {
+                            "name": "艾文成",
+                            "social_security_number": None,
+                            "evidence": "艾文成近半年社保缴费证明",
+                            "confidence": 0.98,
+                        }
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    resolved = resolve_relative_month_ranges(extraction, "2026-08-17")
+
+    group = resolved.groups[0]
+    assert group.relative_month_count == 6
+    assert group.start_month == "2026-02"
+    assert group.end_month == "2026-07"
+    assert not group.needs_review
+    assert group.warnings == (
+        "模型返回的相对起止月份已由程序纠正："
+        "2025-10 至 2026-07 → 2026-02 至 2026-07",
+    )
+
+
+def test_relative_month_count_conflict_is_corrected_and_marked_for_review() -> None:
+    extraction = validate_extraction_payload(
+        {
+            "groups": [
+                {
+                    "print_mode": None,
+                    "insurance_type": "养老",
+                    "start_month": None,
+                    "end_month": None,
+                    "time_expression": "近半年",
+                    "date_basis": "relative_months",
+                    "relative_month_count": 10,
+                    "evidence": "艾文成近半年社保缴费证明",
+                    "people": [
+                        {
+                            "name": "艾文成",
+                            "social_security_number": None,
+                            "evidence": "艾文成近半年社保缴费证明",
+                            "confidence": 0.98,
+                        }
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    resolved = resolve_relative_month_ranges(extraction, "2026-08-17")
+
+    group = resolved.groups[0]
+    assert group.relative_month_count == 6
+    assert (group.start_month, group.end_month) == ("2026-02", "2026-07")
+    assert group.needs_review
+    assert resolved.needs_review
+    assert "原文“近半年”表示6个月，模型返回10个月" in (
+        group.review_reasons[0]
+    )
+
+
+def test_relative_month_group_requires_month_count() -> None:
+    payload = {
+        "groups": [
+            {
+                "print_mode": None,
+                "insurance_type": "养老",
+                "start_month": None,
+                "end_month": None,
+                "time_expression": "近半年",
+                "date_basis": "relative_months",
+                "relative_month_count": None,
+                "evidence": "张三近半年社保",
+                "people": [
+                    {
+                        "name": "张三",
+                        "social_security_number": None,
+                        "evidence": "张三近半年社保",
+                        "confidence": 0.9,
+                    }
+                ],
+                "needs_review": False,
+                "review_reasons": [],
+                "warnings": [],
+            }
+        ],
+        "needs_review": False,
+        "review_reasons": [],
+        "warnings": [],
+    }
+
+    with pytest.raises(AiResponseInvalidError, match="缺少 relative_month_count"):
+        validate_extraction_payload(payload)
 
 
 def test_extraction_rejects_reversed_month_range() -> None:
     with pytest.raises(AiResponseInvalidError, match="开始月份晚于结束月份"):
         validate_extraction_payload(
             {
-                "people": [
+                "groups": [
                     {
-                        "name": "张三",
-                        "social_security_number": None,
+                        "print_mode": None,
+                        "insurance_type": "养老",
                         "start_month": "2026-08",
                         "end_month": "2026-07",
                         "time_expression": "",
-                        "evidence": "张三",
                         "date_basis": "explicit_range",
-                        "confidence": 0.8,
+                        "relative_month_count": None,
+                        "evidence": "张三",
+                        "people": [
+                            {
+                                "name": "张三",
+                                "social_security_number": None,
+                                "evidence": "张三",
+                                "confidence": 0.8,
+                            }
+                        ],
+                        "needs_review": False,
+                        "review_reasons": [],
+                        "warnings": [],
                     }
                 ],
                 "needs_review": False,
@@ -80,6 +230,129 @@ def test_extraction_rejects_reversed_month_range() -> None:
                 "warnings": [],
             }
         )
+
+
+def test_extraction_preserves_print_groups_and_repeated_people() -> None:
+    result = validate_extraction_payload(
+        {
+            "groups": [
+                {
+                    "print_mode": "combined",
+                    "insurance_type": "养老",
+                    "start_month": "2025-08",
+                    "end_month": "2026-07",
+                    "time_expression": "1年社保",
+                    "date_basis": "relative_months",
+                    "relative_month_count": 12,
+                    "evidence": "石贤明、刘勇2人打印1张，1年社保",
+                    "people": [
+                        {
+                            "name": "石贤明",
+                            "social_security_number": None,
+                            "evidence": "石贤明、刘勇2人打印1张",
+                            "confidence": 0.98,
+                        },
+                        {
+                            "name": "刘勇",
+                            "social_security_number": None,
+                            "evidence": "石贤明、刘勇2人打印1张",
+                            "confidence": 0.98,
+                        },
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                },
+                {
+                    "print_mode": "combined",
+                    "insurance_type": "养老",
+                    "start_month": "2026-01",
+                    "end_month": "2026-08",
+                    "time_expression": "202601-202608",
+                    "date_basis": "explicit_range",
+                    "relative_month_count": None,
+                    "evidence": "刘勇、李玉生打印1张，时间202601-202608",
+                    "people": [
+                        {
+                            "name": "刘勇",
+                            "social_security_number": None,
+                            "evidence": "刘勇、李玉生打印1张",
+                            "confidence": 0.98,
+                        },
+                        {
+                            "name": "李玉生",
+                            "social_security_number": None,
+                            "evidence": "刘勇、李玉生打印1张",
+                            "confidence": 0.98,
+                        },
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                },
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    assert len(result.groups) == 2
+    assert result.people_count == 4
+    assert [person.name for person in result.groups[0].people] == [
+        "石贤明",
+        "刘勇",
+    ]
+    assert [person.name for person in result.groups[1].people] == [
+        "刘勇",
+        "李玉生",
+    ]
+
+
+def test_multi_person_group_without_mode_is_forced_to_review() -> None:
+    result = validate_extraction_payload(
+        {
+            "groups": [
+                {
+                    "print_mode": None,
+                    "insurance_type": "养老",
+                    "start_month": "2025-08",
+                    "end_month": "2026-07",
+                    "time_expression": "近一年",
+                    "date_basis": "relative_months",
+                    "relative_month_count": 12,
+                    "evidence": "张三、李四近一年社保",
+                    "people": [
+                        {
+                            "name": "张三",
+                            "social_security_number": None,
+                            "evidence": "张三、李四",
+                            "confidence": 0.9,
+                        },
+                        {
+                            "name": "李四",
+                            "social_security_number": None,
+                            "evidence": "张三、李四",
+                            "confidence": 0.9,
+                        },
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    assert result.needs_review
+    assert result.groups[0].needs_review
+    assert result.groups[0].print_mode is None
+    assert result.groups[0].review_reasons == (
+        "原文未说明多人合并打印还是每人单独打印",
+    )
 
 
 def test_query_and_model_extraction_preserves_order_and_flattens_people(
@@ -138,15 +411,26 @@ def test_query_and_model_extraction_preserves_order_and_flattens_people(
             person_name = "张三" if record.code == "RLSQ-002" else "李四"
             return ExtractionResponse(
                 extraction=TaskExtraction(
-                    people=(
-                        ExtractedPerson(
-                            name=person_name,
+                    groups=(
+                        ExtractedPrintGroup(
+                            print_mode=None,
+                            insurance_type="养老",
                             start_month="2025-08",
                             end_month="2026-07",
                             time_expression="近一年",
-                            evidence=f"{person_name}近一年",
                             date_basis="relative_months",
-                            confidence=0.9,
+                            relative_month_count=12,
+                            evidence=f"{person_name}近一年",
+                            people=(
+                                ExtractedPerson(
+                                    name=person_name,
+                                    evidence=f"{person_name}近一年",
+                                    confidence=0.9,
+                                ),
+                            ),
+                            needs_review=False,
+                            review_reasons=(),
+                            warnings=(),
                         ),
                     ),
                     needs_review=False,
@@ -207,7 +491,7 @@ def test_query_and_model_extraction_preserves_order_and_flattens_people(
     result = ErpTaskExtractionService(
         settings,
         logging.getLogger("test.ai.workflow"),
-    ).run("社保咨询", reasoning_mode="medium")
+    ).run("社保咨询", reasoning_mode="off")
 
     assert calls == ["RLSQ-002", "RLSQ-001"]
     assert result["summary"] == {
@@ -215,6 +499,8 @@ def test_query_and_model_extraction_preserves_order_and_flattens_people(
         "tasks_succeeded": 2,
         "tasks_failed": 0,
         "tasks_needing_review": 0,
+        "print_groups_extracted": 2,
+        "print_groups_pending_mode": 0,
         "people_extracted": 2,
         "identities_matched": 2,
         "identities_pending": 0,
@@ -230,6 +516,148 @@ def test_query_and_model_extraction_preserves_order_and_flattens_people(
     ]
     assert requests[0]["social_security_number"] == "320101199001011234"
     assert requests[0]["identity_match"]["code"] == "SUCCESS"
+    assert requests[0]["group_id"] == "RLSQ-002-G01"
+    assert requests[0]["source_print_mode"] is None
+    assert requests[0]["resolved_print_mode"] == "individual"
+    assert requests[0]["relative_month_count"] == 12
+
+
+def test_extraction_service_keeps_same_person_in_different_print_groups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = ErpTaskRecord(
+        id="erp-id",
+        code="RLSQ-GROUPS",
+        initiated_date="2026-08-20",
+        title="多组社保打印",
+        description="张三李四一组，张三王五另一组",
+        transaction_type="社保咨询",
+        status="0",
+        originator="申请人",
+        department="技术中心",
+    )
+
+    class FakeQueryService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def query_tasks(self, *args, **kwargs) -> ErpTaskQueryResult:
+            return ErpTaskQueryResult(
+                transaction_type="社保咨询",
+                records=(record,),
+                total_count=1,
+                pages_fetched=1,
+            )
+
+    class FakeModelClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def ensure_available(self) -> None:
+            pass
+
+        def extract(self, *args, **kwargs) -> ExtractionResponse:
+            def person(name: str) -> ExtractedPerson:
+                return ExtractedPerson(name=name, evidence=name, confidence=0.95)
+
+            def group(*names: str) -> ExtractedPrintGroup:
+                return ExtractedPrintGroup(
+                    print_mode="combined",
+                    insurance_type="养老",
+                    start_month="2025-08",
+                    end_month="2026-07",
+                    time_expression="近一年",
+                    date_basis="relative_months",
+                    relative_month_count=12,
+                    evidence="、".join(names),
+                    people=tuple(person(name) for name in names),
+                    needs_review=False,
+                    review_reasons=(),
+                    warnings=(),
+                )
+
+            return ExtractionResponse(
+                extraction=TaskExtraction(
+                    groups=(group("张三", "李四"), group("张三", "王五")),
+                    needs_review=False,
+                    review_reasons=(),
+                    warnings=(),
+                ),
+                metrics=ModelMetrics(
+                    model="qwen3.5:9b",
+                    reasoning_mode="off",
+                    ollama_think=False,
+                    done_reason="stop",
+                    total_duration_ns=1,
+                    prompt_eval_count=1,
+                    eval_count=1,
+                    thinking_characters=0,
+                ),
+            )
+
+    queried_names: list[str] = []
+
+    class FakePersonLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            queried_names.extend(names)
+            identities = {
+                "张三": "320101199001011234",
+                "李四": "320101199002021235",
+                "王五": "320101199003031236",
+            }
+            return {}, {
+                name: (
+                    ErpPersonRecord(
+                        id=f"person-{name}",
+                        employee_code=f"code-{name}",
+                        name=name,
+                        identity_number=identities[name],
+                        department="项目部",
+                        company="测试单位",
+                        status="0",
+                        is_quit="0",
+                    ),
+                )
+                for name in names
+            }
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpTaskQueryService",
+        FakeQueryService,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.OllamaTaskExtractionClient",
+        FakeModelClient,
+    )
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        FakePersonLookupService,
+    )
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+
+    result = ErpTaskExtractionService(
+        settings,
+        logging.getLogger("test.ai.print-groups"),
+    ).run("社保咨询", reasoning_mode="off")
+
+    requests = result["rights_statement_requests"]
+    assert queried_names == ["张三", "李四", "王五"]
+    assert [item["name"] for item in requests] == ["张三", "李四", "张三", "王五"]
+    assert [item["group_id"] for item in requests] == [
+        "RLSQ-GROUPS-G01",
+        "RLSQ-GROUPS-G01",
+        "RLSQ-GROUPS-G02",
+        "RLSQ-GROUPS-G02",
+    ]
+    assert requests[0]["social_security_number"] == requests[2][
+        "social_security_number"
+    ]
+    assert result["summary"]["print_groups_extracted"] == 2
+    assert result["summary"]["people_extracted"] == 4
 
 
 def test_stop_after_active_model_request_preserves_completed_result(
@@ -273,15 +701,26 @@ def test_stop_after_active_model_request_preserves_completed_result(
             cancelled = True
             return ExtractionResponse(
                 extraction=TaskExtraction(
-                    people=(
-                        ExtractedPerson(
-                            name="张三",
+                    groups=(
+                        ExtractedPrintGroup(
+                            print_mode=None,
+                            insurance_type="养老",
                             start_month="2025-08",
                             end_month="2026-07",
                             time_expression="近一年",
-                            evidence="张三近一年",
                             date_basis="relative_months",
-                            confidence=0.9,
+                            relative_month_count=12,
+                            evidence="张三近一年",
+                            people=(
+                                ExtractedPerson(
+                                    name="张三",
+                                    evidence="张三近一年",
+                                    confidence=0.9,
+                                ),
+                            ),
+                            needs_review=False,
+                            review_reasons=(),
+                            warnings=(),
                         ),
                     ),
                     needs_review=False,

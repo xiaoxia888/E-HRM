@@ -18,10 +18,10 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
     assert settings.erp.base_url == "https://erp.njncc.com"
     assert settings.erp.headless is True
-    assert settings.ai.model == "qwen3.8:27b"
-    assert settings.ai.profile_id == "qwen3_8_27b"
+    assert settings.ai.model == "qwen3.5:9b"
+    assert settings.ai.profile_id == "qwen3_5_9b"
     assert settings.ai.default_reasoning_mode == "off"
-    assert settings.ai.reasoning_modes == ("off", "low", "medium", "max")
+    assert settings.ai.reasoning_modes == ("off", "on")
     assert {item.profile_id for item in settings.ai_models} == {
         AiModelProfile.QWEN3_5_9B,
         AiModelProfile.QWEN3_8_27B,

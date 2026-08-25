@@ -22,6 +22,18 @@ class RightsStatementTemplateService:
         "结束时间",
     )
     INSURANCE_OPTIONS = ("养老", "工伤", "失业")
+    ERP_HEADERS = (
+        "任务编号",
+        "打印组",
+        "打印方式",
+        "单位",
+        "部门",
+        "姓名",
+        "身份证",
+        "险种",
+        "开始时间",
+        "结束时间",
+    )
 
     def write(self, destination: Path) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -107,23 +119,45 @@ class RightsStatementTemplateService:
         self,
         destination: Path,
         records: list[EmployeeRecord],
+        *,
+        include_print_groups: bool = True,
     ) -> Path:
-        """Writes ERP-derived records as a compact execution source workbook."""
+        """Writes current preview records as a compact execution source workbook."""
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "ERP申请解析数据"
+        sheet.title = "ERP申请解析数据" if include_print_groups else "人员执行数据"
         header_fill = PatternFill("solid", fgColor="1677FF")
-        for column, header in enumerate(self.HEADERS, start=1):
+        headers = self.ERP_HEADERS if include_print_groups else self.HEADERS
+        for column, header in enumerate(headers, start=1):
             cell = sheet.cell(row=1, column=column, value=header)
             cell.font = Font(color="FFFFFF", bold=True)
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
         for record in records:
-            sheet.append(
-                [
+            values = [
+                record.task_number,
+                record.unit,
+                record.department,
+                record.name,
+                record.identity_number,
+                record.insurance_type,
+                record.start_month,
+                record.end_month,
+            ]
+            if include_print_groups:
+                values = [
                     record.task_number,
+                    (
+                        f"组{record.print_group_sequence}"
+                        if record.print_group_sequence
+                        else ""
+                    ),
+                    {
+                        "combined": "合并打印",
+                        "individual": "每人单独一份",
+                    }.get(record.resolved_print_mode, "待确认"),
                     record.unit,
                     record.department,
                     record.name,
@@ -132,25 +166,45 @@ class RightsStatementTemplateService:
                     record.start_month,
                     record.end_month,
                 ]
-            )
+            sheet.append(values)
             row = sheet.max_row
             sheet.cell(row=row, column=1).number_format = "@"
-            sheet.cell(row=row, column=5).number_format = "@"
-            sheet.cell(row=row, column=7).number_format = "@"
-            sheet.cell(row=row, column=8).number_format = "@"
+            identity_column = 7 if include_print_groups else 5
+            start_column = 9 if include_print_groups else 7
+            end_column = 10 if include_print_groups else 8
+            sheet.cell(row=row, column=identity_column).number_format = "@"
+            sheet.cell(row=row, column=start_column).number_format = "@"
+            sheet.cell(row=row, column=end_column).number_format = "@"
         sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = f"A1:H{max(1, sheet.max_row)}"
+        last_column = "J" if include_print_groups else "H"
+        sheet.auto_filter.ref = f"A1:{last_column}{max(1, sheet.max_row)}"
         sheet.row_dimensions[1].height = 26
-        for column, width in {
-            "A": 24,
-            "B": 24,
-            "C": 18,
-            "D": 14,
-            "E": 24,
-            "F": 13,
-            "G": 16,
-            "H": 16,
-        }.items():
+        widths = (
+            {
+                "A": 24,
+                "B": 12,
+                "C": 18,
+                "D": 24,
+                "E": 18,
+                "F": 14,
+                "G": 24,
+                "H": 13,
+                "I": 16,
+                "J": 16,
+            }
+            if include_print_groups
+            else {
+                "A": 24,
+                "B": 24,
+                "C": 18,
+                "D": 14,
+                "E": 24,
+                "F": 13,
+                "G": 16,
+                "H": 16,
+            }
+        )
+        for column, width in widths.items():
             sheet.column_dimensions[column].width = width
         workbook.save(destination)
         workbook.close()

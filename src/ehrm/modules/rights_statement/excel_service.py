@@ -117,7 +117,7 @@ class ExcelRightsStatementService:
                     self._execute_group(
                         statement,
                         group,
-                        mode,
+                        group.mode or mode,
                         output_dir,
                         batch_label,
                     )
@@ -289,10 +289,16 @@ class ExcelRightsStatementService:
 
         first = group.first
         pdf_root = output_dir / "PDF"
+        group_suffix = (
+            f"_组{first.print_group_sequence:02d}"
+            if first.print_group_sequence
+            else ""
+        )
         if mode is ExportMode.INDIVIDUAL:
             target_dir = pdf_root / self._safe(first.unit) / self._safe(first.department)
             filename = (
-                f"{self._safe(first.task_number)}_{self._safe(first.name)}_"
+                f"{self._safe(first.task_number)}{group_suffix}_"
+                f"{self._safe(first.name)}_"
                 f"{self._safe(first.insurance_type)}_"
                 f"{first.start_month.replace('-', '')}-{first.end_month.replace('-', '')}_权益单.pdf"
             )

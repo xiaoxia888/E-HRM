@@ -122,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             "\n解析完成："
             f"任务成功 {summary['tasks_succeeded']}，"
             f"失败 {summary['tasks_failed']}，"
-            f"识别人员 {summary['people_extracted']}，"
+            f"拆分打印组 {summary['print_groups_extracted']}，"
+            f"人员记录 {summary['people_extracted']}，"
             f"需人工复核 {summary['tasks_needing_review']}"
         )
         print(f"JSON 已保存：{output_path}")
