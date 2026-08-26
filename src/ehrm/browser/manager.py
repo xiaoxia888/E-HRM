@@ -7,10 +7,15 @@ from ehrm.core.settings import BrowserSettings
 
 class BrowserManager:
     def __init__(
-        self, settings: BrowserSettings, *, headless: bool | None = None
+        self,
+        settings: BrowserSettings,
+        *,
+        headless: bool | None = None,
+        ignore_https_errors: bool = False,
     ) -> None:
         self.settings = settings
         self.headless = settings.headless if headless is None else headless
+        self.ignore_https_errors = ignore_https_errors
         self._playwright: Playwright | None = None
         self.context: BrowserContext | None = None
 
@@ -23,6 +28,7 @@ class BrowserManager:
                 headless=self.headless,
                 slow_mo=self.settings.slow_mo_ms,
                 accept_downloads=True,
+                ignore_https_errors=self.ignore_https_errors,
             )
             self.context.set_default_timeout(self.settings.action_timeout_ms)
             self.context.set_default_navigation_timeout(
@@ -38,7 +44,8 @@ class BrowserManager:
     def page(self) -> Page:
         if self.context is None:
             raise RuntimeError("BrowserManager 尚未启动")
-        return self.context.pages[0] if self.context.pages else self.context.new_page()
+        open_pages = [page for page in self.context.pages if not page.is_closed()]
+        return open_pages[-1] if open_pages else self.context.new_page()
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         if self.context is not None:

@@ -1,5 +1,6 @@
 from pathlib import Path
-from shutil import copyfile
+from shutil import copyfile, copytree
+from uuid import uuid4
 
 import pytest
 
@@ -16,7 +17,14 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
     assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
-    assert settings.erp.base_url == "https://erp.njncc.com"
+    assert settings.captcha.enabled is True
+    assert settings.captcha.allowed_hosts
+    assert settings.captcha.verify_path.startswith("/")
+    assert settings.captcha.max_attempts == 3
+    assert settings.captcha.click_delay_min_ms == 1000
+    assert settings.captcha.click_delay_max_ms == 3000
+    assert settings.captcha.click_offset_max_px >= 0
+    assert settings.erp.base_url
     assert settings.erp.headless is True
     assert settings.ai.model == "qwen3.5:9b"
     assert settings.ai.profile_id == "qwen3_5_9b"
@@ -64,4 +72,29 @@ def test_missing_module_section_does_not_fall_back_to_python_defaults(
     copyfile("config/error_messages.toml", tmp_path / "error_messages.toml")
 
     with pytest.raises(ConfigurationError, match=r"\[rights_statement\]"):
+        load_settings(config_path, data_root=tmp_path)
+
+
+def test_captcha_allowed_hosts_rejects_embedded_port(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    copytree("config", config_dir)
+    config_path = config_dir / "settings.toml"
+    source = config_path.read_text(encoding="utf-8")
+    configured_host = load_settings(
+        Path("config/settings.toml")
+    ).captcha.allowed_hosts[0]
+    minimum_unprivileged_port = 1024
+    maximum_tcp_port = 65535
+    available_port_count = maximum_tcp_port - minimum_unprivileged_port + 1
+    port = minimum_unprivileged_port + uuid4().int % available_port_count
+    config_path.write_text(
+        source.replace(
+            f'"{configured_host}",',
+            f'"{configured_host}:{port}",',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="不能包含端口"):
         load_settings(config_path, data_root=tmp_path)

@@ -2,9 +2,12 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.test-venv/
+.venv/
 .idea/
 .vscode/
 .DS_Store
+.test-venv/
 
 # Browser/network captures may contain credentials, tokens and business data.
 *.har

@@ -120,7 +120,14 @@ class AutomationWorker(QThread):
                     self._logger.exception("桌面端自动化任务失败")
                     code = getattr(exc, "code", "UNEXPECTED_ERROR")
                     message = getattr(exc, "message", str(exc))
-                    self.failed.emit(display_message(code, message))
+                    summary = display_message(code, message)
+                    details = getattr(exc, "details", None)
+                    visible = summary
+                    if message and message != summary:
+                        visible += f"\n{message}"
+                    if details and details not in {summary, message}:
+                        visible += f"\n{details}"
+                    self.failed.emit(visible)
                     if workbench is not None:
                         try:
                             workbench.stop()

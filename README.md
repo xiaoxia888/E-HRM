@@ -8,7 +8,7 @@
 当前版本实现了单位权益单自动化的通用骨架：
 
 - Playwright 持久化浏览器会话；
-- 自动填写账号密码，验证码由操作人员完成；
+- 自动填写账号密码；白名单测试主机可自动完成点击验证码，其他主机回退人工验证；
 - 起止年月、险种、姓名查询模型；
 - 查询、生成、下载页面对象；
 - 统一异常编码、失败截图和日志；
@@ -55,6 +55,7 @@ Python 默认值。配置按命名空间分为：
 - `[common]`：两个自动化模块真正共用的参数；
 - `[rights_statement.*]`：智慧人社及单位权益单配置；
 - `[erp.*]`：ERP 登录、查询和附件上传配置。
+- `[rights_statement.captcha]`：验证码自动化主机白名单、重试和点击间隔。
 - `[ai]`：Ollama 公共连接、提示词与默认模型选择。
 
 每个模型的 Ollama 名称、上下文、输出长度、采样参数和可用推理模式单独
@@ -130,7 +131,53 @@ ehrm download \
 
 也可以通过 `EHRM_USERNAME`、`EHRM_PASSWORD` 环境变量提供登录信息。不要把密码写入 TOML、命令参数或源码。
 
-首次运行或登录状态过期时，程序会停在登录页面等待人工完成验证码；验证成功后继续执行。后续运行复用 `data/browser-profile/` 内的合法登录会话。
+首次运行或登录状态过期时，程序会进入登录页面。验证码页面主机和图片/校验接口主机都在 `rights_statement.captcha.allowed_hosts` 中时，程序会自动识别并按顺序点击；否则等待人工完成。验证成功后继续执行，后续运行复用 `data/browser-profile/` 内的合法登录会话。
+
+`allowed_hosts` 只填写主机名或 IP，不填写协议、端口和路径。端口不会参与匹配，例如配置 `127.0.0.1` 后，`127.0.0.1:6066` 与 `127.0.0.1:8000` 都可使用。域名按精确主机名匹配，若环境同时使用裸域名和 `www` 域名，需要分别配置：
+
+```toml
+[rights_statement.captcha]
+allowed_hosts = [
+  "127.0.0.1",
+  "192.168.1.65",
+  "njncc888.com",
+  "www.njncc888.com",
+]
+verify_path = "/cap_union_new_verify"
+click_offset_max_px = 3
+```
+
+`click_offset_max_px` 控制识别点在网页 CSS 像素中的最大随机偏移，实际偏移会被限制在匹配框内部；设置为 `0` 可关闭偏移。
+
+### 完整登录 E2E 测试
+
+下面的入口会使用全新的临时浏览器资料目录，从打开登录页开始执行完整流程：填写账号信息、点击登录、验证码识别与点击、确认验证，并检查最终登录标志。凭据优先从配置指定的环境变量读取；缺失时在终端询问，密码不会回显。
+
+源码环境执行：
+
+```bash
+PYTHONPATH=src python scripts/run_login_e2e.py
+```
+
+项目安装后也可以执行：
+
+```bash
+ehrm-login-e2e
+```
+
+本地测试环境使用自签名证书时：
+
+```bash
+ehrm-login-e2e --ignore-https-errors
+```
+
+只检查配置而不启动浏览器：
+
+```bash
+ehrm-login-e2e --check-config
+```
+
+默认使用临时资料以避免旧会话跳过登录。只有排查已有浏览器资料时才使用 `--reuse-profile`。登录失败时页面截图默认保存到 `output/login-e2e-failure.png`。
 
 ## 4. 桌面前端（Qt Quick/QML）
 

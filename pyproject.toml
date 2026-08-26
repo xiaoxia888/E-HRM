@@ -9,7 +9,9 @@ description = "E-HRM browser automation"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "defusedxml==0.7.1",
+  "numpy==2.2.6",
   "openpyxl==3.1.5",
+  "opencv-python-headless==4.12.0.88",
   "playwright==1.61.0",
 ]
 
@@ -23,6 +25,7 @@ ehrm = "ehrm.entrypoints.cli:main"
 ehrm-gui = "ehrm.gui.app:main"
 ehrm-erp = "ehrm.entrypoints.erp_cli:main"
 ehrm-erp-extract = "ehrm.entrypoints.erp_task_extraction_cli:main"
+ehrm-login-e2e = "ehrm.entrypoints.login_e2e_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

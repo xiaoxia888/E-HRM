@@ -1,0 +1,130 @@
+{
+  "target": "/Users/guoxi/Desktop/target.png",
+  "background": "/Users/guoxi/Desktop/background.png",
+  "output": "example_output.png",
+  "config": {
+    "scales": [
+      0.8,
+      1.0,
+      1.2,
+      1.4,
+      1.6,
+      1.8,
+      2.0,
+      2.2,
+      2.4
+    ],
+    "angles": [
+      -30.0,
+      -25.0,
+      -20.0,
+      -15.0,
+      -10.0,
+      -5.0,
+      0.0,
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0
+    ],
+    "aspect_ratios": [
+      0.75,
+      1.0,
+      1.25
+    ],
+    "canny_low": 40,
+    "canny_high": 120,
+    "dark_threshold": 70,
+    "blackhat_size": 21,
+    "max_chamfer_distance": 10.0,
+    "chamfer_weight": 0.82,
+    "darkness_weight": 0.18,
+    "symbol_gap": 5,
+    "min_symbol_area": 25
+  },
+  "matches": [
+    {
+      "index": 1,
+      "score": 0.13193371891975403,
+      "center": [
+        598,
+        437
+      ],
+      "matched_bbox": [
+        560,
+        395,
+        637,
+        480
+      ],
+      "source_bbox": [
+        13,
+        2,
+        56,
+        50
+      ],
+      "scale": 1.6,
+      "angle": -15.0,
+      "aspect_ratio": 1.0,
+      "template_size": [
+        77,
+        85
+      ]
+    },
+    {
+      "index": 2,
+      "score": 0.08989463001489639,
+      "center": [
+        199,
+        119
+      ],
+      "matched_bbox": [
+        180,
+        91,
+        219,
+        148
+      ],
+      "source_bbox": [
+        74,
+        8,
+        96,
+        42
+      ],
+      "scale": 1.6,
+      "angle": 5.0,
+      "aspect_ratio": 1.0,
+      "template_size": [
+        39,
+        57
+      ]
+    },
+    {
+      "index": 3,
+      "score": 0.07519865781068802,
+      "center": [
+        603,
+        365
+      ],
+      "matched_bbox": [
+        566,
+        328,
+        641,
+        402
+      ],
+      "source_bbox": [
+        114,
+        4,
+        156,
+        46
+      ],
+      "scale": 1.6,
+      "angle": 20.0,
+      "aspect_ratio": 1.0,
+      "template_size": [
+        75,
+        74
+      ]
+    }
+  ]
+}

@@ -31,6 +31,7 @@ class DesktopWorkbench:
         self._browser: BrowserManager | None = None
         self._page: Page | None = None
         self._cancel_check = cancel_check
+        self._progress_callback = progress_callback
         self._service = ExcelRightsStatementService(
             settings,
             logger,
@@ -49,12 +50,8 @@ class DesktopWorkbench:
         if self._browser is not None:
             return
         self._start_browser()
-        LoginService(
-            self.page,
-            self.settings,
-            self._cancel_check,
-        ).ensure_authenticated()
-        print("工作台登录完成。保持此浏览器标签页开启，可连续执行多个任务。")
+        self._authenticate_page()
+        self._progress("工作台登录完成，正在进入权益单页面")
 
     def stop(self) -> None:
         if self._browser is not None:
@@ -85,11 +82,7 @@ class DesktopWorkbench:
             elif self._page is None or self._page.is_closed():
                 # A newly created tab does not inherit this site's tab-scoped login.
                 self._page = self._browser.context.new_page()
-                LoginService(
-                    self._page,
-                    self.settings,
-                    self._cancel_check,
-                ).ensure_authenticated()
+                self._authenticate_page()
 
             page = self.page
             self.logger.info(
@@ -103,16 +96,16 @@ class DesktopWorkbench:
             if protected_url:
                 page.goto(protected_url, wait_until="domcontentloaded")
                 page.wait_for_timeout(1_000)
-                if not LoginService(
+                login = LoginService(
                     page,
                     self.settings,
                     self._cancel_check,
-                ).is_authenticated():
-                    LoginService(
-                        page,
-                        self.settings,
-                        self._cancel_check,
-                    ).ensure_authenticated()
+                    self._progress_callback,
+                )
+                if not login.is_authenticated():
+                    login.ensure_authenticated()
+                    self._page = login.page
+                    page = login.page
             return page
         except PlaywrightError:
             self._restart_and_login()
@@ -121,11 +114,21 @@ class DesktopWorkbench:
     def _restart_and_login(self) -> None:
         self.stop()
         self._start_browser()
-        LoginService(
+        self._authenticate_page()
+
+    def _authenticate_page(self) -> None:
+        login = LoginService(
             self.page,
             self.settings,
             self._cancel_check,
-        ).ensure_authenticated()
+            self._progress_callback,
+        )
+        login.ensure_authenticated()
+        self._page = login.page
+
+    def _progress(self, message: str) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(message)
 
     def _start_browser(self) -> None:
         browser = BrowserManager(self.settings.browser, headless=False)

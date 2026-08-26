@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -50,6 +51,20 @@ class LoginSelectors:
     password: str
     submit: str
     authenticated_marker: str
+
+
+@dataclass(frozen=True, slots=True)
+class CaptchaSettings:
+    enabled: bool
+    allowed_hosts: tuple[str, ...]
+    verify_path: str
+    max_attempts: int
+    click_delay_min_ms: int
+    click_delay_max_ms: int
+    click_offset_max_px: int
+    frame_timeout_ms: int
+    verify_timeout_ms: int
+    image_change_timeout_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +168,7 @@ class AppSettings:
     site: SiteSettings
     rights_credentials: RightsCredentialsSettings
     login: LoginSelectors
+    captcha: CaptchaSettings
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
     erp: ErpSettings
@@ -228,6 +244,37 @@ def _string_list(
             raise ConfigurationError(
                 f"配置项 {section_name}.{key} 包含不支持的推理模式：{item}"
             )
+        if normalized not in result:
+            result.append(normalized)
+    return tuple(result)
+
+
+def _plain_string_list(
+    section: dict[str, Any], key: str, section_name: str
+) -> tuple[str, ...]:
+    value = _required_value(section, key, section_name)
+    if not isinstance(value, list) or not value:
+        raise ConfigurationError(
+            f"配置项 {section_name}.{key} 必须是非空字符串数组"
+        )
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigurationError(
+                f"配置项 {section_name}.{key} 只能包含非空字符串"
+            )
+        normalized = item.strip().lower().strip("[]")
+        if "://" in normalized or "/" in normalized:
+            raise ConfigurationError(
+                f"配置项 {section_name}.{key} 只填写主机名或 IP，不填写协议、端口或路径"
+            )
+        try:
+            ipaddress.ip_address(normalized)
+        except ValueError:
+            if ":" in normalized:
+                raise ConfigurationError(
+                    f"配置项 {section_name}.{key} 不能包含端口：{item}"
+                )
         if normalized not in result:
             result.append(normalized)
     return tuple(result)
@@ -438,6 +485,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_login = _required_section(
         rights_selectors, "login", parent="rights_statement.selectors"
     )
+    rights_captcha = _required_section(
+        rights_root, "captcha", parent="rights_statement"
+    )
     rights_navigation = _required_section(
         rights_selectors, "navigation", parent="rights_statement.selectors"
     )
@@ -463,6 +513,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_site_name = "rights_statement.site"
     rights_credentials_name = "rights_statement.credentials"
     rights_login_name = "rights_statement.selectors.login"
+    rights_captcha_name = "rights_statement.captcha"
     rights_navigation_name = "rights_statement.selectors.navigation"
     rights_page_name = "rights_statement.selectors.page"
     erp_browser_name = "erp.browser"
@@ -484,6 +535,56 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     active_ai = next(
         item for item in ai_models if item.profile_id == active_ai_model
     )
+
+    captcha = CaptchaSettings(
+        enabled=_boolean(rights_captcha, "enabled", rights_captcha_name),
+        allowed_hosts=_plain_string_list(
+            rights_captcha, "allowed_hosts", rights_captcha_name
+        ),
+        verify_path=_text(rights_captcha, "verify_path", rights_captcha_name),
+        max_attempts=_integer(
+            rights_captcha, "max_attempts", rights_captcha_name
+        ),
+        click_delay_min_ms=_integer(
+            rights_captcha, "click_delay_min_ms", rights_captcha_name
+        ),
+        click_delay_max_ms=_integer(
+            rights_captcha, "click_delay_max_ms", rights_captcha_name
+        ),
+        click_offset_max_px=_integer(
+            rights_captcha, "click_offset_max_px", rights_captcha_name
+        ),
+        frame_timeout_ms=_integer(
+            rights_captcha, "frame_timeout_ms", rights_captcha_name
+        ),
+        verify_timeout_ms=_integer(
+            rights_captcha, "verify_timeout_ms", rights_captcha_name
+        ),
+        image_change_timeout_ms=_integer(
+            rights_captcha, "image_change_timeout_ms", rights_captcha_name
+        ),
+    )
+    if captcha.max_attempts < 1:
+        raise ConfigurationError(
+            "配置项 rights_statement.captcha.max_attempts 必须大于 0"
+        )
+    if not captcha.verify_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.captcha.verify_path 必须以 / 开头"
+        )
+    if captcha.click_delay_max_ms < captcha.click_delay_min_ms:
+        raise ConfigurationError(
+            "配置项 rights_statement.captcha.click_delay_max_ms "
+            "不能小于 click_delay_min_ms"
+        )
+    if min(
+        captcha.frame_timeout_ms,
+        captcha.verify_timeout_ms,
+        captcha.image_change_timeout_ms,
+    ) < 1:
+        raise ConfigurationError(
+            "验证码超时配置必须大于 0"
+        )
 
     return AppSettings(
         browser=BrowserSettings(
@@ -546,6 +647,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
                 rights_login, "authenticated_marker", rights_login_name
             ),
         ),
+        captcha=captcha,
         navigation=NavigationSelectors(
             province_entry=_text(
                 rights_navigation, "province_entry", rights_navigation_name
