@@ -101,6 +101,11 @@ def _save_diagnostic(page, path: Path) -> None:
 
 
 def _print_targets(settings: AppSettings) -> None:
+    browser_name = settings.browser.channel or settings.browser.engine
+    print(
+        f"浏览器：{browser_name}（engine={settings.browser.engine}, "
+        f"channel={settings.browser.channel or '内置'}）"
+    )
     print(f"登录地址：{settings.site.login_url}")
     print(f"登录成功后的业务页：{settings.site.rights_statement_url}")
 

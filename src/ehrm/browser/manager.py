@@ -23,12 +23,18 @@ class BrowserManager:
         self.settings.user_data_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = sync_playwright().start()
         try:
-            self.context = self._playwright.chromium.launch_persistent_context(
-                user_data_dir=self.settings.user_data_dir,
-                headless=self.headless,
-                slow_mo=self.settings.slow_mo_ms,
-                accept_downloads=True,
-                ignore_https_errors=self.ignore_https_errors,
+            browser_type = getattr(self._playwright, self.settings.engine)
+            launch_options: dict[str, object] = {
+                "user_data_dir": self.settings.user_data_dir,
+                "headless": self.headless,
+                "slow_mo": self.settings.slow_mo_ms,
+                "accept_downloads": True,
+                "ignore_https_errors": self.ignore_https_errors,
+            }
+            if self.settings.channel:
+                launch_options["channel"] = self.settings.channel
+            self.context = browser_type.launch_persistent_context(
+                **launch_options,
             )
             self.context.set_default_timeout(self.settings.action_timeout_ms)
             self.context.set_default_navigation_timeout(

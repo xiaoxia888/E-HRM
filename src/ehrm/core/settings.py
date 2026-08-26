@@ -12,10 +12,27 @@ from ehrm.modules.ai.models import AiModelProfile
 
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.toml")
+_SUPPORTED_BROWSER_ENGINES = frozenset({"chromium", "firefox", "webkit"})
+_SUPPORTED_CHROMIUM_CHANNELS = frozenset(
+    {
+        "",
+        "chromium",
+        "chrome",
+        "chrome-beta",
+        "chrome-dev",
+        "chrome-canary",
+        "msedge",
+        "msedge-beta",
+        "msedge-dev",
+        "msedge-canary",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
 class BrowserSettings:
+    engine: str
+    channel: str
     headless: bool
     silent_session_check: bool
     slow_mo_ms: int
@@ -523,6 +540,34 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     erp_login_name = "erp.selectors.login"
 
     action_timeout_ms = _integer(common, "action_timeout_ms", common_name)
+    browser_engine = _text(
+        rights_browser, "engine", rights_browser_name
+    ).lower()
+    browser_channel = _text(
+        rights_browser, "channel", rights_browser_name
+    ).lower()
+    if browser_engine not in _SUPPORTED_BROWSER_ENGINES:
+        supported = "、".join(sorted(_SUPPORTED_BROWSER_ENGINES))
+        raise ConfigurationError(
+            "配置项 rights_statement.browser.engine 不受支持："
+            f"{browser_engine}；可选值：{supported}"
+        )
+    if browser_engine != "chromium" and browser_channel:
+        raise ConfigurationError(
+            "配置项 rights_statement.browser.channel 仅能与 engine=chromium 配合使用"
+        )
+    if (
+        browser_engine == "chromium"
+        and browser_channel not in _SUPPORTED_CHROMIUM_CHANNELS
+    ):
+        supported = "、".join(
+            value or "空字符串（Playwright Chromium）"
+            for value in sorted(_SUPPORTED_CHROMIUM_CHANNELS)
+        )
+        raise ConfigurationError(
+            "配置项 rights_statement.browser.channel 不受支持："
+            f"{browser_channel}；可选值：{supported}"
+        )
     login_url = _text(rights_site, "login_url", rights_site_name)
     page_url = _text(rights_site, "page_url", rights_site_name)
     if not login_url:
@@ -588,6 +633,8 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
 
     return AppSettings(
         browser=BrowserSettings(
+            engine=browser_engine,
+            channel=browser_channel,
             headless=_boolean(rights_browser, "headless", rights_browser_name),
             silent_session_check=_boolean(
                 rights_browser, "silent_session_check", rights_browser_name

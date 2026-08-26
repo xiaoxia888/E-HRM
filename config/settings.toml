@@ -12,6 +12,17 @@ action_timeout_ms = 30000
 # -----------------------------------------------------------------------------
 
 [rights_statement.browser]
+# Playwright 浏览器内核：chromium、firefox 或 webkit。
+# Chrome 和 Edge 都属于 Chromium 内核，因此使用它们时 engine 仍填写 chromium。
+engine = "chromium"
+
+# Chromium 发行通道：
+#   ""       = Playwright 自带 Chromium
+#   "chrome" = 本机安装的 Google Chrome Stable
+#   "msedge" = 本机安装的 Microsoft Edge Stable
+# firefox/webkit 不支持 channel，使用它们时必须填写空字符串。
+channel = ""
+
 # 智慧人社需要人工安全验证，因此始终使用可见浏览器。
 headless = false
 silent_session_check = false

@@ -12,6 +12,9 @@ from ehrm.modules.ai.models import AiModelProfile
 def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> None:
     settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
 
+    assert settings.browser.engine in {"chromium", "firefox", "webkit"}
+    if settings.browser.engine != "chromium":
+        assert settings.browser.channel == ""
     assert settings.browser.action_timeout_ms == 30_000
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
@@ -97,4 +100,25 @@ def test_captcha_allowed_hosts_rejects_embedded_port(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigurationError, match="不能包含端口"):
+        load_settings(config_path, data_root=tmp_path)
+
+
+def test_non_chromium_engine_rejects_a_browser_channel(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    copytree("config", config_dir)
+    config_path = config_dir / "settings.toml"
+    source = config_path.read_text(encoding="utf-8")
+    configured = load_settings(Path("config/settings.toml")).browser
+    source = source.replace(
+        f'engine = "{configured.engine}"',
+        'engine = "firefox"',
+        1,
+    ).replace(
+        f'channel = "{configured.channel}"',
+        'channel = "msedge"',
+        1,
+    )
+    config_path.write_text(source, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="仅能与 engine=chromium"):
         load_settings(config_path, data_root=tmp_path)

@@ -58,6 +58,16 @@ Python 默认值。配置按命名空间分为：
 - `[rights_statement.captcha]`：验证码自动化主机白名单、重试和点击间隔。
 - `[ai]`：Ollama 公共连接、提示词与默认模型选择。
 
+智慧人社浏览器由以下配置选择：
+
+```toml
+[rights_statement.browser]
+engine = "chromium"
+channel = "msedge"
+```
+
+`engine` 选择 Playwright 内核（`chromium`、`firefox`、`webkit`）；`channel` 选择 Chromium 发行版。空字符串使用 Playwright 自带 Chromium，`chrome` 使用本机 Chrome，`msedge` 使用本机 Edge。Chrome 和 Edge 的 `engine` 都必须是 `chromium`；Firefox/WebKit 的 `channel` 必须为空。本机浏览器通道要求对应浏览器已经安装。
+
 每个模型的 Ollama 名称、上下文、输出长度、采样参数和可用推理模式单独
 保存在 `config/models/*.toml`。桌面端“系统设置 → 自动化设置”可切换模型，
 选择会写入当前用户的 `preferences.json`，重启后继续生效。
