@@ -128,4 +128,4 @@ models_dir = "models"
 # Ollama 连接和业务提示词由所有模型共用。
 base_url = "http://192.168.31.201:11434"
 chat_path = "/api/chat"
-prompt_path = "prompts/erp_task_extraction_system.txt"
+prompt_path = "prompts/erp_task_extraction_v2_system.txt"

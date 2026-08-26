@@ -16,12 +16,14 @@ from ehrm.core.exceptions import (
 )
 from ehrm.core.settings import AiSamplingSettings, OllamaSettings
 from ehrm.modules.ai.models import (
-    EXTRACTION_JSON_SCHEMA,
     ExtractionResponse,
     ModelMetrics,
     ReasoningMode,
-    resolve_relative_month_ranges,
-    validate_extraction_payload,
+)
+from ehrm.modules.ai.normalizer import normalize_semantic_extraction
+from ehrm.modules.ai.v2_models import (
+    SEMANTIC_EXTRACTION_JSON_SCHEMA,
+    validate_semantic_extraction_payload,
 )
 from ehrm.modules.erp.models import ErpTaskRecord
 
@@ -67,8 +69,8 @@ class OllamaTaskExtractionClient:
         mode = ReasoningMode.parse(reasoning_mode)
         input_payload = {
             "application_date": record.initiated_date,
-            "title": record.title,
-            "description": record.description,
+            "title_summary": record.title,
+            "request_details": record.description,
         }
         request_payload = {
             "model": self.settings.model,
@@ -81,7 +83,7 @@ class OllamaTaskExtractionClient:
             ],
             "stream": False,
             "think": mode.ollama_think,
-            "format": EXTRACTION_JSON_SCHEMA,
+            "format": SEMANTIC_EXTRACTION_JSON_SCHEMA,
             "keep_alive": self.settings.keep_alive,
             "options": self._options(mode),
         }
@@ -105,7 +107,7 @@ class OllamaTaskExtractionClient:
                 return self._parse_response(
                     response,
                     mode,
-                    application_date=record.initiated_date,
+                    record=record,
                 )
             except (AiRequestFailedError, AiResponseInvalidError) as exc:
                 last_error = exc
@@ -117,7 +119,7 @@ class OllamaTaskExtractionClient:
         payload: dict[str, Any],
         mode: ReasoningMode,
         *,
-        application_date: str,
+        record: ErpTaskRecord,
     ) -> ExtractionResponse:
         message = payload.get("message")
         if not isinstance(message, dict):
@@ -139,9 +141,9 @@ class OllamaTaskExtractionClient:
                 "模型返回的内容不是合法 JSON",
                 details=str(exc),
             ) from exc
-        extraction = resolve_relative_month_ranges(
-            validate_extraction_payload(raw_extraction),
-            application_date,
+        extraction = normalize_semantic_extraction(
+            validate_semantic_extraction_payload(raw_extraction),
+            record,
         )
         thinking = message.get("thinking")
         metrics = ModelMetrics(

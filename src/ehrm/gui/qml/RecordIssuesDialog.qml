@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Dialog {
     id: dialog
     required property var backend
+    signal editRecordRequested(int rowNumber)
     property int filterRowNumber: 0
     property var displayedIssues: {
         var source = dialog.backend ? dialog.backend.recordIssues : []
@@ -38,6 +39,7 @@ Dialog {
     focus: true
     padding: 0
     closePolicy: Popup.CloseOnEscape
+    onOpened: Qt.callLater(function() { issueList.positionViewAtBeginning() })
     onClosed: filterRowNumber = 0
     background: Rectangle {
         color: "#ffffff"
@@ -82,7 +84,25 @@ Dialog {
             Layout.margins: 20
             spacing: 9
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
             model: dialog.displayedIssues
+            ScrollBar.vertical: ScrollBar {
+                id: issueScrollBar
+                policy: ScrollBar.AsNeeded
+                width: 9
+                contentItem: Rectangle {
+                    implicitWidth: 9
+                    radius: 4
+                    color: issueScrollBar.pressed
+                        ? "#667085"
+                        : issueScrollBar.hovered ? "#8993a4" : "#aab2bf"
+                    opacity: issueScrollBar.active ? 1.0 : 0.72
+                }
+                background: Rectangle {
+                    color: "#eef1f5"
+                    radius: 4
+                }
+            }
             delegate: Rectangle {
                 id: issueRow
                 required property var modelData
@@ -148,6 +168,30 @@ Dialog {
                         color: "#667085"
                         font.pixelSize: 13
                         wrapMode: Text.WordWrap
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: issueRow.modelData.code === "AI_REVIEW_REQUIRED"
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+                        AppButton {
+                            visible: Number(issueRow.modelData.rowNumber || 0) > 0
+                            text: "修改数据"
+                            onClicked: dialog.editRecordRequested(
+                                Number(issueRow.modelData.rowNumber || 0)
+                            )
+                        }
+                        AppButton {
+                            text: "确认无误"
+                            primary: true
+                            onClicked: {
+                                dialog.backend.confirmReviewIssue(
+                                    String(issueRow.modelData.issueId || "")
+                                )
+                                if (dialog.displayedIssues.length <= 1)
+                                    dialog.close()
+                            }
+                        }
                     }
                 }
             }

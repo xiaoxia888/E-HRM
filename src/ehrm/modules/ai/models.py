@@ -76,12 +76,40 @@ class PrintMode(StrEnum):
     INDIVIDUAL = "individual"
 
 
+class RequirementType(StrEnum):
+    """Semantic categories produced before print-group extraction."""
+
+    RIGHTS_STATEMENT = "rights_statement"
+    STATISTICS = "statistics"
+    COORDINATION = "coordination"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedRequirement:
+    sequence: int
+    source_text: str
+    requirement_type: str
+    supported: bool
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sequence": self.sequence,
+            "source_text": self.source_text,
+            "type": self.requirement_type,
+            "supported": self.supported,
+            "reason": self.reason,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractedPerson:
     name: str
     evidence: str
     confidence: float
     social_security_number: str | None = None
+    birth_year_hint: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,9 +129,11 @@ class ExtractedPrintGroup:
     needs_review: bool
     review_reasons: tuple[str, ...]
     warnings: tuple[str, ...]
+    requirement_sequence: int = 1
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "requirement_sequence": self.requirement_sequence,
             "print_mode": self.print_mode,
             "insurance_type": self.insurance_type,
             "start_month": self.start_month,
@@ -125,6 +155,7 @@ class TaskExtraction:
     needs_review: bool
     review_reasons: tuple[str, ...]
     warnings: tuple[str, ...]
+    requirements: tuple[ExtractedRequirement, ...] = ()
 
     @property
     def people_count(self) -> int:
@@ -132,6 +163,7 @@ class TaskExtraction:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "requirements": [item.as_dict() for item in self.requirements],
             "groups": [group.as_dict() for group in self.groups],
             "needs_review": self.needs_review,
             "review_reasons": list(self.review_reasons),
@@ -163,14 +195,46 @@ class ExtractionResponse:
 EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["groups", "needs_review", "review_reasons", "warnings"],
+    "required": [
+        "requirements",
+        "groups",
+        "needs_review",
+        "review_reasons",
+        "warnings",
+    ],
     "properties": {
+        "requirements": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "sequence",
+                    "source_text",
+                    "type",
+                    "supported",
+                    "reason",
+                ],
+                "properties": {
+                    "sequence": {"type": "integer", "minimum": 1},
+                    "source_text": {"type": "string", "minLength": 1},
+                    "type": {
+                        "type": "string",
+                        "enum": [item.value for item in RequirementType],
+                    },
+                    "supported": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
         "groups": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": [
+                    "requirement_sequence",
                     "print_mode",
                     "insurance_type",
                     "start_month",
@@ -185,6 +249,10 @@ EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                     "warnings",
                 ],
                 "properties": {
+                    "requirement_sequence": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
                     "print_mode": {
                         "type": ["string", "null"],
                         "enum": [
@@ -224,6 +292,7 @@ EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                             "required": [
                                 "name",
                                 "social_security_number",
+                                "birth_year_hint",
                                 "evidence",
                                 "confidence",
                             ],
@@ -232,6 +301,11 @@ EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                                 "social_security_number": {
                                     "type": ["string", "null"],
                                     "pattern": "^(?:[0-9]{15}|[0-9]{17}[0-9Xx])$",
+                                },
+                                "birth_year_hint": {
+                                    "type": ["integer", "null"],
+                                    "minimum": 1900,
+                                    "maximum": 2099,
                                 },
                                 "evidence": {"type": "string"},
                                 "confidence": {
@@ -272,7 +346,13 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
 
     if not isinstance(payload, dict):
         raise AiResponseInvalidError("模型结果根节点必须是 JSON 对象")
-    required = {"groups", "needs_review", "review_reasons", "warnings"}
+    required = {
+        "requirements",
+        "groups",
+        "needs_review",
+        "review_reasons",
+        "warnings",
+    }
     if set(payload) != required:
         raise AiResponseInvalidError(
             "模型结果字段不完整或包含未知字段",
@@ -280,13 +360,88 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
         )
     if not isinstance(payload["groups"], list):
         raise AiResponseInvalidError("模型结果 groups 必须是数组")
+    if not isinstance(payload["requirements"], list) or not payload["requirements"]:
+        raise AiResponseInvalidError("模型结果 requirements 必须是非空数组")
     if not isinstance(payload["needs_review"], bool):
         raise AiResponseInvalidError("模型结果 needs_review 必须是布尔值")
 
     review_reasons = _string_tuple(payload["review_reasons"], "review_reasons")
     warnings = _string_tuple(payload["warnings"], "warnings")
+    requirements: list[ExtractedRequirement] = []
+    expected_requirement_fields = {
+        "sequence",
+        "source_text",
+        "type",
+        "supported",
+        "reason",
+    }
+    for requirement_index, raw_requirement in enumerate(
+        payload["requirements"],
+        start=1,
+    ):
+        if (
+            not isinstance(raw_requirement, dict)
+            or set(raw_requirement) != expected_requirement_fields
+        ):
+            raise AiResponseInvalidError(
+                f"第 {requirement_index} 个需求分类字段不正确"
+            )
+        sequence = raw_requirement["sequence"]
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence != requirement_index
+        ):
+            raise AiResponseInvalidError(
+                "需求 sequence 必须从 1 开始并按原文顺序连续编号"
+            )
+        requirement_type_value = _required_text(
+            raw_requirement["type"],
+            f"requirements[{requirement_index}].type",
+        )
+        try:
+            requirement_type = RequirementType(requirement_type_value).value
+        except ValueError as exc:
+            raise AiResponseInvalidError(
+                f"第 {requirement_index} 个需求的 type 无效"
+            ) from exc
+        supported = raw_requirement["supported"]
+        if not isinstance(supported, bool):
+            raise AiResponseInvalidError(
+                f"第 {requirement_index} 个需求的 supported 必须是布尔值"
+            )
+        should_be_supported = (
+            requirement_type == RequirementType.RIGHTS_STATEMENT.value
+        )
+        if supported != should_be_supported:
+            raise AiResponseInvalidError(
+                f"第 {requirement_index} 个需求的 type 与 supported 相互矛盾"
+            )
+        reason = _text(
+            raw_requirement["reason"],
+            f"requirements[{requirement_index}].reason",
+        )
+        if not supported and not reason:
+            raise AiResponseInvalidError(
+                f"第 {requirement_index} 个不处理的需求必须说明原因"
+            )
+        requirements.append(
+            ExtractedRequirement(
+                sequence=sequence,
+                source_text=_required_text(
+                    raw_requirement["source_text"],
+                    f"requirements[{requirement_index}].source_text",
+                ),
+                requirement_type=requirement_type,
+                supported=supported,
+                reason=reason,
+            )
+        )
+
     groups: list[ExtractedPrintGroup] = []
+    group_signatures: dict[tuple[object, ...], int] = {}
     expected_group_fields = {
+        "requirement_sequence",
         "print_mode",
         "insurance_type",
         "start_month",
@@ -303,6 +458,28 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
     for group_index, raw_group in enumerate(payload["groups"], start=1):
         if not isinstance(raw_group, dict) or set(raw_group) != expected_group_fields:
             raise AiResponseInvalidError(f"第 {group_index} 个打印组字段不正确")
+        requirement_sequence = raw_group["requirement_sequence"]
+        if (
+            isinstance(requirement_sequence, bool)
+            or not isinstance(requirement_sequence, int)
+            or not 1 <= requirement_sequence <= len(requirements)
+        ):
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个打印组引用了不存在的需求"
+            )
+        source_requirement = requirements[requirement_sequence - 1]
+        if (
+            not source_requirement.supported
+            or source_requirement.requirement_type
+            != RequirementType.RIGHTS_STATEMENT.value
+        ):
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个打印组引用的不是人员权益单需求",
+                details=(
+                    f"requirement_sequence={requirement_sequence}；"
+                    f"type={source_requirement.requirement_type}"
+                ),
+            )
         raw_print_mode = raw_group["print_mode"]
         if raw_print_mode is None:
             print_mode = None
@@ -368,6 +545,24 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
                 f"第 {group_index} 个非相对月份打印组的 "
                 "relative_month_count 必须为 null"
             )
+        if date_basis in {
+            DateBasis.CURRENT_YEAR.value,
+            DateBasis.PREVIOUS_YEAR.value,
+        } and (start_month is not None or end_month is not None):
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个 {date_basis} 打印组的起止月份必须为 null"
+            )
+        if date_basis == DateBasis.UNTIL_NOW.value and end_month is not None:
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个 until_now 打印组的结束月份必须为 null"
+            )
+        if date_basis in {
+            DateBasis.MISSING.value,
+            DateBasis.AMBIGUOUS.value,
+        } and (start_month is not None or end_month is not None):
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个 {date_basis} 打印组不得生成起止月份"
+            )
         if (
             date_basis != DateBasis.RELATIVE_MONTHS.value
             and start_month
@@ -388,14 +583,36 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
             "evidence",
             "confidence",
         }
+        expected_person_fields_with_birth_year = {
+            *expected_person_fields,
+            "birth_year_hint",
+        }
         for person_index, raw_person in enumerate(raw_group["people"], start=1):
             if (
                 not isinstance(raw_person, dict)
-                or set(raw_person) != expected_person_fields
+                or frozenset(raw_person)
+                not in {
+                    frozenset(expected_person_fields),
+                    frozenset(expected_person_fields_with_birth_year),
+                }
             ):
                 raise AiResponseInvalidError(
                     f"第 {group_index} 组第 {person_index} 个人员字段不正确"
                 )
+            raw_birth_year_hint = raw_person.get("birth_year_hint")
+            if raw_birth_year_hint is None:
+                birth_year_hint = None
+            elif (
+                isinstance(raw_birth_year_hint, bool)
+                or not isinstance(raw_birth_year_hint, int)
+                or not 1900 <= raw_birth_year_hint <= 2099
+            ):
+                raise AiResponseInvalidError(
+                    f"第 {group_index} 组第 {person_index} 个人员的 "
+                    "birth_year_hint 必须是 1900 至 2099 的整数或 null"
+                )
+            else:
+                birth_year_hint = raw_birth_year_hint
             confidence = raw_person["confidence"]
             if (
                 isinstance(confidence, bool)
@@ -423,8 +640,14 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
                         f"[{group_index}].people[{person_index}]"
                         ".social_security_number",
                     ),
+                    birth_year_hint=birth_year_hint,
                 )
             )
+            if group_people[-1].name not in source_requirement.source_text:
+                raise AiResponseInvalidError(
+                    f"第 {group_index} 组人员“{group_people[-1].name}”"
+                    "未出现在其引用的人员权益单需求原文中"
+                )
         group_review_reasons = _string_tuple(
             raw_group["review_reasons"],
             f"groups[{group_index}].review_reasons",
@@ -446,37 +669,75 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
                 inferred_reasons.append(reason)
         if (
             (not start_month or not end_month)
-            and date_basis != DateBasis.RELATIVE_MONTHS.value
+            and date_basis
+            not in {
+                DateBasis.RELATIVE_MONTHS.value,
+                DateBasis.CURRENT_YEAR.value,
+                DateBasis.PREVIOUS_YEAR.value,
+                DateBasis.UNTIL_NOW.value,
+            }
             and not group_needs_review
         ):
             group_needs_review = True
             inferred_reasons.append("未能确定该打印组的完整起止月份")
+        if (
+            date_basis == DateBasis.UNTIL_NOW.value
+            and not start_month
+            and not group_needs_review
+        ):
+            group_needs_review = True
+            inferred_reasons.append("原文使用“至今”，但未能确定开始月份")
         if group_needs_review and not inferred_reasons:
             raise AiResponseInvalidError(
                 f"第 {group_index} 个打印组需要复核时必须给出原因"
             )
-        groups.append(
-            ExtractedPrintGroup(
-                print_mode=print_mode,
-                insurance_type=insurance_type,
-                start_month=start_month,
-                end_month=end_month,
-                time_expression=_text(
-                    raw_group["time_expression"],
-                    f"groups[{group_index}].time_expression",
-                ),
-                date_basis=date_basis,
-                relative_month_count=relative_month_count,
-                evidence=_text(
-                    raw_group["evidence"],
-                    f"groups[{group_index}].evidence",
-                ),
-                people=tuple(group_people),
-                needs_review=group_needs_review,
-                review_reasons=tuple(inferred_reasons),
-                warnings=group_warnings,
-            )
+        candidate_group = ExtractedPrintGroup(
+            requirement_sequence=requirement_sequence,
+            print_mode=print_mode,
+            insurance_type=insurance_type,
+            start_month=start_month,
+            end_month=end_month,
+            time_expression=_text(
+                raw_group["time_expression"],
+                f"groups[{group_index}].time_expression",
+            ),
+            date_basis=date_basis,
+            relative_month_count=relative_month_count,
+            evidence=_text(
+                raw_group["evidence"],
+                f"groups[{group_index}].evidence",
+            ),
+            people=tuple(group_people),
+            needs_review=group_needs_review,
+            review_reasons=tuple(inferred_reasons),
+            warnings=group_warnings,
         )
+        signature = (
+            candidate_group.requirement_sequence,
+            candidate_group.print_mode,
+            candidate_group.insurance_type,
+            candidate_group.start_month,
+            candidate_group.end_month,
+            candidate_group.date_basis,
+            candidate_group.relative_month_count,
+            tuple(
+                sorted(
+                    (
+                        person.name,
+                        person.social_security_number or "",
+                        person.birth_year_hint,
+                    )
+                    for person in candidate_group.people
+                )
+            ),
+        )
+        previous_group_index = group_signatures.get(signature)
+        if previous_group_index is not None:
+            raise AiResponseInvalidError(
+                f"第 {group_index} 个打印组与第 {previous_group_index} 个完全重复"
+            )
+        group_signatures[signature] = group_index
+        groups.append(candidate_group)
 
     needs_review = payload["needs_review"]
     if not groups and not needs_review:
@@ -493,6 +754,7 @@ def validate_extraction_payload(payload: object) -> TaskExtraction:
             raise AiResponseInvalidError("需要人工复核时必须给出 review_reasons")
         review_reasons = tuple(dict.fromkeys(group_reasons))
     return TaskExtraction(
+        requirements=tuple(requirements),
         groups=tuple(groups),
         needs_review=needs_review,
         review_reasons=review_reasons,
@@ -504,10 +766,10 @@ def resolve_relative_month_ranges(
     extraction: TaskExtraction,
     application_date: str,
 ) -> TaskExtraction:
-    """Resolve relative periods with deterministic month arithmetic.
+    """Resolve semantic periods with deterministic month arithmetic.
 
-    The model identifies the original expression and intended month count. The
-    program owns cross-year arithmetic and verifies common expressions before
+    The model identifies explicit ranges or the semantic date basis. The
+    program owns relative, natural-year and until-now arithmetic before
     downstream automation receives the final month range.
     """
 
@@ -519,6 +781,76 @@ def resolve_relative_month_ranges(
     task_warnings = list(extraction.warnings)
 
     for group in extraction.groups:
+        if group.date_basis == DateBasis.CURRENT_YEAR.value:
+            if application_month == 1:
+                reason = "申请月份为1月，“今年以来”没有可查询的已完成月份"
+                group_reasons = list(group.review_reasons)
+                if reason not in group_reasons:
+                    group_reasons.append(reason)
+                if reason not in task_review_reasons:
+                    task_review_reasons.append(reason)
+                groups.append(
+                    replace(
+                        group,
+                        start_month=None,
+                        end_month=None,
+                        needs_review=True,
+                        review_reasons=tuple(group_reasons),
+                    )
+                )
+            else:
+                groups.append(
+                    replace(
+                        group,
+                        start_month=f"{application_year:04d}-01",
+                        end_month=_relative_month_range(
+                            application_year,
+                            application_month,
+                            1,
+                        )[1],
+                    )
+                )
+            continue
+
+        if group.date_basis == DateBasis.PREVIOUS_YEAR.value:
+            previous_year = application_year - 1
+            groups.append(
+                replace(
+                    group,
+                    start_month=f"{previous_year:04d}-01",
+                    end_month=f"{previous_year:04d}-12",
+                )
+            )
+            continue
+
+        if group.date_basis == DateBasis.UNTIL_NOW.value:
+            end_month = _relative_month_range(
+                application_year,
+                application_month,
+                1,
+            )[1]
+            group_reasons = list(group.review_reasons)
+            needs_review = group.needs_review
+            if group.start_month and group.start_month > end_month:
+                reason = (
+                    f"“至今”的开始月份 {group.start_month} 晚于可查询结束月份 "
+                    f"{end_month}"
+                )
+                if reason not in group_reasons:
+                    group_reasons.append(reason)
+                if reason not in task_review_reasons:
+                    task_review_reasons.append(reason)
+                needs_review = True
+            groups.append(
+                replace(
+                    group,
+                    end_month=end_month,
+                    needs_review=needs_review,
+                    review_reasons=tuple(group_reasons),
+                )
+            )
+            continue
+
         if group.date_basis != DateBasis.RELATIVE_MONTHS.value:
             groups.append(group)
             continue

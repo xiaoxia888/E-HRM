@@ -293,6 +293,76 @@ def test_model_review_marks_only_the_related_row_yellow(tmp_path: Path) -> None:
         view_model.records[0]["rowIssueTooltip"]
     )
 
+    issue_id = str(view_model.recordIssues[0]["issueId"])
+    view_model.confirmReviewIssue(issue_id)
+
+    assert view_model.recordIssueCount == 0
+    assert view_model.records[0]["rowStatus"] == "success"
+    requests = view_model._erp_task_result["rights_statement_requests"]
+    assert requests[0]["review_reasons"] == []
+    assert requests[0]["manual_review_confirmed"] is True
+
+
+def test_same_review_reason_is_shown_once_per_print_group(tmp_path: Path) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    requests = []
+    for name, identity in (
+        ("张三", "320101199001011234"),
+        ("李四", "320101199002021235"),
+    ):
+        requests.append(
+            {
+                "task_number": "RLSQ-REVIEW-GROUP",
+                "group_id": "RLSQ-REVIEW-GROUP-G01",
+                "group_sequence": 1,
+                "group_people_count": 2,
+                "source_print_mode": "combined",
+                "resolved_print_mode": "combined",
+                "name": name,
+                "social_security_number": identity,
+                "identity_match": {
+                    "code": "SUCCESS",
+                    "company": "测试公司",
+                    "department": "项目部",
+                },
+                "insurance_type": "养老",
+                "start_month": "2025-08",
+                "end_month": "2026-07",
+                "needs_review": True,
+                "review_reasons": ["请确认模型拆分的打印组是否正确"],
+                "warnings": [],
+            }
+        )
+
+    view_model._on_erp_task_extraction_completed(
+        {
+            "summary": {
+                "tasks_total": 1,
+                "tasks_processed": 1,
+                "tasks_failed": 0,
+                "people_extracted": 2,
+                "stopped": False,
+            },
+            "tasks": [{"task_number": "RLSQ-REVIEW-GROUP"}],
+            "rights_statement_requests": requests,
+        }
+    )
+
+    assert application is not None
+    reviews = [
+        issue
+        for issue in view_model.recordIssues
+        if issue["code"] == "AI_REVIEW_REQUIRED"
+    ]
+    assert len(reviews) == 1
+    assert reviews[0]["personName"] == "组1"
+
+    view_model.confirmReviewIssue(str(reviews[0]["issueId"]))
+
+    assert view_model.recordIssueCount == 0
+    assert all(not item["review_reasons"] for item in requests)
+
 
 def test_erp_print_groups_are_previewed_and_unresolved_mode_can_be_selected(
     tmp_path: Path,

@@ -27,7 +27,7 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
         AiModelProfile.QWEN3_8_27B,
     }
     assert settings.ai.prompt_path == (
-        Path("config/prompts/erp_task_extraction_system.txt").resolve()
+        Path("config/prompts/erp_task_extraction_v2_system.txt").resolve()
     )
     assert settings.browser.user_data_dir == tmp_path / "data/browser-profile"
     assert settings.erp.user_data_dir == tmp_path / "data/erp-browser-profile"

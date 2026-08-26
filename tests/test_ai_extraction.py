@@ -38,8 +38,18 @@ def test_reasoning_modes_use_ollama_native_values() -> None:
 def test_extraction_payload_is_strictly_validated() -> None:
     result = validate_extraction_payload(
         {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "张三需打印近一年社保",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                }
+            ],
             "groups": [
                 {
+                    "requirement_sequence": 1,
                     "print_mode": "combined",
                     "insurance_type": "养老",
                     "start_month": "2025-08",
@@ -52,6 +62,7 @@ def test_extraction_payload_is_strictly_validated() -> None:
                         {
                             "name": "张三",
                             "social_security_number": "320101199001011234",
+                            "birth_year_hint": 1990,
                             "evidence": "张三需打印",
                             "confidence": 0.96,
                         }
@@ -73,13 +84,219 @@ def test_extraction_payload_is_strictly_validated() -> None:
         == "320101199001011234"
     )
     assert result.groups[0].end_month == "2026-07"
+    assert result.groups[0].people[0].birth_year_hint == 1990
+
+
+def test_statistics_requirement_is_kept_out_of_print_groups() -> None:
+    result = validate_extraction_payload(
+        {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "公司参保总人数（社保网可查询）",
+                    "type": "statistics",
+                    "supported": False,
+                    "reason": "统计需求，不是具体人员权益单",
+                },
+                {
+                    "sequence": 2,
+                    "source_text": "吴朝彬近一年社保清单",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                },
+            ],
+            "groups": [
+                {
+                    "requirement_sequence": 2,
+                    "print_mode": None,
+                    "insurance_type": "养老",
+                    "start_month": None,
+                    "end_month": None,
+                    "time_expression": "近一年",
+                    "date_basis": "relative_months",
+                    "relative_month_count": 12,
+                    "evidence": "吴朝彬近一年社保清单",
+                    "people": [
+                        {
+                            "name": "吴朝彬",
+                            "social_security_number": None,
+                            "evidence": "吴朝彬近一年社保清单",
+                            "confidence": 0.98,
+                        }
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": ["申请还包含公司参保总人数统计需求，本次不处理"],
+        }
+    )
+
+    assert [item.requirement_type for item in result.requirements] == [
+        "statistics",
+        "rights_statement",
+    ]
+    assert [person.name for person in result.groups[0].people] == ["吴朝彬"]
+    assert result.groups[0].requirement_sequence == 2
+
+
+def test_print_group_cannot_reference_statistics_requirement() -> None:
+    payload = {
+        "requirements": [
+            {
+                "sequence": 1,
+                "source_text": "公司参保总人数（社保网可查询）",
+                "type": "statistics",
+                "supported": False,
+                "reason": "统计需求，不是具体人员权益单",
+            }
+        ],
+        "groups": [
+            {
+                "requirement_sequence": 1,
+                "print_mode": None,
+                "insurance_type": "养老",
+                "start_month": None,
+                "end_month": None,
+                "time_expression": "",
+                "date_basis": "missing",
+                "relative_month_count": None,
+                "evidence": "公司参保总人数（社保网可查询）",
+                "people": [
+                    {
+                        "name": "公司参保总人数",
+                        "social_security_number": None,
+                        "evidence": "公司参保总人数",
+                        "confidence": 0.5,
+                    }
+                ],
+                "needs_review": True,
+                "review_reasons": ["不是具体人员"],
+                "warnings": [],
+            }
+        ],
+        "needs_review": True,
+        "review_reasons": ["不是具体人员"],
+        "warnings": [],
+    }
+
+    with pytest.raises(AiResponseInvalidError, match="不是人员权益单需求"):
+        validate_extraction_payload(payload)
+
+
+def test_person_must_appear_in_referenced_rights_requirement() -> None:
+    payload = {
+        "requirements": [
+            {
+                "sequence": 1,
+                "source_text": "公司参保总人数（社保网可查询）",
+                "type": "statistics",
+                "supported": False,
+                "reason": "统计需求，不是具体人员权益单",
+            },
+            {
+                "sequence": 2,
+                "source_text": "吴朝彬近一年社保清单",
+                "type": "rights_statement",
+                "supported": True,
+                "reason": "",
+            },
+        ],
+        "groups": [
+            {
+                "requirement_sequence": 2,
+                "print_mode": None,
+                "insurance_type": "养老",
+                "start_month": None,
+                "end_month": None,
+                "time_expression": "近一年",
+                "date_basis": "relative_months",
+                "relative_month_count": 12,
+                "evidence": "公司参保总人数",
+                "people": [
+                    {
+                        "name": "公司参保总人数",
+                        "social_security_number": None,
+                        "evidence": "公司参保总人数",
+                        "confidence": 0.5,
+                    }
+                ],
+                "needs_review": True,
+                "review_reasons": ["不是具体人员"],
+                "warnings": [],
+            }
+        ],
+        "needs_review": True,
+        "review_reasons": ["不是具体人员"],
+        "warnings": [],
+    }
+
+    with pytest.raises(AiResponseInvalidError, match="未出现在其引用"):
+        validate_extraction_payload(payload)
+
+
+def test_duplicate_print_groups_are_rejected() -> None:
+    group = {
+        "requirement_sequence": 1,
+        "print_mode": None,
+        "insurance_type": "养老",
+        "start_month": "2025-01",
+        "end_month": "2026-07",
+        "time_expression": "2025年1月到2026年7月",
+        "date_basis": "explicit_range",
+        "relative_month_count": None,
+        "evidence": "需要霍宝秀社保 2025年1月到2026年7月",
+        "people": [
+            {
+                "name": "霍宝秀",
+                "social_security_number": None,
+                "evidence": "需要霍宝秀社保 2025年1月到2026年7月",
+                "confidence": 1.0,
+            }
+        ],
+        "needs_review": False,
+        "review_reasons": [],
+        "warnings": [],
+    }
+    payload = {
+        "requirements": [
+            {
+                "sequence": 1,
+                "source_text": "需要霍宝秀社保 2025年1月到2026年7月",
+                "type": "rights_statement",
+                "supported": True,
+                "reason": "",
+            }
+        ],
+        "groups": [group, dict(group)],
+        "needs_review": False,
+        "review_reasons": [],
+        "warnings": [],
+    }
+
+    with pytest.raises(AiResponseInvalidError, match="完全重复"):
+        validate_extraction_payload(payload)
 
 
 def test_relative_month_range_is_calculated_from_application_date() -> None:
     extraction = validate_extraction_payload(
         {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "艾文成近半年社保缴费证明",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                }
+            ],
             "groups": [
                 {
+                    "requirement_sequence": 1,
                     "print_mode": None,
                     "insurance_type": "养老",
                     "start_month": "2025-10",
@@ -123,8 +340,18 @@ def test_relative_month_range_is_calculated_from_application_date() -> None:
 def test_relative_month_count_conflict_is_corrected_and_marked_for_review() -> None:
     extraction = validate_extraction_payload(
         {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "艾文成近半年社保缴费证明",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                }
+            ],
             "groups": [
                 {
+                    "requirement_sequence": 1,
                     "print_mode": None,
                     "insurance_type": "养老",
                     "start_month": None,
@@ -164,10 +391,117 @@ def test_relative_month_count_conflict_is_corrected_and_marked_for_review() -> N
     )
 
 
+def test_explicit_range_keeps_an_end_month_equal_to_application_month() -> None:
+    extraction = validate_extraction_payload(
+        {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "需要霍宝秀社保 2025年1月到2026年7月",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                }
+            ],
+            "groups": [
+                {
+                    "requirement_sequence": 1,
+                    "print_mode": None,
+                    "insurance_type": "养老",
+                    "start_month": "2025-01",
+                    "end_month": "2026-07",
+                    "time_expression": "2025年1月到2026年7月",
+                    "date_basis": "explicit_range",
+                    "relative_month_count": None,
+                    "evidence": "需要霍宝秀社保 2025年1月到2026年7月",
+                    "people": [
+                        {
+                            "name": "霍宝秀",
+                            "social_security_number": None,
+                            "evidence": "需要霍宝秀社保 2025年1月到2026年7月",
+                            "confidence": 1.0,
+                        }
+                    ],
+                    "needs_review": False,
+                    "review_reasons": [],
+                    "warnings": [],
+                }
+            ],
+            "needs_review": False,
+            "review_reasons": [],
+            "warnings": [],
+        }
+    )
+
+    resolved = resolve_relative_month_ranges(extraction, "2026-07-26")
+
+    assert resolved.groups[0].date_basis == "explicit_range"
+    assert (resolved.groups[0].start_month, resolved.groups[0].end_month) == (
+        "2025-01",
+        "2026-07",
+    )
+
+
+def test_program_resolves_current_previous_year_and_until_now() -> None:
+    person = ExtractedPerson(name="张三", evidence="张三", confidence=0.9)
+
+    def group(date_basis: str, start_month: str | None = None) -> ExtractedPrintGroup:
+        return ExtractedPrintGroup(
+            print_mode=None,
+            insurance_type="养老",
+            start_month=start_month,
+            end_month=None,
+            time_expression=date_basis,
+            date_basis=date_basis,
+            relative_month_count=None,
+            evidence="张三",
+            people=(person,),
+            needs_review=False,
+            review_reasons=(),
+            warnings=(),
+        )
+
+    extraction = TaskExtraction(
+        groups=(
+            group("current_year"),
+            group("previous_year"),
+            group("until_now", "2025-01"),
+        ),
+        needs_review=False,
+        review_reasons=(),
+        warnings=(),
+    )
+
+    resolved = resolve_relative_month_ranges(extraction, "2026-07-26")
+
+    assert (resolved.groups[0].start_month, resolved.groups[0].end_month) == (
+        "2026-01",
+        "2026-06",
+    )
+    assert (resolved.groups[1].start_month, resolved.groups[1].end_month) == (
+        "2025-01",
+        "2025-12",
+    )
+    assert (resolved.groups[2].start_month, resolved.groups[2].end_month) == (
+        "2025-01",
+        "2026-06",
+    )
+
+
 def test_relative_month_group_requires_month_count() -> None:
     payload = {
+        "requirements": [
+            {
+                "sequence": 1,
+                "source_text": "张三近半年社保",
+                "type": "rights_statement",
+                "supported": True,
+                "reason": "",
+            }
+        ],
         "groups": [
             {
+                "requirement_sequence": 1,
                 "print_mode": None,
                 "insurance_type": "养老",
                 "start_month": None,
@@ -202,8 +536,18 @@ def test_extraction_rejects_reversed_month_range() -> None:
     with pytest.raises(AiResponseInvalidError, match="开始月份晚于结束月份"):
         validate_extraction_payload(
             {
+                "requirements": [
+                    {
+                        "sequence": 1,
+                        "source_text": "张三",
+                        "type": "rights_statement",
+                        "supported": True,
+                        "reason": "",
+                    }
+                ],
                 "groups": [
                     {
+                        "requirement_sequence": 1,
                         "print_mode": None,
                         "insurance_type": "养老",
                         "start_month": "2026-08",
@@ -235,8 +579,25 @@ def test_extraction_rejects_reversed_month_range() -> None:
 def test_extraction_preserves_print_groups_and_repeated_people() -> None:
     result = validate_extraction_payload(
         {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "石贤明、刘勇2人打印1张，1年社保",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                },
+                {
+                    "sequence": 2,
+                    "source_text": "刘勇、李玉生打印1张，时间202601-202608",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                },
+            ],
             "groups": [
                 {
+                    "requirement_sequence": 1,
                     "print_mode": "combined",
                     "insurance_type": "养老",
                     "start_month": "2025-08",
@@ -264,6 +625,7 @@ def test_extraction_preserves_print_groups_and_repeated_people() -> None:
                     "warnings": [],
                 },
                 {
+                    "requirement_sequence": 2,
                     "print_mode": "combined",
                     "insurance_type": "养老",
                     "start_month": "2026-01",
@@ -312,8 +674,18 @@ def test_extraction_preserves_print_groups_and_repeated_people() -> None:
 def test_multi_person_group_without_mode_is_forced_to_review() -> None:
     result = validate_extraction_payload(
         {
+            "requirements": [
+                {
+                    "sequence": 1,
+                    "source_text": "张三、李四近一年社保",
+                    "type": "rights_statement",
+                    "supported": True,
+                    "reason": "",
+                }
+            ],
             "groups": [
                 {
+                    "requirement_sequence": 1,
                     "print_mode": None,
                     "insurance_type": "养老",
                     "start_month": "2025-08",
@@ -805,6 +1177,82 @@ def test_identity_enrichment_does_not_guess_when_name_is_ambiguous(
     assert requests[0]["identity_match"]["code"] == "ERP_PERSON_AMBIGUOUS"
     assert len(requests[0]["identity_match"]["candidates"]) == 2
     assert requests[1]["identity_match"]["code"] == "ERP_PERSON_NOT_FOUND"
+
+
+def test_identity_enrichment_uses_birth_year_hint_for_same_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePersonLookupService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def lookup_people(self, *, identity_numbers=(), names=(), **kwargs):
+            assert list(names) == ["陈文"]
+            return {}, {
+                "陈文": (
+                    ErpPersonRecord(
+                        "id-1984", "001", "陈文", "340403198406121626",
+                        "合同管理部", "测试公司", "0", "0",
+                    ),
+                    ErpPersonRecord(
+                        "id-1987", "002", "陈文", "340322198712011234",
+                        "华南经营分公司", "测试公司", "0", "0",
+                    ),
+                ),
+            }
+
+    monkeypatch.setattr(
+        "ehrm.modules.erp.extraction_service.ErpPersonLookupService",
+        FakePersonLookupService,
+    )
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.identity.birth_year"),
+    )
+    requests: list[dict[str, object]] = [
+        {
+            "name": "陈文",
+            "social_security_number": None,
+            "birth_year_hint": 1987,
+        }
+    ]
+
+    stopped = service._enrich_identities(requests, credentials=None)
+
+    assert stopped is False
+    assert requests[0]["social_security_number"] == "340322198712011234"
+    assert requests[0]["identity_match"] == {
+        "code": "SUCCESS",
+        "message": "处理成功",
+        "details": "已使用姓名和出生年份匹配 ERP 人员信息",
+        "source": "erp_person_database_birth_year",
+        "employee_code": "002",
+        "department": "华南经营分公司",
+        "company": "测试公司",
+    }
+
+
+def test_birth_year_hint_is_read_from_application_text(tmp_path: Path) -> None:
+    service = ErpTaskExtractionService(
+        load_settings(Path("config/settings.toml"), data_root=tmp_path),
+        logging.getLogger("test.ai.birth_year.source"),
+    )
+    record = ErpTaskRecord(
+        id="erp-id",
+        code="RLSQ-BIRTH-YEAR",
+        initiated_date="2026-06-29",
+        title="人员近一年社保清单",
+        description="打印张辉（1985）、陈文(1987)近一年社保清单",
+        transaction_type="社保咨询",
+        status="50",
+        originator="申请人",
+        department="第十六分公司",
+    )
+
+    assert service._birth_year_hint_from_application_text(record, "张辉") == 1985
+    assert service._birth_year_hint_from_application_text(record, "陈文") == 1987
+    assert service._birth_year_hint_from_application_text(record, "刘洋") is None
 
 
 def test_identity_from_application_text_queries_person_by_identity(

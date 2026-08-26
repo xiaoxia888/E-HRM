@@ -831,6 +831,16 @@ ApplicationWindow {
     RecordIssuesDialog {
         id: recordIssuesDialog
         backend: appBackend
+        onEditRecordRequested: function(rowNumber) {
+            const previewRecords = window.backend.records
+            for (let index = 0; index < previewRecords.length; ++index) {
+                if (Number(previewRecords[index].rowNumber) === Number(rowNumber)) {
+                    recordIssuesDialog.close()
+                    recordEditDialog.openForRecord(previewRecords[index])
+                    return
+                }
+            }
+        }
     }
 
     RecordEditDialog {

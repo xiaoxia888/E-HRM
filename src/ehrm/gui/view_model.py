@@ -676,6 +676,59 @@ class DesktopViewModel(QObject):
         self.recordsChanged.emit()
         self._refresh_plan()
 
+    @Slot(str)
+    def confirmReviewIssue(self, issue_id: str) -> None:
+        """Acknowledges one model review item after the user has checked it."""
+
+        normalized_id = issue_id.strip()
+        target = next(
+            (
+                issue
+                for issue in self._record_issues
+                if str(issue.get("issueId") or "") == normalized_id
+            ),
+            None,
+        )
+        if (
+            target is None
+            or target.get("code") != ErrorCode.AI_REVIEW_REQUIRED.value
+            or self._running
+        ):
+            return
+        group_id = str(target.get("groupId") or "").strip()
+        row_number = int(target.get("rowNumber") or 0)
+        if self._erp_task_result is not None:
+            requests = self._erp_task_result.get("rights_statement_requests")
+            if isinstance(requests, list):
+                for request_row, item in enumerate(requests, start=2):
+                    if not isinstance(item, dict):
+                        continue
+                    same_target = (
+                        bool(group_id)
+                        and str(item.get("group_id") or "").strip() == group_id
+                    ) or (not group_id and request_row == row_number)
+                    if not same_target:
+                        continue
+                    item["needs_review"] = False
+                    item["review_reasons"] = []
+                    item["manual_review_confirmed"] = True
+        self._record_issues = [
+            issue
+            for issue in self._record_issues
+            if not (
+                issue.get("code") == ErrorCode.AI_REVIEW_REQUIRED.value
+                and (
+                    (
+                        bool(group_id)
+                        and str(issue.get("groupId") or "").strip() == group_id
+                    )
+                    or str(issue.get("issueId") or "") == normalized_id
+                )
+            )
+        ]
+        self.recordsChanged.emit()
+        self._refresh_plan()
+
     @Slot(int, str, str, str, str, str, str, str, result=bool)
     def updateRecord(
         self,
@@ -1741,8 +1794,13 @@ class DesktopViewModel(QObject):
             row_number: int = 0,
             group_id: str = "",
         ) -> None:
+            issue_id = (
+                f"{code.value}:{task_number}:{group_id}:"
+                f"{row_number}:{len(issues) + 1}"
+            )
             issues.append(
                 {
+                    "issueId": issue_id,
                     "level": level,
                     "levelLabel": {
                         "error": "错误",
@@ -1808,6 +1866,7 @@ class DesktopViewModel(QObject):
                 )
 
         unresolved_groups: set[str] = set()
+        seen_group_reviews: set[tuple[str, tuple[str, ...]]] = set()
         for row_number, item in enumerate(requests, start=2):
             if not isinstance(item, dict):
                 continue
@@ -1855,15 +1914,26 @@ class DesktopViewModel(QObject):
                 )
             review_reasons = item.get("review_reasons")
             if isinstance(review_reasons, list) and review_reasons:
-                add_issue(
-                    "warning",
-                    task_number,
-                    person_name,
-                    ErrorCode.AI_REVIEW_REQUIRED,
-                    "；".join(str(reason) for reason in review_reasons if reason),
-                    row_number,
-                    group_id,
+                normalized_reasons = tuple(
+                    dict.fromkeys(
+                        str(reason).strip()
+                        for reason in review_reasons
+                        if str(reason).strip()
+                    )
                 )
+                review_key = (group_id, normalized_reasons)
+                if not group_id or review_key not in seen_group_reviews:
+                    if group_id:
+                        seen_group_reviews.add(review_key)
+                    add_issue(
+                        "warning",
+                        task_number,
+                        f"组{group_sequence}" if group_id else person_name,
+                        ErrorCode.AI_REVIEW_REQUIRED,
+                        "；".join(normalized_reasons),
+                        row_number,
+                        group_id,
+                    )
             warnings = item.get("warnings")
             if isinstance(warnings, list) and warnings:
                 add_issue(

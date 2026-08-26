@@ -124,5 +124,11 @@ class AiResponseInvalidError(EhrmError):
     retryable = True
 
 
+class MedicalInsuranceUnsupportedError(EhrmError):
+    """Raised when a medical-insurance request reaches the current social-insurance flow."""
+
+    code = ErrorCode.MEDICAL_INSURANCE_UNSUPPORTED
+
+
 class TaskCancelledError(EhrmError):
     code = ErrorCode.TASK_CANCELLED

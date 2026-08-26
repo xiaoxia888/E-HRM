@@ -82,10 +82,10 @@ class RightsStatementExcelLoader:
                     errors.append(f"第 {row_number} 行：{exc}")
 
             if errors:
-                displayed = errors[:20]
-                if len(errors) > len(displayed):
-                    displayed.append(f"另有 {len(errors) - len(displayed)} 条错误未显示")
-                raise ExcelValidationError("Excel 数据校验失败", details="\n".join(displayed))
+                raise ExcelValidationError(
+                    "Excel 数据校验失败",
+                    details="\n".join(errors),
+                )
             if not records:
                 raise ExcelValidationError("Excel 中没有可执行的数据")
             return records
@@ -159,12 +159,9 @@ class RightsStatementExcelLoader:
             except ValueError as exc:
                 errors.append(f"第 {record.row_number} 行：{exc}")
         if errors:
-            displayed = errors[:20]
-            if len(errors) > len(displayed):
-                displayed.append(f"另有 {len(errors) - len(displayed)} 条错误未显示")
             raise ExcelValidationError(
                 "数据校验失败",
-                details="\n".join(displayed),
+                details="\n".join(errors),
             )
 
         grouped_conditions: dict[tuple[str, str], set[tuple[str, str, str]]] = (

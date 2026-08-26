@@ -40,7 +40,7 @@ datas = pw_datas + [
             PROJECT_ROOT
             / "config"
             / "prompts"
-            / "erp_task_extraction_system.txt"
+            / "erp_task_extraction_v2_system.txt"
         ),
         "config/prompts",
     ),

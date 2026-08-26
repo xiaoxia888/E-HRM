@@ -190,6 +190,13 @@ class ErpTaskExtractionService:
                                 "person_sequence": person_index,
                                 "name": person.name,
                                 "social_security_number": source_identity,
+                                "birth_year_hint": (
+                                    person.birth_year_hint
+                                    or self._birth_year_hint_from_application_text(
+                                        record,
+                                        person.name,
+                                    )
+                                ),
                                 "insurance_type": group.insurance_type,
                                 "start_month": group.start_month,
                                 "end_month": group.end_month,
@@ -362,10 +369,17 @@ class ErpTaskExtractionService:
         for item in missing_requests:
             name = str(item.get("name") or "").strip()
             matches = matches_by_name.get(name, ())
+            birth_year_hint = item.get("birth_year_hint")
             self._apply_identity_lookup_result(
                 item,
                 matches,
                 queried_by_identity=False,
+                birth_year_hint=(
+                    birth_year_hint
+                    if isinstance(birth_year_hint, int)
+                    and not isinstance(birth_year_hint, bool)
+                    else None
+                ),
             )
         return False
 
@@ -389,8 +403,30 @@ class ErpTaskExtractionService:
         matches: tuple[ErpPersonRecord, ...],
         *,
         queried_by_identity: bool,
+        birth_year_hint: int | None = None,
     ) -> None:
         name = str(item.get("name") or "").strip()
+        if birth_year_hint is not None and not queried_by_identity and matches:
+            year_matches = tuple(
+                match
+                for match in matches
+                if self._identity_birth_year(match.identity_number)
+                == birth_year_hint
+            )
+            if not year_matches:
+                item["identity_match"] = {
+                    "code": ErrorCode.ERP_PERSON_NOT_FOUND.value,
+                    "message": display_message(ErrorCode.ERP_PERSON_NOT_FOUND),
+                    "details": (
+                        f"ERP 人员库找到姓名“{name}”，但没有出生年份为 "
+                        f"{birth_year_hint} 的人员"
+                    ),
+                    "source": "name_birth_year_lookup",
+                    "department": "",
+                    "company": "",
+                }
+                return
+            matches = year_matches
         if not matches:
             condition = (
                 "申请原文中的身份证号"
@@ -402,7 +438,13 @@ class ErpTaskExtractionService:
                 "message": display_message(ErrorCode.ERP_PERSON_NOT_FOUND),
                 "details": f"ERP 人员库未找到{condition}对应的人员",
                 "source": (
-                    "application_text" if queried_by_identity else "name_lookup"
+                    "application_text"
+                    if queried_by_identity
+                    else (
+                        "name_birth_year_lookup"
+                        if birth_year_hint is not None
+                        else "name_lookup"
+                    )
                 ),
                 "department": "",
                 "company": "",
@@ -414,7 +456,13 @@ class ErpTaskExtractionService:
                 "message": display_message(ErrorCode.ERP_PERSON_AMBIGUOUS),
                 "details": f"查询到 {len(matches)} 名匹配人员，请人工核对",
                 "source": (
-                    "application_text" if queried_by_identity else "name_lookup"
+                    "application_text"
+                    if queried_by_identity
+                    else (
+                        "name_birth_year_lookup"
+                        if birth_year_hint is not None
+                        else "name_lookup"
+                    )
                 ),
                 "department": "",
                 "company": "",
@@ -466,11 +514,19 @@ class ErpTaskExtractionService:
             "details": (
                 "已使用申请原文身份证精确匹配 ERP 人员信息"
                 if queried_by_identity
-                else "已使用姓名匹配 ERP 人员信息"
+                else (
+                    "已使用姓名和出生年份匹配 ERP 人员信息"
+                    if birth_year_hint is not None
+                    else "已使用姓名匹配 ERP 人员信息"
+                )
             ),
             "source": (
                 "application_identity" if queried_by_identity
-                else "erp_person_database"
+                else (
+                    "erp_person_database_birth_year"
+                    if birth_year_hint is not None
+                    else "erp_person_database"
+                )
             ),
             "employee_code": match.employee_code,
             "department": match.department,
@@ -511,6 +567,36 @@ class ErpTaskExtractionService:
                 record.code,
                 name,
             )
+        return None
+
+    @staticmethod
+    def _birth_year_hint_from_application_text(
+        record: ErpTaskRecord,
+        name: str,
+    ) -> int | None:
+        """Reads a parenthesized birth-year hint attached to an extracted name."""
+
+        escaped_name = re.escape(name.strip())
+        if not escaped_name:
+            return None
+        source_text = f"{record.title}\n{record.description}"
+        match = re.search(
+            rf"{escaped_name}[ \t]*[（(][ \t]*"
+            rf"(?P<year>(?:19|20)\d{{2}})[ \t]*[）)]",
+            source_text,
+        )
+        return int(match.group("year")) if match else None
+
+    @staticmethod
+    def _identity_birth_year(identity_number: str) -> int | None:
+        identity = str(identity_number or "").strip().upper()
+        try:
+            if len(identity) == 18 and _IDENTITY_PATTERN.fullmatch(identity):
+                return int(identity[6:10])
+            if len(identity) == 15 and _IDENTITY_PATTERN.fullmatch(identity):
+                return 1900 + int(identity[6:8])
+        except ValueError:
+            return None
         return None
 
     @staticmethod

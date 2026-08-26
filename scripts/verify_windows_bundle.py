@@ -25,7 +25,7 @@ def main() -> int:
         resource_root
         / "config"
         / "prompts"
-        / "erp_task_extraction_system.txt",
+        / "erp_task_extraction_v2_system.txt",
         resource_root / "ehrm" / "gui" / "qml" / "Main.qml",
         resource_root / "ehrm" / "gui" / "qml" / "PdfPreviewDialog.qml",
         resource_root / "ehrm" / "gui" / "qml" / "SystemSettingsPage.qml",

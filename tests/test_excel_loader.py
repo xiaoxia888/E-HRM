@@ -52,6 +52,59 @@ def test_rejects_blank_identity(tmp_path: Path) -> None:
         RightsStatementExcelLoader().load(path)
 
 
+def test_load_reports_every_validation_error(tmp_path: Path) -> None:
+    path = tmp_path / "all-errors.xlsx"
+    write_book(
+        path,
+        [
+            [
+                "测试单位",
+                "测试部门",
+                f"人员{index}",
+                "320101199001011234",
+                "养老",
+                "2025-01",
+                "2025-06",
+                "",
+            ]
+            for index in range(1, 26)
+        ],
+    )
+
+    with pytest.raises(ExcelValidationError) as captured:
+        RightsStatementExcelLoader().load(path)
+
+    details = captured.value.details or ""
+    assert "第 2 行：任务编号不能为空" in details
+    assert "第 26 行：任务编号不能为空" in details
+    assert "另有" not in details
+
+
+def test_in_memory_validation_reports_every_error() -> None:
+    records = [
+        EmployeeRecord(
+            row_number=row_number,
+            unit="测试单位",
+            department="测试部门",
+            name=f"人员{row_number}",
+            identity_number="320101199001011234",
+            insurance_type="养老",
+            start_month="2025-01",
+            end_month="2025-06",
+            task_number="",
+        )
+        for row_number in range(2, 27)
+    ]
+
+    with pytest.raises(ExcelValidationError) as captured:
+        RightsStatementExcelLoader().validate_records(records)
+
+    details = captured.value.details or ""
+    assert "第 2 行：任务编号不能为空" in details
+    assert "第 26 行：任务编号不能为空" in details
+    assert "另有" not in details
+
+
 def test_batch_groups_by_query_conditions(tmp_path: Path) -> None:
     path = tmp_path / "input.xlsx"
     write_book(
