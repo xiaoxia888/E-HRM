@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
@@ -63,6 +65,10 @@ class ChamferConfig:
     symbol_gap: int = 5
     min_symbol_area: int = 25
     maximum_accepted_score: float = 0.22
+    coarse_step: int = 2
+    refinement_radius: int = 1
+    coarse_candidate_count: int = 2
+    parallel_workers: int = 3
 
 
 def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
@@ -189,78 +195,198 @@ def _transform_mask(
     return rotated[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
 
 
+def _evaluate_transform(
+    template: _Template,
+    distance: np.ndarray,
+    darkness_penalty: np.ndarray,
+    config: ChamferConfig,
+    *,
+    scale: float,
+    angle: float,
+    aspect_ratio: float,
+) -> CaptchaMatch | None:
+    image_height, image_width = distance.shape
+    foreground = _transform_mask(
+        template.foreground, scale, angle, aspect_ratio
+    )
+    edges = cv2.morphologyEx(
+        foreground,
+        cv2.MORPH_GRADIENT,
+        np.ones((3, 3), dtype=np.uint8),
+    )
+    height, width = edges.shape
+    if height >= image_height or width >= image_width:
+        return None
+    edge_kernel = (edges > 0).astype(np.float32)
+    foreground_kernel = (foreground > 0).astype(np.float32)
+    edge_count = float(edge_kernel.sum())
+    foreground_count = float(foreground_kernel.sum())
+    if edge_count < 8 or foreground_count < 8:
+        return None
+
+    chamfer_map = cv2.matchTemplate(
+        distance, edge_kernel, cv2.TM_CCORR
+    ) / (edge_count * config.max_chamfer_distance)
+    darkness_map = cv2.matchTemplate(
+        darkness_penalty, foreground_kernel, cv2.TM_CCORR
+    ) / foreground_count
+    score_map = (
+        config.chamfer_weight * chamfer_map
+        + config.darkness_weight * darkness_map
+    )
+    minimum, _, location, _ = cv2.minMaxLoc(score_map)
+    x1, y1 = location
+    x2, y2 = x1 + width, y1 + height
+    return CaptchaMatch(
+        index=template.index,
+        score=float(minimum),
+        center=((x1 + x2) // 2, (y1 + y2) // 2),
+        matched_bbox=(x1, y1, x2, y2),
+        scale=float(scale),
+        angle=float(angle),
+        aspect_ratio=float(aspect_ratio),
+    )
+
+
+def _top_matches(
+    template: _Template,
+    distance: np.ndarray,
+    darkness_penalty: np.ndarray,
+    config: ChamferConfig,
+    parameters: Iterable[tuple[float, float, float]],
+    *,
+    limit: int,
+) -> list[CaptchaMatch]:
+    best: list[CaptchaMatch] = []
+    for scale, angle, aspect_ratio in parameters:
+        candidate = _evaluate_transform(
+            template,
+            distance,
+            darkness_penalty,
+            config,
+            scale=scale,
+            angle=angle,
+            aspect_ratio=aspect_ratio,
+        )
+        if candidate is None:
+            continue
+        best.append(candidate)
+        best.sort(key=lambda item: item.score)
+        del best[max(1, limit) :]
+    return best
+
+
+def _coarse_values(values: tuple[float, ...], step: int) -> tuple[float, ...]:
+    if step <= 1 or len(values) <= 2:
+        return values
+    selected = list(values[::step])
+    if selected[-1] != values[-1]:
+        selected.append(values[-1])
+    return tuple(selected)
+
+
+def _neighbor_values(
+    values: tuple[float, ...], selected: float, radius: int
+) -> tuple[float, ...]:
+    index = min(range(len(values)), key=lambda item: abs(values[item] - selected))
+    start = max(0, index - max(0, radius))
+    stop = min(len(values), index + max(0, radius) + 1)
+    return values[start:stop]
+
+
 def _best_match(
     template: _Template,
     distance: np.ndarray,
     dark_likelihood: np.ndarray,
     config: ChamferConfig,
 ) -> CaptchaMatch:
-    image_height, image_width = distance.shape
     darkness_penalty = (1.0 - dark_likelihood).astype(np.float32)
-    best: CaptchaMatch | None = None
-
-    for scale in config.scales:
-        for aspect_ratio in config.aspect_ratios:
-            for angle in config.angles:
-                foreground = _transform_mask(
-                    template.foreground, scale, angle, aspect_ratio
-                )
-                edges = cv2.morphologyEx(
-                    foreground,
-                    cv2.MORPH_GRADIENT,
-                    np.ones((3, 3), dtype=np.uint8),
-                )
-                height, width = edges.shape
-                if height >= image_height or width >= image_width:
-                    continue
-                edge_kernel = (edges > 0).astype(np.float32)
-                foreground_kernel = (foreground > 0).astype(np.float32)
-                edge_count = float(edge_kernel.sum())
-                foreground_count = float(foreground_kernel.sum())
-                if edge_count < 8 or foreground_count < 8:
-                    continue
-
-                chamfer_map = cv2.matchTemplate(
-                    distance, edge_kernel, cv2.TM_CCORR
-                ) / (edge_count * config.max_chamfer_distance)
-                darkness_map = cv2.matchTemplate(
-                    darkness_penalty, foreground_kernel, cv2.TM_CCORR
-                ) / foreground_count
-                score_map = (
-                    config.chamfer_weight * chamfer_map
-                    + config.darkness_weight * darkness_map
-                )
-                minimum, _, location, _ = cv2.minMaxLoc(score_map)
-                if best is None or minimum < best.score:
-                    x1, y1 = location
-                    x2, y2 = x1 + width, y1 + height
-                    best = CaptchaMatch(
-                        index=template.index,
-                        score=float(minimum),
-                        center=((x1 + x2) // 2, (y1 + y2) // 2),
-                        matched_bbox=(x1, y1, x2, y2),
-                        scale=float(scale),
-                        angle=float(angle),
-                        aspect_ratio=float(aspect_ratio),
-                    )
-
-    if best is None:
+    coarse_scales = _coarse_values(config.scales, config.coarse_step)
+    coarse_angles = _coarse_values(config.angles, config.coarse_step)
+    coarse_parameters = (
+        (scale, angle, aspect_ratio)
+        for scale in coarse_scales
+        for aspect_ratio in config.aspect_ratios
+        for angle in coarse_angles
+    )
+    coarse_matches = _top_matches(
+        template,
+        distance,
+        darkness_penalty,
+        config,
+        coarse_parameters,
+        limit=config.coarse_candidate_count,
+    )
+    if not coarse_matches:
         raise ValueError(f"符号 {template.index} 没有可用匹配")
-    return best
+
+    refinement_parameters: set[tuple[float, float, float]] = set()
+    for candidate in coarse_matches:
+        for scale in _neighbor_values(
+            config.scales, candidate.scale, config.refinement_radius
+        ):
+            for aspect_ratio in _neighbor_values(
+                config.aspect_ratios,
+                candidate.aspect_ratio,
+                config.refinement_radius,
+            ):
+                for angle in _neighbor_values(
+                    config.angles, candidate.angle, config.refinement_radius
+                ):
+                    refinement_parameters.add((scale, angle, aspect_ratio))
+
+    refined_matches = _top_matches(
+        template,
+        distance,
+        darkness_penalty,
+        config,
+        sorted(refinement_parameters),
+        limit=1,
+    )
+    return min(
+        [coarse_matches[0], *refined_matches],
+        key=lambda item: item.score,
+    )
 
 
 def match_captcha_symbols(
     target_bgr: np.ndarray,
     background_bgr: np.ndarray,
     config: ChamferConfig | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[CaptchaMatch]:
     resolved = config or ChamferConfig()
     templates = _extract_templates(target_bgr, resolved)
     distance, dark_likelihood = _background_features(background_bgr, resolved)
-    matches = [
-        _best_match(template, distance, dark_likelihood, resolved)
-        for template in templates
-    ]
+    worker_count = max(1, min(resolved.parallel_workers, len(templates)))
+    if worker_count == 1:
+        matches = []
+        for template in templates:
+            matches.append(
+                _best_match(template, distance, dark_likelihood, resolved)
+            )
+            if progress_callback is not None:
+                progress_callback(len(matches), len(templates))
+    else:
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="captcha-match",
+        ) as executor:
+            futures = [
+                executor.submit(
+                    _best_match,
+                    template,
+                    distance,
+                    dark_likelihood,
+                    resolved,
+                )
+                for template in templates
+            ]
+            matches = []
+            for future in futures:
+                matches.append(future.result())
+                if progress_callback is not None:
+                    progress_callback(len(matches), len(templates))
     rejected = [
         match
         for match in matches

@@ -25,9 +25,18 @@ def test_chamfer_matcher_keeps_target_order() -> None:
         aspect_ratios=(1.0,),
         dark_threshold=100,
     )
-    matches = match_captcha_symbols(target, background, config)
+    progress: list[tuple[int, int]] = []
+    matches = match_captcha_symbols(
+        target,
+        background,
+        config,
+        progress_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
 
     assert [match.index for match in matches] == [1, 2, 3]
+    assert progress == [(1, 3), (2, 3), (3, 3)]
     expected = [(59, 55), (220, 160), (265, 65)]
     for match, center in zip(matches, expected, strict=True):
         assert abs(match.center[0] - center[0]) <= 4

@@ -110,23 +110,31 @@ class CaptchaSolver:
                 f"自动验证：验证码已加载，正在识别图形符号（第 {attempt}/"
                 f"{self.settings.max_attempts} 次）"
             )
+            recognition_started = time.monotonic()
             try:
                 matches = match_captcha_symbols(
-                    challenge.target_image, challenge.background_image
+                    challenge.target_image,
+                    challenge.background_image,
+                    progress_callback=lambda completed, total: self._progress(
+                        f"自动验证：图形符号识别进度 {completed}/{total}"
+                    ),
                 )
             except (ValueError, cv2.error) as exc:
                 raise CaptchaAutomationError(
                     f"验证码图片识别失败：{exc}"
                 ) from exc
+            recognition_seconds = time.monotonic() - recognition_started
             _LOGGER.info(
-                "验证码第 %d 次识别: %s",
+                "验证码第 %d 次识别耗时 %.3fs: %s",
                 attempt,
+                recognition_seconds,
                 ", ".join(
                     f"{match.index}={match.score:.4f}" for match in matches
                 ),
             )
             self._progress(
-                f"自动验证：识别完成，正在按顺序点击 {len(matches)} 个符号"
+                f"自动验证：识别完成（{recognition_seconds:.2f} 秒），"
+                f"正在按顺序点击 {len(matches)} 个符号"
             )
             self._click_matches(challenge, matches)
             self._progress("自动验证：符号点击完成，正在提交验证码")

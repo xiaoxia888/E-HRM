@@ -52,15 +52,14 @@ allowed_hosts = [
   "127.0.0.1",
   "localhost",
   "rs.jshrss.jiangsu.gov.cn",
-  "192.168.1.65",
   "turing.captcha.qcloud.com"
 ]
 verify_path = "/cap_union_new_verify"
 max_attempts = 3
 click_delay_min_ms = 1000
-click_delay_max_ms = 3000
+click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
-click_offset_max_px = 10
+click_offset_max_px = 3
 frame_timeout_ms = 10000
 verify_timeout_ms = 15000
 image_change_timeout_ms = 10000
