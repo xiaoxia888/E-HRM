@@ -162,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
                 runtime_settings.browser,
                 headless=False,
                 ignore_https_errors=args.ignore_https_errors,
+                stealth_allowed_hosts=(
+                    runtime_settings.captcha.allowed_hosts
+                    if runtime_settings.captcha.stealth_enabled
+                    else ()
+                ),
             ) as browser:
                 page = browser.page
                 service = LoginService(page, runtime_settings)

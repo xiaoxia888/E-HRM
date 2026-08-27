@@ -73,6 +73,7 @@ class LoginSelectors:
 @dataclass(frozen=True, slots=True)
 class CaptchaSettings:
     enabled: bool
+    stealth_enabled: bool
     allowed_hosts: tuple[str, ...]
     verify_path: str
     max_attempts: int
@@ -583,6 +584,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
 
     captcha = CaptchaSettings(
         enabled=_boolean(rights_captcha, "enabled", rights_captcha_name),
+        stealth_enabled=_boolean(
+            rights_captcha, "stealth_enabled", rights_captcha_name
+        ),
         allowed_hosts=_plain_string_list(
             rights_captcha, "allowed_hosts", rights_captcha_name
         ),

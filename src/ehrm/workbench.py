@@ -131,7 +131,16 @@ class DesktopWorkbench:
             self._progress_callback(message)
 
     def _start_browser(self) -> None:
-        browser = BrowserManager(self.settings.browser, headless=False)
+        stealth_hosts = (
+            self.settings.captcha.allowed_hosts
+            if self.settings.captcha.stealth_enabled
+            else ()
+        )
+        browser = BrowserManager(
+            self.settings.browser,
+            headless=False,
+            stealth_allowed_hosts=stealth_hosts,
+        )
         browser.__enter__()
         self._browser = browser
         self._page = browser.page

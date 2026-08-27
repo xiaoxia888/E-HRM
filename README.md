@@ -147,6 +147,7 @@ ehrm download \
 
 ```toml
 [rights_statement.captcha]
+stealth_enabled = true
 allowed_hosts = [
   "127.0.0.1",
   "192.168.1.65",
@@ -156,6 +157,8 @@ allowed_hosts = [
 verify_path = "/cap_union_new_verify"
 click_offset_max_px = 3
 ```
+
+`stealth_enabled` 仅用于自有测试环境的浏览器特征对照实验。启用后仍会对每个页面的 hostname 执行 `allowed_hosts` 精确匹配；未列入白名单的页面保留原始 Playwright 特征。设置为 `false` 可完全关闭注入。`playwright-stealth` 本身只是实验性特征修正，不保证改变任何验证服务的判定。
 
 `click_offset_max_px` 控制识别点在网页 CSS 像素中的最大随机偏移，实际偏移会被限制在匹配框内部；设置为 `0` 可关闭偏移。
 

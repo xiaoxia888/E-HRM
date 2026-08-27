@@ -14,7 +14,10 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Frame, Locator, Page, Response
 
 from ehrm.browser.captcha_matcher import CaptchaMatch, match_captcha_symbols
-from ehrm.browser.captcha_policy import is_allowed_host_url
+from ehrm.browser.captcha_policy import (
+    is_allowed_host_url,
+    url_without_sensitive_query,
+)
 from ehrm.core.settings import CaptchaSettings
 
 
@@ -169,11 +172,34 @@ class CaptchaSolver:
                 try:
                     root = frame.locator("#tcWrap").first
                     if root.count() > 0 and root.is_visible():
+                        self._report_frame_features(frame)
                         return frame
                 except PlaywrightError:
                     continue
             self.page.wait_for_timeout(100)
         raise CaptchaAutomationError("等待验证码 iframe 超时")
+
+    def _report_frame_features(self, frame: Frame) -> None:
+        try:
+            webdriver = frame.evaluate("navigator.webdriver")
+        except PlaywrightError:
+            _LOGGER.debug("读取验证码 iframe 浏览器特征失败", exc_info=True)
+            return
+        frame_allowed = is_allowed_host_url(
+            frame.url, self.settings.allowed_hosts
+        )
+        top_allowed = is_allowed_host_url(
+            self.page.url, self.settings.allowed_hosts
+        )
+        scope = frame_allowed or top_allowed
+        message = (
+            "浏览器特征：验证码 iframe URL="
+            f"{url_without_sensitive_query(frame.url)}，"
+            f"stealth注入范围={'命中' if scope else '未命中'}，"
+            f"navigator.webdriver={str(webdriver).lower()}"
+        )
+        _LOGGER.info(message)
+        self._progress(message)
 
     def _load_challenge(self, frame: Frame) -> _Challenge:
         target = frame.locator(".tc-instruction-icon img").first
@@ -183,11 +209,20 @@ class CaptchaSolver:
 
         target_url = target.get_attribute("src") or ""
         background_url = self._background_url(background)
-        if not is_allowed_host_url(
+        resources_allowed = is_allowed_host_url(
             target_url, self.settings.allowed_hosts
-        ) or not is_allowed_host_url(
+        ) and is_allowed_host_url(
             background_url, self.settings.allowed_hosts
-        ):
+        )
+        resource_message = (
+            "验证码资源：目标图="
+            f"{url_without_sensitive_query(target_url)}，背景图="
+            f"{url_without_sensitive_query(background_url)}，"
+            f"allowed_hosts={'命中' if resources_allowed else '未命中'}"
+        )
+        _LOGGER.info(resource_message)
+        self._progress(resource_message)
+        if not resources_allowed:
             raise CaptchaAutomationError(
                 "验证码图片主机不在 allowed_hosts 中，已拒绝自动点击"
             )

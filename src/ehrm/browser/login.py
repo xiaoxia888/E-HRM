@@ -8,7 +8,10 @@ from collections.abc import Callable
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from ehrm.browser.captcha_policy import is_allowed_host_url
+from ehrm.browser.captcha_policy import (
+    is_allowed_host_url,
+    url_without_sensitive_query,
+)
 from ehrm.core.exceptions import AuthenticationFailedError, TaskCancelledError
 from ehrm.core.settings import AppSettings
 
@@ -296,25 +299,85 @@ class LoginService:
                 raise
         else:
             self._active_page(prefer_latest=True)
+        self._report_browser_features(self._active_page())
         if self.is_authenticated():
             return
-        tab = self.settings.login.unit_login_tab
-        if tab:
-            try:
-                locator = self._active_page().locator(tab).first
-                if locator.count() > 0 and locator.is_visible():
-                    locator.click()
-                    self._wait_for_timeout(500)
-            except Exception:
-                # The login page may already be on the unit-login tab.
-                pass
-        account_tab = self.settings.login.account_password_tab
-        if account_tab:
-            try:
-                locator = self._active_page().locator(account_tab).last
-                if locator.count() > 0 and locator.is_visible():
-                    locator.click()
-                    self._wait_for_timeout(500)
-            except Exception:
-                # Some page versions select account/password login by default.
-                pass
+        self._ensure_login_tab_active(
+            self.settings.login.unit_login_tab,
+            "单位登录",
+        )
+        self._ensure_login_tab_active(
+            self.settings.login.account_password_tab,
+            "账号密码",
+        )
+
+    def _ensure_login_tab_active(self, selector: str, label: str) -> None:
+        if not selector:
+            raise AuthenticationFailedError(f"未配置“{label}”登录方式定位器")
+
+        page = self._active_page()
+        candidates = page.locator(selector)
+        timeout = self.settings.browser.action_timeout_ms
+        try:
+            count = candidates.count()
+            if count != 1:
+                raise AuthenticationFailedError(
+                    f"无法唯一定位“{label}”登录方式",
+                    details=f"当前可见匹配数量：{count}；定位器：{selector}",
+                )
+            tab = candidates.first
+            tab.wait_for(state="visible", timeout=timeout)
+            if not self._tab_is_active(tab):
+                tab.click()
+
+            deadline = time.monotonic() + timeout / 1000.0
+            while time.monotonic() < deadline:
+                if self._tab_is_active(tab):
+                    message = f"登录方式：已确认“{label}”处于激活状态"
+                    _LOGGER.info(message)
+                    self._progress(message)
+                    return
+                self._wait_for_timeout(100)
+        except AuthenticationFailedError:
+            raise
+        except PlaywrightError as exc:
+            raise AuthenticationFailedError(
+                f"选择“{label}”登录方式失败",
+                details=str(exc),
+            ) from exc
+
+        raise AuthenticationFailedError(
+            f"选择“{label}”登录方式后未进入激活状态",
+            details=f"未检测到 CSS 类 tab-active；定位器：{selector}",
+        )
+
+    @staticmethod
+    def _tab_is_active(tab: object) -> bool:
+        return bool(
+            tab.evaluate(  # type: ignore[attr-defined]
+                "element => element.classList.contains('tab-active')"
+            )
+        )
+
+    def _report_browser_features(self, page: Page) -> None:
+        evaluate = getattr(page, "evaluate", None)
+        if not callable(evaluate):
+            return
+        try:
+            webdriver = evaluate("navigator.webdriver")
+        except PlaywrightError:
+            _LOGGER.debug("读取登录页浏览器特征失败", exc_info=True)
+            return
+        webdriver_value = str(webdriver).lower()
+        allowed = is_allowed_host_url(
+            page.url, self.settings.captcha.allowed_hosts
+        )
+        message = (
+            "浏览器特征：登录页 URL="
+            f"{url_without_sensitive_query(page.url)}，"
+            f"allowed_hosts={'命中' if allowed else '未命中'}，"
+            f"stealth_enabled={str(self.settings.captcha.stealth_enabled).lower()}，"
+            f"navigator.webdriver={webdriver_value}"
+        )
+        _LOGGER.info(message)
+        self._progress(message)

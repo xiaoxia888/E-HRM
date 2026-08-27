@@ -1,5 +1,6 @@
 from pathlib import Path
 from shutil import copyfile, copytree
+import tomllib
 from uuid import uuid4
 
 import pytest
@@ -10,7 +11,10 @@ from ehrm.modules.ai.models import AiModelProfile
 
 
 def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> None:
-    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    config_path = Path("config/settings.toml")
+    settings = load_settings(config_path, data_root=tmp_path)
+    with config_path.open("rb") as stream:
+        configured = tomllib.load(stream)
 
     assert settings.browser.engine in {"chromium", "firefox", "webkit"}
     if settings.browser.engine != "chromium":
@@ -19,13 +23,15 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
-    assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
+    assert settings.login.unit_login_tab.startswith("li.tab:visible")
+    assert settings.login.account_password_tab.startswith("li.tab:visible")
     assert settings.captcha.enabled is True
+    assert settings.captcha.stealth_enabled is True
     assert settings.captcha.allowed_hosts
     assert settings.captcha.verify_path.startswith("/")
     assert settings.captcha.max_attempts == 3
     assert settings.captcha.click_delay_min_ms == 1000
-    assert settings.captcha.click_delay_max_ms == 3000
+    assert settings.captcha.click_delay_max_ms == 2000
     assert settings.captcha.click_offset_max_px >= 0
     assert settings.erp.base_url
     assert settings.erp.headless is True
@@ -40,8 +46,13 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.ai.prompt_path == (
         Path("config/prompts/erp_task_extraction_v2_system.txt").resolve()
     )
-    assert settings.browser.user_data_dir == tmp_path / "data/browser-profile"
-    assert settings.erp.user_data_dir == tmp_path / "data/erp-browser-profile"
+    assert settings.browser.user_data_dir == tmp_path / configured[
+        "rights_statement"
+    ]["browser"]["user_data_dir"]
+    assert settings.erp.user_data_dir == tmp_path / configured["erp"]["browser"][
+        "user_data_dir"
+    ]
+    assert settings.browser.user_data_dir != settings.erp.user_data_dir
 
 
 def test_qwen_3_5_profile_has_independent_runtime_and_sampling() -> None:

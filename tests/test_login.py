@@ -1,3 +1,4 @@
+from dataclasses import replace
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,17 +6,24 @@ from unittest.mock import patch
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.browser.login import LoginService
+from ehrm.core.exceptions import AuthenticationFailedError
 from ehrm.core.settings import load_settings
 
 
 class FakeLocator:
-    def __init__(self) -> None:
+    def __init__(self, *, active: bool = False, activate_on_click: bool = True) -> None:
         self.first = self
         self.value = ""
         self.clicked = False
+        self.active = active
+        self.activate_on_click = activate_on_click
+
+    def count(self) -> int:
+        return 1
 
     def wait_for(self, **_: object) -> None:
         return None
@@ -25,11 +33,18 @@ class FakeLocator:
 
     def click(self) -> None:
         self.clicked = True
+        if self.activate_on_click:
+            self.active = True
+
+    def evaluate(self, _expression: str) -> bool:
+        return self.active
 
 
 class FakePage:
     def __init__(self, settings) -> None:
         self.fields = {
+            settings.login.unit_login_tab: FakeLocator(),
+            settings.login.account_password_tab: FakeLocator(),
             settings.login.credit_code: FakeLocator(),
             settings.login.mobile: FakeLocator(),
             settings.login.password: FakeLocator(),
@@ -38,6 +53,45 @@ class FakePage:
 
     def locator(self, selector: str) -> FakeLocator:
         return self.fields[selector]
+
+    def wait_for_timeout(self, _timeout_ms: int) -> None:
+        return None
+
+
+def test_login_method_tabs_are_clicked_and_verified_active(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakePage(settings)
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    service._ensure_login_tab_active(settings.login.unit_login_tab, "单位登录")
+    service._ensure_login_tab_active(
+        settings.login.account_password_tab,
+        "账号密码",
+    )
+
+    assert page.fields[settings.login.unit_login_tab].clicked is True
+    assert page.fields[settings.login.unit_login_tab].active is True
+    assert page.fields[settings.login.account_password_tab].clicked is True
+    assert page.fields[settings.login.account_password_tab].active is True
+
+
+def test_login_method_tab_must_reach_active_state(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    settings = replace(
+        settings,
+        browser=replace(settings.browser, action_timeout_ms=1),
+    )
+    page = FakePage(settings)
+    page.fields[settings.login.unit_login_tab] = FakeLocator(
+        activate_on_click=False
+    )
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    with pytest.raises(AuthenticationFailedError, match="未进入激活状态"):
+        service._ensure_login_tab_active(
+            settings.login.unit_login_tab,
+            "单位登录",
+        )
 
 
 def test_unit_login_autofills_three_fields_and_submits(tmp_path: Path) -> None:

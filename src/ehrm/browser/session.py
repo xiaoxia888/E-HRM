@@ -22,9 +22,19 @@ def authenticated_browser(
 ) -> Iterator[BrowserManager]:
     """Uses headless mode when a saved session is valid, otherwise hands off to a human."""
 
+    stealth_hosts = (
+        settings.captcha.allowed_hosts
+        if settings.captcha.stealth_enabled
+        else ()
+    )
+
     if settings.browser.silent_session_check:
         try:
-            with BrowserManager(settings.browser, headless=True) as checker:
+            with BrowserManager(
+                settings.browser,
+                headless=True,
+                stealth_allowed_hosts=stealth_hosts,
+            ) as checker:
                 _restore_storage_state(checker, settings)
                 if LoginService(checker.page, settings).check_authenticated():
                     try:
@@ -37,7 +47,11 @@ def authenticated_browser(
             pass
 
     print("登录状态已失效，即将打开可见浏览器供人工登录。")
-    with BrowserManager(settings.browser, headless=False) as browser:
+    with BrowserManager(
+        settings.browser,
+        headless=False,
+        stealth_allowed_hosts=stealth_hosts,
+    ) as browser:
         _restore_storage_state(browser, settings)
         LoginService(browser.page, settings).ensure_authenticated(
             username,

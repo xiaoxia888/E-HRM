@@ -14,6 +14,7 @@ from ehrm.browser.captcha import (
     image_point_to_page,
     is_allowed_host_url,
 )
+from ehrm.browser.captcha_policy import url_without_sensitive_query
 from ehrm.browser.captcha_matcher import CaptchaMatch
 from ehrm.browser.login import LoginService
 from ehrm.core.exceptions import AuthenticationFailedError
@@ -56,6 +57,12 @@ def test_allowed_hosts_ignore_protocol_and_port_but_match_host_exactly() -> None
     assert not is_allowed_host_url(
         _url_for_host(settings, unlisted_host), settings.captcha.allowed_hosts
     )
+
+
+def test_log_safe_captcha_url_removes_query_and_fragment() -> None:
+    assert url_without_sensitive_query(
+        "https://127.0.0.1:8000/captcha/image?sess=sensitive#fragment"
+    ) == "https://127.0.0.1:8000/captcha/image"
 
 
 def test_image_point_is_scaled_to_page_coordinates() -> None:

@@ -31,12 +31,12 @@ navigation_timeout_ms = 60000
 manual_login_timeout_seconds = 300
 
 # 相对于操作系统应用数据目录解析，不会写入程序安装目录。
-user_data_dir = "data/browser-profile"
-storage_state_path = "data/session-state.json"
+user_data_dir = "data/browser-profile-diagnostic-20260827"
+storage_state_path = "data/session-state-diagnostic-20260827.json"
 
 [rights_statement.site]
-login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
-page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
+login_url = "https://127.0.0.1:8000/web/login"
+page_url = "https://127.0.0.1:8000/web/center/unit/rightsBill"
 
 [rights_statement.credentials]
 # 这里只保存环境变量名称，不保存真实账号密码。
@@ -48,11 +48,11 @@ password_env = "EHRM_RIGHTS_PASSWORD"
 # 仅在白名单主机上启用自动验证。这里只填写主机/IP，不填写端口；
 # 因此 127.0.0.1:6066 和 127.0.0.1:8000 都匹配 127.0.0.1。
 enabled = true
+# 仅用于自有测试环境的浏览器特征对照实验。注入仍受 allowed_hosts 严格限制。
+stealth_enabled = true
 allowed_hosts = [
   "127.0.0.1",
-  "localhost",
-  "rs.jshrss.jiangsu.gov.cn",
-  "turing.captcha.qcloud.com"
+  "localhost"
 ]
 verify_path = "/cap_union_new_verify"
 max_attempts = 3
@@ -62,11 +62,13 @@ click_delay_max_ms = 2000
 click_offset_max_px = 3
 frame_timeout_ms = 10000
 verify_timeout_ms = 15000
+# 验证码识别等待时间
 image_change_timeout_ms = 10000
 
 [rights_statement.selectors.login]
-unit_login_tab = 'text="单位登录"'
-account_password_tab = 'text="账号密码" >> nth=1'
+# 定位到 li.tab 本身，便于点击后校验 tab-active；:visible 避免命中隐藏面板。
+unit_login_tab = 'li.tab:visible:has-text("单位登录")'
+account_password_tab = 'li.tab:visible:has-text("账号密码")'
 # 以下定位器来自 Playwright 对智慧人社真实登录页的录制结果。
 # 图形安全验证仍由用户手动完成。
 credit_code = 'role=textbox[name="统一社会信用代码/单位编号/机构编号"]'
