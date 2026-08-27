@@ -338,26 +338,33 @@ Item {
         }
     }
 
-    component SettingsPane: ScrollView {
+    component SettingsPane: Flickable {
         id: pane
         default property alias paneContent: contentColumn.data
         property int contentSpacing: 16
         property int contentMargin: page.height < 700 ? 18 : 30
 
         clip: true
-        contentWidth: availableWidth
-        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight + contentMargin * 2
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        pixelAligned: true
+        interactive: contentHeight > height
+
+        ScrollBar.vertical: ScrollBar {
+            policy: ScrollBar.AsNeeded
+            interactive: true
+        }
 
         Item {
-            width: pane.availableWidth
-            height: contentColumn.implicitHeight + pane.contentMargin * 2
+            width: pane.width
+            height: pane.contentHeight
 
-            // ScrollView consumes pointer events inside its viewport, so it
-            // needs its own background target for clearing input focus.
-            MouseArea {
-                anchors.fill: parent
-                onClicked: page.forceActiveFocus()
+            // TapHandler clears input focus without consuming wheel events
+            // needed by the surrounding Flickable.
+            TapHandler {
+                onTapped: page.forceActiveFocus()
             }
 
             ColumnLayout {
@@ -495,6 +502,7 @@ Item {
 
                     // 江苏智慧人社
                     SettingsPane {
+                        objectName: "rightsSettingsPane"
                         contentSpacing: 18
 
                             SectionTitle {
@@ -520,7 +528,7 @@ Item {
 
                             SectionTitle {
                                 title: "江苏智慧人社"
-                                description: "用于自动填写单位登录信息；图形安全验证仍需人工完成"
+                                description: "用于自动登录并获取权益单接口 Access-Token"
                             }
 
                             Rectangle {
@@ -600,21 +608,46 @@ Item {
                                             width: 9
                                             height: 9
                                             radius: 5
-                                            color: appBackend.rightsPasswordStored
-                                                ? "#12a150" : "#98a2b3"
+                                            color: appBackend.rightsConnectionBusy
+                                                ? "#f5a623"
+                                                : appBackend.rightsConnectionSuccess
+                                                    ? "#12a150" : "#98a2b3"
                                         }
                                         Text {
+                                            objectName: "rightsConnectionStatusText"
                                             Layout.fillWidth: true
-                                            text: appBackend.rightsPasswordStored
-                                                ? "账号已保存，登录时将自动填写"
-                                                : "尚未保存账号"
-                                            color: appBackend.rightsPasswordStored
+                                            Layout.minimumWidth: 0
+                                            text: appBackend.rightsConnectionStatus
+                                            color: appBackend.rightsConnectionSuccess
                                                 ? "#12834a" : page.bodyColor
                                             font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                            maximumLineCount: 2
+                                            elide: Text.ElideRight
+                                            ToolTip.visible: statusHover.containsMouse
+                                            ToolTip.text: text
+                                            MouseArea {
+                                                id: statusHover
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                acceptedButtons: Qt.NoButton
+                                            }
+                                        }
+                                        AppButton {
+                                            objectName: "rightsTestConnectionButton"
+                                            text: "测试连接"
+                                            enabled: !appBackend.rightsConnectionBusy
+                                                && !appBackend.running
+                                            onClicked: appBackend.testRightsConnection(
+                                                rightsCreditCodeField.text,
+                                                rightsMobileField.text,
+                                                rightsPasswordField.text
+                                            )
                                         }
                                         AppButton {
                                             text: "保存账号"
                                             primary: true
+                                            enabled: !appBackend.rightsConnectionBusy
                                             onClicked: appBackend.saveRightsAccount(
                                                 rightsCreditCodeField.text,
                                                 rightsMobileField.text,
@@ -622,6 +655,24 @@ Item {
                                             )
                                         }
                                     }
+                                }
+                            }
+
+                            Text {
+                                text: "登录状态"
+                                color: page.titleColor
+                                font.pixelSize: 17
+                                font.weight: Font.DemiBold
+                            }
+                            SettingRow {
+                                Layout.fillWidth: true
+                                title: "清除智慧人社登录状态"
+                                description: "账号密码不会被删除；将清除 Access-Token、Cookie 和浏览器会话"
+                                AppButton {
+                                    text: "清除"
+                                    enabled: !appBackend.rightsConnectionBusy
+                                        && !appBackend.running
+                                    onClicked: appBackend.clearRightsLoginState()
                                 }
                             }
 
@@ -644,7 +695,7 @@ Item {
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: "自动点击登录后，程序会停留在安全验证窗口，完成图形验证后自动继续。"
+                                        text: "测试连接会在隔离环境中重新登录，不会用旧 Cookie 冒充成功；必要时会执行图形安全验证。"
                                         color: "#8a5700"
                                         font.pixelSize: 13
                                         wrapMode: Text.WordWrap
@@ -825,7 +876,7 @@ Item {
                             SettingRow {
                                 Layout.fillWidth: true
                                 title: "单批最多人数"
-                                description: "相同条件合并时，每份 PDF 最多包含 1–100 人"
+                                description: "相同条件合并时，人数可自由设置，不限制最大值"
                                 BatchSizeControl {
                                     value: appBackend.batchSize
                                     onValueEdited: function(newValue) {

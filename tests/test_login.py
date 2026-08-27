@@ -362,7 +362,10 @@ def test_unlisted_host_skips_captcha_without_importing_opencv(
     page = SimpleNamespace(url=unlisted_url)
     service = LoginService(page, settings)  # type: ignore[arg-type]
 
-    with patch.dict(sys.modules, {"ehrm.browser.captcha": None}):
-        solved = service._try_automated_captcha()
+    with (
+        patch.dict(sys.modules, {"ehrm.browser.captcha": None}),
+        pytest.raises(AuthenticationFailedError, match="自动验证未执行"),
+    ):
+        service._try_automated_captcha()
 
-    assert solved is False
+    assert service._manual_login_status is None

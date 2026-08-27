@@ -11,7 +11,11 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from ehrm.core.logging import configure_logging
-from ehrm.core.runtime import application_data_root, configure_application_identity
+from ehrm.core.runtime import (
+    application_runtime_root,
+    configure_application_identity,
+    migrate_legacy_preferences,
+)
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.gui.view_model import DesktopViewModel
 
@@ -52,10 +56,15 @@ def main(argv: list[str] | None = None) -> int:
     application = QGuiApplication(sys.argv[:1])
     configure_application_identity(application)
     try:
-        runtime_root = application_data_root()
+        runtime_root = application_runtime_root(args.config)
         logger = configure_logging(runtime_root / "logs")
+        if migrate_legacy_preferences(runtime_root):
+            logger.info(
+                "旧版非敏感用户偏好已迁移到 runtime/data/preferences.json"
+            )
         settings = load_settings(args.config, data_root=runtime_root)
         logger.info("系统配置已加载 path=%s", args.config.expanduser().resolve())
+        logger.info("程序运行数据根目录 root=%s", runtime_root)
         backend = DesktopViewModel(
             settings,
             logger,

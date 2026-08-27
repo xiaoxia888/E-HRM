@@ -712,7 +712,6 @@ ApplicationWindow {
                                                     }
                                                     BatchSizeControl {
                                                         from: 1
-                                                        to: 100
                                                         value: window.backend.batchSize
                                                         enabled: window.backend.erpRecordSource
                                                             || window.backend.exportMode === "batch"
@@ -722,7 +721,7 @@ ApplicationWindow {
                                                     }
                                                 }
                                                 Text {
-                                                    text: "每份合并 PDF 最多包含 1–100 人"
+                                                    text: "每份合并 PDF 的人数可自由设置，不限制最大值"
                                                     color: "#8a93a2"
                                                     font.pixelSize: 12
                                                 }

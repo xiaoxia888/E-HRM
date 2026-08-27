@@ -68,6 +68,18 @@ channel = "msedge"
 
 `engine` 选择 Playwright 内核（`chromium`、`firefox`、`webkit`）；`channel` 选择 Chromium 发行版。空字符串使用 Playwright 自带 Chromium，`chrome` 使用本机 Chrome，`msedge` 使用本机 Edge。Chrome 和 Edge 的 `engine` 都必须是 `chromium`；Firefox/WebKit 的 `channel` 必须为空。本机浏览器通道要求对应浏览器已经安装。
 
+权益单支持两种实际执行后端：
+
+```toml
+[rights_statement.execution]
+backend = "api"
+```
+
+`api` 通过业务接口查询人员、领取打印流水号并生成 PDF；`browser` 保留原来的
+页面查询、选择、预览和下载流程。桌面工作台会在运行期间复用同一个 Playwright
+上下文。`headless = true` 仅表示不显示窗口，并不表示浏览器没有常驻；纯浏览器
+后端需要人工验证、观察或接管时，应设置为 `headless = false`。
+
 每个模型的 Ollama 名称、上下文、输出长度、采样参数和可用推理模式单独
 保存在 `config/models/*.toml`。桌面端“系统设置 → 自动化设置”可切换模型，
 选择会写入当前用户的 `preferences.json`，重启后继续生效。
@@ -156,7 +168,7 @@ for person in result.records:
     print(person.person_id, person.identity_number, person.name)
 ```
 
-`person.person_id` 对应接口字段 `bac001`，供后续权益单生成和 PDF 下载接口使用。请求使用浏览器关联的 `APIRequestContext`，因此会复用当前登录 Cookie，同时从 `AccessTokenManager` 获取内存中的 Token；Token 不进入日志或普通配置文件。接口路径、请求头名称、`apiCode`、分页大小和超时统一维护在 `[rights_statement.api]`。
+`person.person_id` 对应接口字段 `bac001`，供后续权益单生成和 PDF 下载接口使用。请求使用浏览器关联的 `APIRequestContext`，因此会复用当前登录 Cookie，同时从 `AccessTokenManager` 获取内存中的 Token；Token 不进入日志或普通配置文件。部署相关的接口路径、分页大小和超时维护在 `[rights_statement.api]`；请求头名称和业务代码属于稳定的上游协议，集中维护在 `RightsApiContract` 中。
 
 也可以通过 `EHRM_USERNAME`、`EHRM_PASSWORD` 环境变量提供登录信息。不要把密码写入 TOML、命令参数或源码。
 
@@ -231,7 +243,7 @@ ehrm-gui
 - 导入后校验必要字段、身份证、险种、日期和重复数据；
 - 脱敏预览人员信息，显示查询条件组数和预计 PDF 数；
 - “每人单独一份”和“相同查询条件合并”两种模式；
-- 高级设置中的单批最多人数，默认 50；
+- 高级设置中的单批人数默认 50，可自由设置且没有固定最大值；
 - 执行前确认页，明确展示拆分条件、人数和文件数；
 - 执行中可安全停止，保留已下载 PDF，并在结果 Excel 标记未处理人员；
 - Playwright 在单一常驻线程的任务队列中运行，浏览器创建、连续任务和关闭始终位于同一 Python 执行上下文；
@@ -239,8 +251,8 @@ ehrm-gui
 - 独立“上传至 ERP”页面支持选择 PDF、Word、Excel 文件，填写任务编号后确认上传；
 - 系统设置页可维护 ERP 账号、默认下载规则、自动化节奏及运行数据。
 
-ERP 用户名保存在当前用户的应用数据目录，密码由 macOS 钥匙串或 Windows
-凭据管理器保存，不会写入 `config/settings.toml` 或用户偏好文件。
+ERP 用户名保存在程序目录下的 `runtime/data/preferences.json`，密码由 macOS
+钥匙串或 Windows 凭据管理器保存，不会写入 `config/settings.toml` 或偏好文件。
 
 界面层使用 Qt Quick/QML 组件化实现，Python 仅通过
 `DesktopViewModel` 暴露状态和命令。自动化、Excel 校验和业务规则仍保持在
@@ -256,7 +268,9 @@ Python 服务层，便于后续扩展 ERP 页面或调整视觉样式。
 └── _runs/result_YYYYMMDD_HHMMSS.json
 ```
 
-浏览器资料、日志和失败截图保存在操作系统为本应用分配的用户数据目录，不写入程序安装目录。
+运行数据统一保存在程序目录下的 `runtime/`：源码运行时位于项目根目录，
+Windows 安装后位于 `E-HRM.exe` 同级目录。日志、浏览器资料、失败截图和验证码
+诊断图片按用途存入其子目录，不再使用操作系统的用户应用数据目录。
 
 ## 5. Excel 命令行测试入口
 
@@ -322,7 +336,7 @@ python scripts/run_workbench.py \
   --batch-size 50
 ```
 
-启动后按提示依次输入 Excel 路径和模式。任务完成后浏览器不会关闭，可继续输入下一个 Excel；输入 `q` 后才彻底退出。若用户只是切换标签页或在自动化标签页进入其他页面，下个任务会在原标签页重新进入单位权益单。用户关闭原标签页、退出账号或官网会话过期时，程序会重新提示登录。
+启动后按提示依次输入 Excel 路径和模式。`browser` 后端下，任务完成后浏览器不会关闭，可继续输入下一个 Excel；输入 `q` 后才彻底退出。若用户只是切换标签页或在自动化标签页进入其他页面，下个任务会在原标签页重新进入单位权益单。用户关闭原标签页、退出账号或官网会话过期时，程序会重新提示登录。`api` 后端则优先校验本地 Access-Token，认证失败时只重新登录一次并重试原请求。
 
 Excel 的身份证列保持必填。页面查询会将其填入“社会保障号码”输入框并清空姓名框，因此不会因为同名人员选择错误；代码层仍保留姓名查询兜底，但 Excel 导入不会产生身份证为空的任务。
 

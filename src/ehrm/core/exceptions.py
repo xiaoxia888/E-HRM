@@ -35,6 +35,11 @@ class AuthenticationFailedError(EhrmError):
     code = ErrorCode.AUTHENTICATION_FAILED
 
 
+class CaptchaRateLimitedAuthenticationError(AuthenticationFailedError):
+    code = ErrorCode.CAPTCHA_RATE_LIMITED
+    retryable = True
+
+
 class RightsApiRequestError(EhrmError):
     code = ErrorCode.RIGHTS_API_REQUEST_FAILED
 

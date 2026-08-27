@@ -50,7 +50,7 @@ def test_invalid_preferences_fall_back_to_safe_values(tmp_path: Path) -> None:
     preferences = UserPreferencesStore(path).load()
 
     assert preferences.export_mode == "individual"
-    assert preferences.batch_size == 100
+    assert preferences.batch_size == 999
     assert preferences.upload_to_erp is False
     assert preferences.execution_speed == "standard"
     assert preferences.ai_model_profile == ""

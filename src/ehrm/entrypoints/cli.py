@@ -10,6 +10,7 @@ from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_DOWNLOAD
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
+from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.models import RightsStatementQuery
 
@@ -58,11 +59,15 @@ def _record(url: str, profile: Path, output: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    config_path = getattr(args, "config", DEFAULT_SETTINGS_PATH)
+    runtime_root = application_runtime_root(config_path)
     if args.command == "record":
-        return _record(args.url, args.profile, args.output)
+        profile = resolve_runtime_path(args.profile, runtime_root)
+        output = resolve_runtime_path(args.output, runtime_root)
+        return _record(args.url, profile, output)
 
     try:
-        settings = load_settings(args.config)
+        settings = load_settings(args.config, data_root=runtime_root)
         username = os.getenv(settings.rights_credentials.credit_code_env)
         mobile = os.getenv(settings.rights_credentials.mobile_env)
         password = os.getenv(settings.rights_credentials.password_env)
@@ -76,9 +81,12 @@ def main(argv: list[str] | None = None) -> int:
             end_month=args.end_month,
             insurance_type=args.insurance,
             employee_name=args.name,
-            output_dir=args.output_dir.expanduser().resolve(),
+            output_dir=resolve_runtime_path(args.output_dir, runtime_root),
         )
-        result = EhrmApplication(settings, configure_logging()).run(
+        result = EhrmApplication(
+            settings,
+            configure_logging(runtime_root / "logs"),
+        ).run(
             RIGHTS_STATEMENT_DOWNLOAD,
             request,
             username=username,

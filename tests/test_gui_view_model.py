@@ -17,6 +17,7 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
 from ehrm.core.settings import load_settings
+from ehrm.gui import view_model as view_model_module
 from ehrm.gui.view_model import DesktopViewModel
 from ehrm.modules.rights_statement.excel_models import (
     ExcelRunResult,
@@ -614,6 +615,10 @@ def test_manual_erp_file_selection_validates_before_opening_confirmation(
 def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     view_model = _view_model(tmp_path)
+    view_model._rights_connection_status = (
+        "人工验证：验证码操作过于频繁（errorCode=12），已停止自动重试；"
+        "请等待页面允许后再手动验证，这是一段用于检查布局的长状态信息"
+    )
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appBackend", view_model)
     engine.setInitialProperties({"backend": view_model})
@@ -634,6 +639,22 @@ def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
     query_dialog.close()
     record_edit_dialog = window.findChild(QObject, "recordEditDialog")
     assert record_edit_dialog is not None
+    rights_settings_pane = window.findChild(QObject, "rightsSettingsPane")
+    assert rights_settings_pane is not None
+    assert (
+        rights_settings_pane.property("contentHeight")
+        > rights_settings_pane.property("height")
+    )
+    status_text = window.findChild(QQuickItem, "rightsConnectionStatusText")
+    test_button = window.findChild(QQuickItem, "rightsTestConnectionButton")
+    assert status_text is not None
+    assert test_button is not None
+    status_right = status_text.mapToScene(
+        QPointF(status_text.width(), 0)
+    ).x()
+    button_left = test_button.mapToScene(QPointF(0, 0)).x()
+    assert status_right <= button_left
+    assert status_text.property("lineCount") <= 2
     assert not window.property("navigationCollapsed")
     window.setProperty("navigationCollapsed", True)
     assert window.property("navigationCollapsed")
@@ -874,7 +895,7 @@ def test_settings_are_persisted_and_applied_to_automation(
 
     view_model.setOutputFolder(QUrl.fromLocalFile(str(output)))
     view_model.setExportMode("batch")
-    view_model.setBatchSize(30)
+    view_model.setBatchSize(300)
     view_model.setUploadToErp(True)
     view_model.setOpenOutputFolderAfterRun(True)
     view_model.setExecutionSpeed("stable")
@@ -885,7 +906,7 @@ def test_settings_are_persisted_and_applied_to_automation(
     assert application is not None
     assert view_model.outputPath == str(output)
     assert view_model.exportMode == "batch"
-    assert view_model.batchSize == 30
+    assert view_model.batchSize == 300
     assert view_model.uploadToErp
     assert view_model.openOutputFolderAfterRun
     assert view_model.executionSpeed == "stable"
@@ -897,7 +918,7 @@ def test_settings_are_persisted_and_applied_to_automation(
     restored = _view_model(tmp_path)
     assert restored.outputPath == str(output)
     assert restored.exportMode == "batch"
-    assert restored.batchSize == 30
+    assert restored.batchSize == 300
     assert restored.uploadToErp
 
 
@@ -1020,6 +1041,68 @@ def test_rights_password_is_delegated_to_system_credential_store(
     assert view_model.rightsCreditCode == "91320000TEST000001"
     assert view_model.rightsMobile == "13800000000"
     assert view_model.rightsPasswordStored
+    assert view_model.rightsConnectionStatus == "账号已保存，尚未测试连接"
+    assert not view_model.rightsConnectionSuccess
     assert view_model.loadSavedRightsPassword(
         "91320000TEST000001", "13800000000"
     ) == "rights-secret"
+
+
+def test_clear_rights_login_state_keeps_credentials_and_removes_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    assert view_model._save_preferences(
+        rights_credit_code="91320000TEST000001",
+        rights_mobile="13800000000",
+    )
+
+    class FakeCredentialStore:
+        deleted = False
+
+        def load_password(self, _username: str) -> str | None:
+            return "rights-secret"
+
+        def delete_password(self, _username: str) -> None:
+            self.deleted = True
+
+    credential_store = FakeCredentialStore()
+    view_model._rights_credential_store = credential_store
+    profile = view_model._settings.browser.user_data_dir
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / "cookie-state").write_text("old", encoding="utf-8")
+    storage_state = view_model._settings.browser.storage_state_path
+    storage_state.parent.mkdir(parents=True, exist_ok=True)
+    storage_state.write_text("{}", encoding="utf-8")
+
+    invalidated: list[str] = []
+
+    class FakeAccessTokenManager:
+        def __init__(self, account_key: str) -> None:
+            self.account_key = account_key
+
+        def invalidate(self) -> None:
+            invalidated.append(self.account_key)
+
+    monkeypatch.setattr(
+        view_model_module,
+        "AccessTokenManager",
+        FakeAccessTokenManager,
+    )
+    notifications: list[tuple[str, str]] = []
+    view_model.notification.connect(
+        lambda title, details: notifications.append((title, details))
+    )
+
+    view_model.clearRightsLoginState()
+
+    assert application is not None
+    assert len(invalidated) == 1
+    assert not storage_state.exists()
+    assert profile.is_dir()
+    assert list(profile.iterdir()) == []
+    assert not credential_store.deleted
+    assert view_model.rightsConnectionStatus == "智慧人社登录状态已清除"
+    assert notifications[-1][0] == "清除成功"

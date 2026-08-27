@@ -12,12 +12,17 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from ehrm import __version__
+from ehrm.browser.access_token import (
+    AccessTokenManager,
+    build_access_token_account_key,
+)
 from ehrm.core.error_catalog import ErrorCode, display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.preferences import UserPreferences, UserPreferencesStore
 from ehrm.core.settings import AppSettings, select_ai_model
 from ehrm.modules.ai.models import ReasoningMode
 from ehrm.gui.erp_connection_worker import ErpConnectionWorker
+from ehrm.gui.rights_connection_worker import RightsConnectionWorker
 from ehrm.gui.erp_task_extraction_worker import (
     ErpTaskExtractionRequest,
     ErpTaskExtractionWorker,
@@ -65,6 +70,7 @@ class DesktopViewModel(QObject):
     preferencesChanged = Signal()
     erpAccountChanged = Signal()
     rightsAccountChanged = Signal()
+    rightsConnectionChanged = Signal()
     erpConnectionChanged = Signal()
     erpTaskExtractionChanged = Signal()
     pdfPreviewChanged = Signal()
@@ -132,6 +138,9 @@ class DesktopViewModel(QObject):
         self._erp_connection_worker: ErpConnectionWorker | None = None
         self._erp_connection_status = "尚未测试连接"
         self._erp_connection_success = False
+        self._rights_connection_worker: RightsConnectionWorker | None = None
+        self._rights_connection_status = "尚未测试连接"
+        self._rights_connection_success = False
         self._erp_task_extraction_worker: ErpTaskExtractionWorker | None = None
         self._erp_task_extraction_running = False
         self._erp_task_extraction_stopping = False
@@ -150,6 +159,8 @@ class DesktopViewModel(QObject):
                 )
             )
         )
+        if self._rights_password_stored:
+            self._rights_connection_status = "账号已保存，尚未测试连接"
         self._worker_enabled = start_worker
         if start_worker:
             self._start_worker()
@@ -458,6 +469,18 @@ class DesktopViewModel(QObject):
     @Property(bool, notify=rightsAccountChanged)
     def rightsPasswordStored(self) -> bool:
         return self._rights_password_stored
+
+    @Property(bool, notify=rightsConnectionChanged)
+    def rightsConnectionBusy(self) -> bool:
+        return self._rights_connection_worker is not None
+
+    @Property(str, notify=rightsConnectionChanged)
+    def rightsConnectionStatus(self) -> str:
+        return self._rights_connection_status
+
+    @Property(bool, notify=rightsConnectionChanged)
+    def rightsConnectionSuccess(self) -> bool:
+        return self._rights_connection_success
 
     @Slot(str, str, result=str)
     def loadSavedRightsPassword(self, credit_code: str, mobile: str) -> str:
@@ -822,7 +845,7 @@ class DesktopViewModel(QObject):
 
     @Slot(int)
     def setBatchSize(self, value: int) -> None:
-        normalized = max(1, min(100, value))
+        normalized = max(1, value)
         if normalized == self._batch_size:
             return
         self._batch_size = normalized
@@ -1050,9 +1073,112 @@ class DesktopViewModel(QObject):
             return
 
         self._rights_password_stored = True
+        self._rights_connection_success = False
+        self._rights_connection_status = "账号已保存，尚未测试连接"
         self._apply_automation_preferences()
         self.rightsAccountChanged.emit()
+        self.rightsConnectionChanged.emit()
         self.notification.emit("保存成功", "江苏智慧人社账号已安全保存")
+
+    @Slot(str, str, str)
+    def testRightsConnection(
+        self,
+        credit_code: str,
+        mobile: str,
+        password: str,
+    ) -> None:
+        if self._rights_connection_worker is not None:
+            return
+        if self._running:
+            self.notification.emit(
+                "当前无法测试",
+                "请等待智慧人社打印任务结束后重试",
+            )
+            return
+        normalized_credit = credit_code.strip()
+        normalized_mobile = mobile.strip()
+        account_key = self._rights_account_key(
+            normalized_credit,
+            normalized_mobile,
+        )
+        resolved_password = password or (
+            self._rights_credential_store.load_password(account_key)
+            if account_key
+            else None
+        )
+        if not normalized_credit or not normalized_mobile or not resolved_password:
+            self.notification.emit(
+                "账号信息不完整",
+                "请填写智慧人社单位编号、证件号码或移动电话和密码",
+            )
+            return
+        worker = RightsConnectionWorker(
+            self._settings,
+            self._logger,
+            normalized_credit,
+            normalized_mobile,
+            resolved_password,
+        )
+        worker.status_changed.connect(self._on_rights_connection_status)
+        worker.succeeded.connect(self._on_rights_connection_succeeded)
+        worker.failed.connect(self._on_rights_connection_failed)
+        worker.finished.connect(self._on_rights_connection_finished)
+        self._rights_connection_worker = worker
+        self._rights_connection_success = False
+        self._rights_connection_status = "正在测试智慧人社登录…"
+        self.rightsConnectionChanged.emit()
+        worker.start()
+
+    @Slot()
+    def clearRightsLoginState(self) -> None:
+        if self._running or self._rights_connection_worker is not None:
+            self.notification.emit(
+                "当前无法清除",
+                "请等待智慧人社打印或连接测试结束后重试",
+            )
+            return
+
+        restart_worker = self._worker_enabled and self._worker is not None
+        if restart_worker:
+            assert self._worker is not None
+            self._worker.shutdown()
+            if not self._worker.wait(10_000):
+                self.notification.emit(
+                    "清除失败",
+                    "后台自动化线程未能停止，请重启程序后再试",
+                )
+                return
+            self._worker = None
+
+        try:
+            account_key = build_access_token_account_key(
+                self._settings.site.login_url,
+                self._preferences.rights_credit_code,
+                self._preferences.rights_mobile,
+            )
+            AccessTokenManager(account_key).invalidate()
+            storage_state = self._settings.browser.storage_state_path
+            if storage_state.is_file():
+                storage_state.unlink()
+            profile = self._settings.browser.user_data_dir
+            if profile.exists():
+                shutil.rmtree(profile)
+            profile.mkdir(parents=True, exist_ok=True)
+        except (EhrmError, OSError, ValueError) as exc:
+            self.notification.emit("清除失败", str(exc))
+            if restart_worker:
+                self._start_worker()
+            return
+
+        if restart_worker:
+            self._start_worker()
+        self._rights_connection_success = False
+        self._rights_connection_status = "智慧人社登录状态已清除"
+        self.rightsConnectionChanged.emit()
+        self.notification.emit(
+            "清除成功",
+            "账号密码仍保留；下次智慧人社操作将重新登录",
+        )
 
     @Slot(str, str)
     def testErpConnection(self, username: str, password: str) -> None:
@@ -1411,6 +1537,16 @@ class DesktopViewModel(QObject):
                     self._erp_connection_worker = None
             else:
                 self._erp_connection_worker = None
+        if self._rights_connection_worker is not None:
+            connection_worker = self._rights_connection_worker
+            if connection_worker.isRunning():
+                connection_worker.cancel()
+                if not connection_worker.wait(30_000):
+                    self._logger.error("智慧人社连接测试线程未在 30 秒内停止")
+                else:
+                    self._rights_connection_worker = None
+            else:
+                self._rights_connection_worker = None
         if self._erp_task_extraction_worker is not None:
             extraction_worker = self._erp_task_extraction_worker
             if extraction_worker.isRunning():
@@ -1645,6 +1781,34 @@ class DesktopViewModel(QObject):
     def _on_erp_connection_finished(self) -> None:
         self._erp_connection_worker = None
         self.erpConnectionChanged.emit()
+
+    @Slot(str)
+    def _on_rights_connection_status(self, text: str) -> None:
+        self._rights_connection_status = (
+            text.strip() or "正在测试智慧人社登录…"
+        )
+        self.rightsConnectionChanged.emit()
+
+    @Slot()
+    def _on_rights_connection_succeeded(self) -> None:
+        self._rights_connection_success = True
+        self._rights_connection_status = "智慧人社登录与 Access-Token 正常"
+        self.rightsConnectionChanged.emit()
+
+    @Slot(str, str)
+    def _on_rights_connection_failed(self, summary: str, details: str) -> None:
+        self._rights_connection_success = False
+        self._rights_connection_status = summary or "智慧人社连接失败"
+        self.rightsConnectionChanged.emit()
+        self.notification.emit(
+            "智慧人社连接失败",
+            details or summary or "请检查账号、密码、验证码和网络连接",
+        )
+
+    @Slot()
+    def _on_rights_connection_finished(self) -> None:
+        self._rights_connection_worker = None
+        self.rightsConnectionChanged.emit()
 
     @Slot(str)
     def _on_erp_task_extraction_status(self, text: str) -> None:

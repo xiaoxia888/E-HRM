@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import tomllib
 from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,13 @@ _SUPPORTED_CHROMIUM_CHANNELS = frozenset(
         "msedge-canary",
     }
 )
+
+
+class RightsPrintBackend(str, Enum):
+    """Execution backend used to produce rights-statement PDFs."""
+
+    API = "api"
+    BROWSER = "browser"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +98,8 @@ class CaptchaSettings:
     click_delay_min_ms: int
     click_delay_max_ms: int
     click_offset_max_px: int
+    diagnostic_images_enabled: bool
+    diagnostic_output_dir: Path
     frame_timeout_ms: int
     verify_timeout_ms: int
     image_change_timeout_ms: int
@@ -192,6 +202,7 @@ class OllamaSettings:
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
+    rights_print_backend: RightsPrintBackend
     browser: BrowserSettings
     site: SiteSettings
     rights_api: RightsApiSettings
@@ -501,6 +512,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     common = _required_section(data, "common")
 
     rights_root = _required_section(data, "rights_statement")
+    rights_execution = _required_section(
+        rights_root, "execution", parent="rights_statement"
+    )
     rights_browser = _required_section(
         rights_root, "browser", parent="rights_statement"
     )
@@ -539,6 +553,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
 
     relative_root = data_root or Path.cwd()
     common_name = "common"
+    rights_execution_name = "rights_statement.execution"
     rights_browser_name = "rights_statement.browser"
     rights_site_name = "rights_statement.site"
     rights_api_name = "rights_statement.api"
@@ -554,6 +569,19 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     erp_login_name = "erp.selectors.login"
 
     action_timeout_ms = _integer(common, "action_timeout_ms", common_name)
+    raw_rights_print_backend = _text(
+        rights_execution,
+        "backend",
+        rights_execution_name,
+    ).lower()
+    try:
+        rights_print_backend = RightsPrintBackend(raw_rights_print_backend)
+    except ValueError as exc:
+        supported = "、".join(item.value for item in RightsPrintBackend)
+        raise ConfigurationError(
+            "配置项 rights_statement.execution.backend 不受支持："
+            f"{raw_rights_print_backend}；可选值：{supported}"
+        ) from exc
     browser_engine = _text(
         rights_browser, "engine", rights_browser_name
     ).lower()
@@ -670,6 +698,19 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         click_offset_max_px=_integer(
             rights_captcha, "click_offset_max_px", rights_captcha_name
         ),
+        diagnostic_images_enabled=_boolean(
+            rights_captcha,
+            "diagnostic_images_enabled",
+            rights_captcha_name,
+        ),
+        diagnostic_output_dir=_resolved_path(
+            _text(
+                rights_captcha,
+                "diagnostic_output_dir",
+                rights_captcha_name,
+            ),
+            relative_root,
+        ),
         frame_timeout_ms=_integer(
             rights_captcha, "frame_timeout_ms", rights_captcha_name
         ),
@@ -703,6 +744,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         )
 
     return AppSettings(
+        rights_print_backend=rights_print_backend,
         browser=BrowserSettings(
             engine=browser_engine,
             channel=browser_channel,

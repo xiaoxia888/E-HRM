@@ -26,7 +26,7 @@ class UserPreferences:
 
 
 class UserPreferencesStore:
-    """Persists non-sensitive desktop preferences outside installation files."""
+    """Persists non-sensitive desktop preferences under app-local runtime."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -41,7 +41,7 @@ class UserPreferencesStore:
         defaults = asdict(UserPreferences())
         values = {key: payload.get(key, value) for key, value in defaults.items()}
         try:
-            values["batch_size"] = max(1, min(100, int(values["batch_size"])))
+            values["batch_size"] = max(1, int(values["batch_size"]))
             values["no_result_confirm_seconds"] = max(
                 1, int(values["no_result_confirm_seconds"])
             )

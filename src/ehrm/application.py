@@ -10,6 +10,7 @@ from ehrm.modules.rights_statement.models import RightsStatementQuery
 from ehrm.modules.rights_statement.excel_models import ExcelTaskRequest
 from ehrm.modules.rights_statement.excel_service import ExcelRightsStatementService
 from ehrm.modules.rights_statement.service import RightsStatementService
+from ehrm.workbench import DesktopWorkbench
 
 
 RIGHTS_STATEMENT_DOWNLOAD = "unit_rights_statement.download"
@@ -46,12 +47,10 @@ class EhrmApplication:
         if task_name == RIGHTS_STATEMENT_EXCEL_EXPORT:
             if not isinstance(payload, ExcelTaskRequest):
                 raise ConfigurationError("Excel 权益单任务参数类型错误")
-            result = self._excel_rights_statement.execute(
-                list(payload.groups),
-                payload.mode,
-                payload.output_dir,
-                payload.source_excel,
-            )
+            # The workbench selects the configured API or browser backend and
+            # keeps any required Playwright context alive for the full task.
+            with DesktopWorkbench(self._settings, self._logger) as workbench:
+                result = workbench.run(payload)
             if not payload.upload_to_erp:
                 return result
             items = ErpBatchUploadService(

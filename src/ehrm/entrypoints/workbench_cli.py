@@ -7,6 +7,7 @@ from pathlib import Path
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
+from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.excel_loader import RightsStatementExcelLoader
 from ehrm.modules.rights_statement.excel_models import ExcelTaskRequest, ExportMode
@@ -28,8 +29,9 @@ def _clean_path(value: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        settings = load_settings(args.config)
-        logger = configure_logging()
+        runtime_root = application_runtime_root(args.config)
+        settings = load_settings(args.config, data_root=runtime_root)
+        logger = configure_logging(runtime_root / "logs")
         loader = RightsStatementExcelLoader()
         with DesktopWorkbench(settings, logger) as workbench:
             print("输入 Excel 路径开始任务；输入 q 彻底退出工作台。")
@@ -78,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
                     ExcelTaskRequest(
                         groups=tuple(groups),
                         mode=mode,
-                        output_dir=args.output.expanduser().resolve(),
+                        output_dir=resolve_runtime_path(args.output, runtime_root),
                         source_excel=source_excel,
                     )
                 )

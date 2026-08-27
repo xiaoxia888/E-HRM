@@ -79,7 +79,7 @@ class AutomationWorker(QThread):
                     break
                 try:
                     if workbench is None:
-                        self.status_changed.emit("等待登录和安全验证")
+                        self.status_changed.emit("正在初始化权益单打印后端")
                         workbench = DesktopWorkbench(
                             self._settings,
                             self._logger,
@@ -87,7 +87,7 @@ class AutomationWorker(QThread):
                             self._cancel_requested.is_set,
                         )
                         workbench.start()
-                    self.status_changed.emit("正在自动查询并下载权益单")
+                    self.status_changed.emit("正在查询并生成权益单 PDF")
                     result = workbench.run(request)
                     if getattr(request, "upload_to_erp", False) and not self._cancel_requested.is_set():
                         # The rights-site browser remains alive on this QThread.

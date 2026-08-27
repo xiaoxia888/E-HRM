@@ -287,28 +287,12 @@ class ExcelRightsStatementService:
         if not selected:
             return failures
 
-        first = group.first
-        pdf_root = output_dir / "PDF"
-        group_suffix = (
-            f"_组{first.print_group_sequence:02d}"
-            if first.print_group_sequence
-            else ""
+        target_dir, filename = self._download_target(
+            group,
+            mode,
+            len(selected),
+            output_dir,
         )
-        if mode is ExportMode.INDIVIDUAL:
-            target_dir = pdf_root / self._safe(first.unit) / self._safe(first.department)
-            filename = (
-                f"{self._safe(first.task_number)}{group_suffix}_"
-                f"{self._safe(first.name)}_"
-                f"{self._safe(first.insurance_type)}_"
-                f"{first.start_month.replace('-', '')}-{first.end_month.replace('-', '')}_权益单.pdf"
-            )
-        else:
-            target_dir = pdf_root / self._safe(first.unit) / "批量"
-            filename = (
-                f"{self._safe(first.task_number)}_{self._safe(first.insurance_type)}_"
-                f"{first.start_month.replace('-', '')}-{first.end_month.replace('-', '')}_"
-                f"批次{group.sequence}_{len(selected)}人.pdf"
-            )
 
         try:
             self._raise_if_cancelled()
@@ -333,9 +317,51 @@ class ExcelRightsStatementService:
                 for record in selected
             ]
 
-    def _failure_values(self, exc: Exception, page: Page) -> tuple[str, str]:
+    def _failure_values(
+        self,
+        exc: Exception,
+        page: Page | None,
+    ) -> tuple[str, str]:
         result = self.exceptions.handle(exc, page)
         return result.code, result.message
+
+    @classmethod
+    def _download_target(
+        cls,
+        group: WorkGroup,
+        mode: ExportMode,
+        person_count: int,
+        output_dir: Path,
+    ) -> tuple[Path, str]:
+        """Builds the same deterministic target for every print backend."""
+        first = group.first
+        pdf_root = output_dir / "PDF"
+        group_suffix = (
+            f"_组{first.print_group_sequence:02d}"
+            if first.print_group_sequence
+            else ""
+        )
+        if mode is ExportMode.INDIVIDUAL:
+            target_dir = (
+                pdf_root / cls._safe(first.unit) / cls._safe(first.department)
+            )
+            filename = (
+                f"{cls._safe(first.task_number)}{group_suffix}_"
+                f"{cls._safe(first.name)}_"
+                f"{cls._safe(first.insurance_type)}_"
+                f"{first.start_month.replace('-', '')}-"
+                f"{first.end_month.replace('-', '')}_权益单.pdf"
+            )
+        else:
+            target_dir = pdf_root / cls._safe(first.unit) / "批量"
+            filename = (
+                f"{cls._safe(first.task_number)}_"
+                f"{cls._safe(first.insurance_type)}_"
+                f"{first.start_month.replace('-', '')}-"
+                f"{first.end_month.replace('-', '')}_"
+                f"批次{group.sequence}_{person_count}人.pdf"
+            )
+        return target_dir, filename
 
     def _progress(self, message: str) -> None:
         print(message)

@@ -15,7 +15,10 @@ from ehrm.browser.access_token import (
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
-from ehrm.core.settings import AppSettings
+from ehrm.core.settings import AppSettings, RightsPrintBackend
+from ehrm.modules.rights_statement.api_excel_service import (
+    ApiExcelRightsStatementService,
+)
 from ehrm.modules.rights_statement.excel_models import (
     ExcelRunResult,
     ExcelTaskRequest,
@@ -66,6 +69,12 @@ class DesktopWorkbench:
             progress_callback,
             cancel_check,
         )
+        self._api_service = ApiExcelRightsStatementService(
+            settings,
+            logger,
+            progress_callback,
+            cancel_check,
+        )
 
     def __enter__(self) -> "DesktopWorkbench":
         self.start()
@@ -77,8 +86,14 @@ class DesktopWorkbench:
     def start(self) -> None:
         if self._browser is not None:
             return
-        self._start_browser()
-        self._progress("工作台已启动，将优先使用本地 Access-Token")
+        if self.settings.rights_print_backend is RightsPrintBackend.BROWSER:
+            self._start_browser()
+            visibility = "无界面" if self.settings.browser.headless else "可见"
+            self._progress(
+                f"打印后端：纯浏览器自动化（{visibility}浏览器已常驻）"
+            )
+            return
+        self._progress("打印后端：业务 API（将优先使用本地 Access-Token）")
 
     def stop(self) -> None:
         if self._browser is not None:
@@ -97,6 +112,15 @@ class DesktopWorkbench:
         return self._access_token_manager
 
     def run(self, request: ExcelTaskRequest) -> ExcelRunResult:
+        if self.settings.rights_print_backend is RightsPrintBackend.API:
+            return self._api_service.execute_with_api(
+                list(request.groups),
+                request.mode,
+                request.output_dir,
+                request.source_excel,
+                query_people=self.query_people,
+                download_rights_bill=self.download_rights_bill,
+            )
         page = self._ensure_work_page()
         return self._service.execute_with_page(
             page,

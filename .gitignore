@@ -19,6 +19,7 @@ data/session-state.json
 auth.json
 
 # Runtime artifacts
+runtime/
 downloads/
 logs/
 artifacts/
@@ -33,4 +34,4 @@ dist/
 packaging/windows/generated/
 
 # config/settings.toml 是不含账号密码的版本化系统配置。
-# 用户偏好、登录状态和凭据只保存在操作系统应用数据目录。
+# 用户偏好和登录状态统一保存在程序目录下的 runtime/；凭据仍由系统安全存储管理。

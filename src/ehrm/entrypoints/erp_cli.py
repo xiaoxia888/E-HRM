@@ -9,7 +9,7 @@ from PySide6.QtCore import QCoreApplication
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.runtime import application_data_root, configure_application_identity
+from ehrm.core.runtime import application_runtime_root, configure_application_identity
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.erp.client import ErpApplicationClient, ErpAttachmentClient
 from ehrm.modules.erp.credentials import resolve_erp_credentials
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         application = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
         configure_application_identity(application)
-        runtime_root = application_data_root()
+        runtime_root = application_runtime_root(args.config)
         settings = load_settings(args.config, data_root=runtime_root)
         credentials = resolve_erp_credentials(settings)
         logger = configure_logging(runtime_root / "logs")

@@ -3,7 +3,12 @@ from dataclasses import replace
 import cv2
 import numpy as np
 
-from ehrm.browser.captcha_matcher import ChamferConfig, match_captcha_symbols
+from ehrm.browser.captcha_matcher import (
+    CaptchaMatch,
+    ChamferConfig,
+    _select_joint_matches,
+    match_captcha_symbols,
+)
 
 
 def test_chamfer_matcher_keeps_target_order() -> None:
@@ -41,3 +46,61 @@ def test_chamfer_matcher_keeps_target_order() -> None:
     for match, center in zip(matches, expected, strict=True):
         assert abs(match.center[0] - center[0]) <= 4
         assert abs(match.center[1] - center[1]) <= 4
+
+
+def test_joint_matcher_rejects_overlap_and_inconsistent_scale() -> None:
+    def candidate(
+        index: int,
+        score: float,
+        center: tuple[int, int],
+        bbox: tuple[int, int, int, int],
+        scale: float,
+    ) -> CaptchaMatch:
+        return CaptchaMatch(
+            index=index,
+            score=score,
+            center=center,
+            matched_bbox=bbox,
+            scale=scale,
+            angle=0.0,
+            aspect_ratio=1.0,
+        )
+
+    symbol_1 = candidate(1, 0.0845, (436, 283), (399, 247, 473, 320), 1.6)
+    symbol_2_overlap = candidate(
+        2,
+        0.1609,
+        (430, 306),
+        (411, 285, 449, 328),
+        0.8,
+    )
+    symbol_2_wrong_scale = candidate(
+        2,
+        0.1661,
+        (516, 367),
+        (495, 345, 537, 389),
+        1.0,
+    )
+    symbol_2_correct = candidate(
+        2,
+        0.2032,
+        (126, 42),
+        (92, 0, 160, 84),
+        1.6,
+    )
+    symbol_3 = candidate(3, 0.1054, (120, 120), (100, 92, 140, 148), 1.6)
+
+    selected = _select_joint_matches(
+        [
+            [symbol_1],
+            [symbol_2_overlap, symbol_2_wrong_scale, symbol_2_correct],
+            [symbol_3],
+        ],
+        ChamferConfig(),
+    )
+
+    assert [match.center for match in selected] == [
+        (436, 283),
+        (126, 42),
+        (120, 120),
+    ]

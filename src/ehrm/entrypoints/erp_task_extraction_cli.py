@@ -11,7 +11,11 @@ from PySide6.QtCore import QCoreApplication
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.runtime import application_data_root, configure_application_identity
+from ehrm.core.runtime import (
+    application_runtime_root,
+    configure_application_identity,
+    resolve_runtime_path,
+)
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings, select_ai_model
 from ehrm.modules.ai.models import ReasoningMode
 from ehrm.modules.erp.extraction_service import ErpTaskExtractionService
@@ -87,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         application = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
         configure_application_identity(application)
-        runtime_root = application_data_root()
+        runtime_root = application_runtime_root(args.config)
         settings = load_settings(args.config, data_root=runtime_root)
         if args.model_profile:
             settings = select_ai_model(
@@ -110,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             max_tasks=args.max_tasks,
             reasoning_mode=args.reasoning_mode,
         )
-        output_path = _output_path(args.output)
+        output_path = _output_path(args.output, runtime_root)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -144,11 +148,11 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
-def _output_path(value: Path | None) -> Path:
+def _output_path(value: Path | None, runtime_root: Path) -> Path:
     if value is not None:
-        return value.expanduser().resolve()
+        return resolve_runtime_path(value, runtime_root)
     filename = f"erp_task_extraction_{datetime.now():%Y%m%d_%H%M%S}.json"
-    return (Path("output") / filename).resolve()
+    return resolve_runtime_path(Path("output") / filename, runtime_root)
 
 
 if __name__ == "__main__":

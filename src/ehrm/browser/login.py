@@ -19,6 +19,7 @@ from ehrm.browser.captcha_policy import (
 )
 from ehrm.core.exceptions import (
     AuthenticationFailedError,
+    CaptchaRateLimitedAuthenticationError,
     EhrmError,
     TaskCancelledError,
 )
@@ -46,6 +47,7 @@ class LoginService:
         self._access_token_manager = access_token_manager
         self._manual_login_status: str | None = None
         self._login_failure: AuthenticationFailedError | None = None
+        self._login_succeeded = False
         self._response_listener_page_ids: set[int] = set()
         self._context = getattr(page, "context", None)
         self._listen_for_login_response(page)
@@ -140,6 +142,7 @@ class LoginService:
             self._progress(f"登录失败：Access-Token 安全保存失败：{exc}")
             return
         _LOGGER.info("智慧人社 Access-Token 已保存到内存和安全存储")
+        self._login_succeeded = True
         self._progress(
             "账号登录成功，Access-Token 已安全保存，正在确认登录状态……"
         )
@@ -212,6 +215,7 @@ class LoginService:
     ) -> None:
         self._manual_login_status = None
         self._login_failure = None
+        self._login_succeeded = False
         credentials = self.settings.rights_credentials
         credit_code = (
             username
@@ -245,6 +249,15 @@ class LoginService:
             mobile=mobile_number,
             password=resolved_password,
         )
+        if self.settings.captcha.enabled and not submitted:
+            raise AuthenticationFailedError(
+                "自动登录信息提交失败",
+                details=(
+                    self._manual_login_status
+                    or "验证码自动验证已启用，不进入人工登录等待"
+                ),
+            )
+
         captcha_solved = submitted and self._try_automated_captcha()
         self._raise_login_failure()
 
@@ -253,15 +266,31 @@ class LoginService:
                 self._manual_login_status
                 or "请在打开的浏览器中完成登录和安全验证，程序会自动继续……"
             )
-        deadline = time.monotonic() + self.settings.browser.manual_login_timeout_seconds
+        if self.settings.captcha.enabled:
+            completion_timeout_seconds = (
+                self.settings.browser.action_timeout_ms / 1000.0
+            )
+        else:
+            completion_timeout_seconds = (
+                self.settings.browser.manual_login_timeout_seconds
+            )
+        deadline = time.monotonic() + completion_timeout_seconds
         while time.monotonic() < deadline:
             self._raise_login_failure()
             if self.cancel_check is not None and self.cancel_check():
                 raise TaskCancelledError("用户在登录阶段停止任务")
-            if self.is_authenticated():
+            if self._login_succeeded or self.is_authenticated():
                 return
             self._wait_for_timeout(500)
 
+        if self.settings.captcha.enabled:
+            raise AuthenticationFailedError(
+                "等待自动登录结果超时",
+                details=(
+                    "验证码已经自动处理，但在 action_timeout_ms 内没有收到"
+                    "登录成功响应或页面登录标志"
+                ),
+            )
         raise AuthenticationFailedError(
             "等待人工登录超时",
             details="请完成验证码后重试，或增加 manual_login_timeout_seconds",
@@ -340,12 +369,15 @@ class LoginService:
         if not is_allowed_host_url(
             page.url, self.settings.captcha.allowed_hosts
         ):
-            _LOGGER.info("当前页面不在验证码自动化主机白名单，继续由人工完成")
-            self._manual_login_status = (
-                "人工验证：当前登录环境不启用自动验证，请在浏览器中完成，"
-                "完成后程序会自动继续"
+            message = "当前页面主机不在验证码自动验证白名单"
+            _LOGGER.warning("%s，已停止登录流程", message)
+            self._progress(f"自动验证：{message}，已停止登录流程")
+            raise AuthenticationFailedError(
+                "验证码自动验证未执行",
+                details=(
+                    f"{message}；enabled=true 时不会进入人工验证等待"
+                ),
             )
-            return False
 
         # Import lazily so normal remote/manual login does not initialize OpenCV.
         from ehrm.browser.captcha import (
@@ -362,20 +394,30 @@ class LoginService:
         try:
             solved = solver.solve()
         except CaptchaRateLimitedError as exc:
-            _LOGGER.warning("%s；请等待页面允许后人工验证", exc)
-            self._manual_login_status = (
-                f"人工验证：{exc}；请等待页面允许后再手动验证"
-            )
-            return False
+            _LOGGER.warning("验证码自动验证已停止：%s", exc)
+            visible_message = "验证码操作过于频繁，请等待 1 小时后再试"
+            self._progress(f"自动验证：{visible_message}")
+            raise CaptchaRateLimitedAuthenticationError(
+                visible_message,
+                details=(
+                    f"{exc}；自动验证和人工等待均已停止，请在 1 小时后重试"
+                ),
+            ) from exc
         except (CaptchaAutomationError, PlaywrightError, ValueError) as exc:
-            _LOGGER.warning("验证码自动验证失败，已转人工处理：%s", exc)
-            self._manual_login_status = (
-                f"人工验证：自动验证失败，已切换为人工处理：{exc}"
+            _LOGGER.warning("验证码自动验证失败，已停止登录流程：%s", exc)
+            self._progress(f"自动验证：失败，已停止登录流程：{exc}")
+            raise AuthenticationFailedError(
+                "验证码自动验证失败",
+                details=str(exc),
+            ) from exc
+        if not solved:
+            self._progress("自动验证：未通过，已停止登录流程")
+            raise AuthenticationFailedError(
+                "验证码自动验证未通过",
+                details="enabled=true，已跳过人工验证等待",
             )
-            return False
-        if solved:
-            self._progress("自动验证：验证码已通过，正在等待登录结果……")
-        return solved
+        self._progress("自动验证：验证码已通过，正在等待登录结果……")
+        return True
 
     def _progress(self, message: str) -> None:
         if self._progress_callback is None:

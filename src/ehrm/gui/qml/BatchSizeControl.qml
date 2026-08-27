@@ -5,7 +5,8 @@ Rectangle {
 
     property int value: 50
     property int from: 1
-    property int to: 100
+    // QML int 的技术边界，不是业务人数上限。
+    property int to: 2147483647
     property string unit: "人"
     signal valueEdited(int value)
 

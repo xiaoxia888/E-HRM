@@ -15,6 +15,7 @@ from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
+from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.entrypoints.login_e2e_cli import (
     _credential,
@@ -105,7 +106,10 @@ def _default_filename(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        settings = load_settings(args.config)
+        runtime_root = application_runtime_root(args.config)
+        settings = load_settings(args.config, data_root=runtime_root)
+        diagnostic_path = resolve_runtime_path(args.diagnostic, runtime_root)
+        output_dir = resolve_runtime_path(args.output_dir, runtime_root)
         insurance = InsuranceCode.from_display_name(args.insurance)
         query = PersonQueryRequest(
             identity_number=args.identity_number,
@@ -171,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
             password=password,
         ),
     )
-    logger = configure_logging()
+    logger = configure_logging(runtime_root / "logs")
     try:
         with _isolated_settings(
             settings,
@@ -223,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                         PlaywrightError,
                         ValueError,
                     ):
-                        _save_diagnostic(login.page, args.diagnostic)
+                        _save_diagnostic(login.page, diagnostic_path)
                         raise
 
                 api_session = RightsStatementApiSession(
@@ -275,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                     destination = api_session.execute(
                         lambda client: client.download_rights_bill(
                             print_request,
-                            args.output_dir.expanduser().resolve(),
+                            output_dir,
                             filename,
                         ),
                         operation_name="权益单打印",
@@ -287,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("完整权益单 API E2E 验证通过")
                 print(f"PDF 文件：{destination}")
                 print(f"PDF 大小：{destination.stat().st_size} 字节")
-                print("日志文件：" + str(Path("logs/ehrm.log").resolve()))
+                print("日志文件：" + str(runtime_root / "logs/ehrm.log"))
                 return 0
     except (EhrmError, OSError, PlaywrightError, ValueError) as exc:
         _print_failure("完整权益单 API E2E 验证失败", exc)

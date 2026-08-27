@@ -12,7 +12,11 @@ from PySide6.QtCore import QCoreApplication
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
-from ehrm.core.runtime import application_data_root, configure_application_identity
+from ehrm.core.runtime import (
+    application_runtime_root,
+    configure_application_identity,
+    resolve_runtime_path,
+)
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.erp.task_service import ErpTaskQueryService
 from ehrm.modules.erp.models import ErpTaskStatus
@@ -78,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         application = QCoreApplication.instance() or QCoreApplication(sys.argv[:1])
         configure_application_identity(application)
-        runtime_root = application_data_root()
+        runtime_root = application_runtime_root(args.config)
         settings = load_settings(args.config, data_root=runtime_root)
         logger = configure_logging(runtime_root / "logs")
         result = ErpTaskQueryService(
@@ -124,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"   描述：{description or '-'}")
 
         if args.output is not None:
-            output_path = args.output.expanduser().resolve()
+            output_path = resolve_runtime_path(args.output, runtime_root)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "queried_at": datetime.now().astimezone().isoformat(timespec="seconds"),

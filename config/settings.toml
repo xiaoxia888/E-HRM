@@ -11,6 +11,12 @@ action_timeout_ms = 30000
 # 智慧人社 / 单位权益单模块
 # -----------------------------------------------------------------------------
 
+[rights_statement.execution]
+# 权益单打印后端：
+#   "api"     = 通过业务接口查询人员、获取流水号并生成 PDF（推荐）。
+#   "browser" = 保留原来的纯浏览器页面操作流程。
+backend = "api"
+
 [rights_statement.browser]
 # Playwright 浏览器内核：chromium、firefox 或 webkit。
 # Chrome 和 Edge 都属于 Chromium 内核，因此使用它们时 engine 仍填写 chromium。
@@ -23,14 +29,15 @@ engine = "chromium"
 # firefox/webkit 不支持 channel，使用它们时必须填写空字符串。
 channel = ""
 
-# true 使用无头浏览器，false 显示浏览器窗口；所有智慧人社入口均服从此配置。
+# true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
+# browser 后端需要人工观察或接管登录时，应设置为 false。
 headless = true
 silent_session_check = false
 slow_mo_ms = 100
 navigation_timeout_ms = 60000
 manual_login_timeout_seconds = 300
 
-# 相对于操作系统应用数据目录解析，不会写入程序安装目录。
+# 相对于程序的 runtime 目录解析；源码和安装环境使用相同目录结构。
 user_data_dir = "data/browser-profile"
 storage_state_path = "data/session-state.json"
 
@@ -60,6 +67,9 @@ mobile_env = "EHRM_RIGHTS_MOBILE"
 password_env = "EHRM_RIGHTS_PASSWORD"
 
 [rights_statement.captcha]
+# true：必须自动完成验证码；任何识别、限流或配置错误都会立即结束登录，
+#       不会进入人工验证等待，适用于隐藏浏览器。
+# false：不执行自动识别，提交登录后等待用户在可见浏览器中人工验证。
 # 仅在白名单主机上启用自动验证。这里只填写主机/IP，不填写端口；
 # 因此 127.0.0.1:6066 和 127.0.0.1:8000 都匹配 127.0.0.1。
 enabled = true
@@ -77,6 +87,11 @@ click_delay_min_ms = 1000
 click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
 click_offset_max_px = 3
+# 是否保存验证码识别诊断图片；正常运行建议关闭。
+diagnostic_images_enabled = true
+# 开启后按运行批次保存目标图、背景图和标注最终点击顺序的结果图。
+# 相对于程序的 runtime 目录解析，源码和安装环境使用相同目录结构。
+diagnostic_output_dir = "diagnostics/captcha"
 frame_timeout_ms = 10000
 verify_timeout_ms = 15000
 # 验证码识别等待时间

@@ -7,6 +7,7 @@ from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_EXCEL_EXPORT
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
+from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.excel_loader import RightsStatementExcelLoader
 from ehrm.modules.rights_statement.excel_models import (
@@ -68,13 +69,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        settings = load_settings(args.config)
-        result = EhrmApplication(settings, configure_logging()).run(
+        runtime_root = application_runtime_root(args.config)
+        settings = load_settings(args.config, data_root=runtime_root)
+        result = EhrmApplication(
+            settings,
+            configure_logging(runtime_root / "logs"),
+        ).run(
             RIGHTS_STATEMENT_EXCEL_EXPORT,
             ExcelTaskRequest(
                 groups=tuple(groups),
                 mode=mode,
-                output_dir=args.output.expanduser().resolve(),
+                output_dir=resolve_runtime_path(args.output, runtime_root),
                 source_excel=args.input.expanduser().resolve(),
                 upload_to_erp=args.upload_erp,
             ),

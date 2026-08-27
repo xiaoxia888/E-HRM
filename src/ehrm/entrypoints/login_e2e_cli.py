@@ -20,6 +20,7 @@ from ehrm.browser.manager import BrowserManager
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.settings import AppSettings, DEFAULT_SETTINGS_PATH, load_settings
+from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -118,7 +119,9 @@ def _print_targets(settings: AppSettings) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        settings = load_settings(args.config)
+        runtime_root = application_runtime_root(args.config)
+        settings = load_settings(args.config, data_root=runtime_root)
+        diagnostic_path = resolve_runtime_path(args.diagnostic, runtime_root)
     except EhrmError as exc:
         print(f"配置加载失败：{exc}")
         return 2
@@ -198,10 +201,10 @@ def main(argv: list[str] | None = None) -> int:
                         diagnostic_page = browser.page
                     except (RuntimeError, PlaywrightError):
                         diagnostic_page = service.page
-                    _save_diagnostic(diagnostic_page, args.diagnostic)
+                    _save_diagnostic(diagnostic_page, diagnostic_path)
                     raise
                 if not service.is_authenticated():
-                    _save_diagnostic(service.page, args.diagnostic)
+                    _save_diagnostic(service.page, diagnostic_path)
                     print("登录流程结束，但未检测到登录成功标志")
                     return 1
                 print("完整登录 E2E 验证通过")

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from ehrm.core.exceptions import ConfigurationError
-from ehrm.core.settings import load_settings, select_ai_model
+from ehrm.core.settings import RightsPrintBackend, load_settings, select_ai_model
 from ehrm.modules.ai.models import AiModelProfile
 
 
@@ -17,6 +17,7 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
         configured = tomllib.load(stream)
 
     assert settings.browser.engine in {"chromium", "firefox", "webkit"}
+    assert settings.rights_print_backend is RightsPrintBackend.API
     if settings.browser.engine != "chromium":
         assert settings.browser.channel == ""
     assert settings.browser.action_timeout_ms == 30_000
@@ -39,6 +40,12 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.captcha.click_delay_min_ms == 1000
     assert settings.captcha.click_delay_max_ms == 2000
     assert settings.captcha.click_offset_max_px >= 0
+    assert settings.captcha.diagnostic_images_enabled is configured[
+        "rights_statement"
+    ]["captcha"]["diagnostic_images_enabled"]
+    assert settings.captcha.diagnostic_output_dir == (
+        tmp_path / "diagnostics/captcha"
+    )
     assert settings.erp.base_url
     assert settings.erp.headless is True
     assert settings.ai.model == "qwen3.5:9b"
@@ -82,6 +89,21 @@ def test_model_rejects_an_unsupported_reasoning_mode() -> None:
 
     with pytest.raises(ConfigurationError, match="不支持推理模式 max"):
         select_ai_model(settings, "qwen3_5_9b", reasoning_mode="max")
+
+
+def test_configuration_rejects_unknown_rights_print_backend(
+    tmp_path: Path,
+) -> None:
+    source = Path("config/settings.toml").read_text(encoding="utf-8")
+    config_path = tmp_path / "settings.toml"
+    config_path.write_text(
+        source.replace('backend = "api"', 'backend = "unknown"', 1),
+        encoding="utf-8",
+    )
+    copyfile(Path("config/error_messages.toml"), tmp_path / "error_messages.toml")
+
+    with pytest.raises(ConfigurationError, match="execution.backend 不受支持"):
+        load_settings(config_path, data_root=tmp_path / "runtime")
 
 
 def test_missing_module_section_does_not_fall_back_to_python_defaults(
