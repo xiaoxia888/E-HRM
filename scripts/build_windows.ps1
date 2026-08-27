@@ -66,10 +66,16 @@ if (-not $PythonVersion.StartsWith("3.11.")) {
     throw "Current Python version is $PythonVersion. This project requires Python 3.11.x."
 }
 
-python -c "import PySide6, PyInstaller, playwright; print('Build dependency check passed.')"
+python -c "import PySide6, PyInstaller, playwright; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}')"
 if ($LASTEXITCODE -ne 0) {
     throw "Required Windows build dependencies are missing."
 }
+
+$QtPdfQmlDir = python -c "from pathlib import Path; import PySide6; path = Path(PySide6.__file__).resolve().parent / 'Qt' / 'qml' / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path)"
+if ($LASTEXITCODE -ne 0) {
+    throw "PySide6 QtQuick.Pdf QML module is missing. Reinstall requirements/frontend.lock.txt."
+}
+Write-Host "QtQuick.Pdf source module: $($QtPdfQmlDir.Trim())"
 
 if (-not $SkipTests) {
     python -m pytest -q

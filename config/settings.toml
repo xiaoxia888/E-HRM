@@ -88,7 +88,7 @@ click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
 click_offset_max_px = 3
 # 是否保存验证码识别诊断图片；正常运行建议关闭。
-diagnostic_images_enabled = true
+diagnostic_images_enabled = false
 # 开启后按运行批次保存目标图、背景图和标注最终点击顺序的结果图。
 # 相对于程序的 runtime 目录解析，源码和安装环境使用相同目录结构。
 diagnostic_output_dir = "diagnostics/captcha"

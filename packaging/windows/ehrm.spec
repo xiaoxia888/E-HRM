@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import playwright
+import PySide6
 from PyInstaller.utils.hooks import collect_all
 
 
@@ -22,6 +23,16 @@ if not browser_root.is_dir():
         "没有找到随包 Chromium。请先在 PowerShell 中执行：\n"
         '$env:PLAYWRIGHT_BROWSERS_PATH="0"\n'
         "python -m playwright install chromium"
+    )
+
+pyside6_root = Path(PySide6.__file__).resolve().parent
+qtquick_pdf_qml_root = pyside6_root / "Qt" / "qml" / "QtQuick" / "Pdf"
+qtquick_pdf_qmldir = qtquick_pdf_qml_root / "qmldir"
+if not qtquick_pdf_qmldir.is_file():
+    raise SystemExit(
+        "当前 PySide6 安装缺少 QtQuick.Pdf QML 模块：\n"
+        f"{qtquick_pdf_qmldir}\n"
+        "请按照 requirements/frontend.lock.txt 重新安装 PySide6。"
     )
 
 pw_datas, pw_binaries, pw_hiddenimports = collect_all("playwright")
@@ -46,6 +57,10 @@ datas = pw_datas + [
     ),
     (str(SOURCE_ROOT / "ehrm" / "gui" / "qml"), "ehrm/gui/qml"),
     (str(SOURCE_ROOT / "ehrm" / "gui" / "assets"), "ehrm/gui/assets"),
+    # PyInstaller's Qt hook may collect the Qt PDF plugin DLL without copying
+    # all QML metadata on Windows. Copy the complete module explicitly because
+    # PdfPreviewDialog.qml imports QtQuick.Pdf at runtime.
+    (str(qtquick_pdf_qml_root), "PySide6/Qt/qml/QtQuick/Pdf"),
     (
         str(browser_root),
         "playwright/driver/package/.local-browsers",
@@ -54,6 +69,7 @@ datas = pw_datas + [
 
 hiddenimports = pw_hiddenimports + [
     "PySide6.QtPdf",
+    "PySide6.QtQml",
     "PySide6.QtQuick",
     "PySide6.QtQuickControls2",
     "PySide6.QtSvg",
