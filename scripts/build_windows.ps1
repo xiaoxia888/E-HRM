@@ -71,9 +71,9 @@ if ($LASTEXITCODE -ne 0) {
     throw "Required Windows build dependencies are missing."
 }
 
-$QtPdfQmlDir = python -c "from pathlib import Path; import PySide6; path = Path(PySide6.__file__).resolve().parent / 'Qt' / 'qml' / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path)"
+$QtPdfQmlDir = python -c "from pathlib import Path; from PySide6.QtCore import QLibraryInfo; path = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)) / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path.resolve())"
 if ($LASTEXITCODE -ne 0) {
-    throw "PySide6 QtQuick.Pdf QML module is missing. Reinstall requirements/frontend.lock.txt."
+    throw "PySide6 QtQuick.Pdf QML module is missing. Check that PySide6-Addons and PySide6 are both installed at version 6.10.1."
 }
 Write-Host "QtQuick.Pdf source module: $($QtPdfQmlDir.Trim())"
 

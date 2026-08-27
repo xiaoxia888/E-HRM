@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 
 import playwright
-import PySide6
 from PyInstaller.utils.hooks import collect_all
+from PySide6.QtCore import QLibraryInfo
 
 
 SPEC_DIR = Path(SPECPATH).resolve()
@@ -25,14 +25,16 @@ if not browser_root.is_dir():
         "python -m playwright install chromium"
     )
 
-pyside6_root = Path(PySide6.__file__).resolve().parent
-qtquick_pdf_qml_root = pyside6_root / "Qt" / "qml" / "QtQuick" / "Pdf"
+qt_qml_root = Path(
+    QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)
+).resolve()
+qtquick_pdf_qml_root = qt_qml_root / "QtQuick" / "Pdf"
 qtquick_pdf_qmldir = qtquick_pdf_qml_root / "qmldir"
 if not qtquick_pdf_qmldir.is_file():
     raise SystemExit(
         "当前 PySide6 安装缺少 QtQuick.Pdf QML 模块：\n"
         f"{qtquick_pdf_qmldir}\n"
-        "请按照 requirements/frontend.lock.txt 重新安装 PySide6。"
+        "请确认 PySide6-Addons 与 PySide6 版本一致并安装完整。"
     )
 
 pw_datas, pw_binaries, pw_hiddenimports = collect_all("playwright")
