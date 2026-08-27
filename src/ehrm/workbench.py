@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Callable
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from ehrm.browser.access_token import (
+    AccessTokenManager,
+    build_access_token_account_key,
+)
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
@@ -15,6 +21,14 @@ from ehrm.modules.rights_statement.excel_models import (
     ExcelTaskRequest,
 )
 from ehrm.modules.rights_statement.excel_service import ExcelRightsStatementService
+from ehrm.modules.rights_statement.api_client import RightsStatementApiClient
+from ehrm.modules.rights_statement.api_session import RightsStatementApiSession
+from ehrm.modules.rights_statement.api_models import (
+    PersonQueryRequest,
+    PersonQueryResult,
+    RightsBillPdf,
+    RightsBillPrintRequest,
+)
 
 
 class DesktopWorkbench:
@@ -33,6 +47,19 @@ class DesktopWorkbench:
         self._page: Page | None = None
         self._cancel_check = cancel_check
         self._progress_callback = progress_callback
+        credentials = settings.rights_credentials
+        credit_code = credentials.credit_code or os.getenv(
+            credentials.credit_code_env,
+            "",
+        )
+        mobile = credentials.mobile or os.getenv(credentials.mobile_env, "")
+        self._access_token_manager = AccessTokenManager(
+            build_access_token_account_key(
+                settings.site.login_url,
+                credit_code,
+                mobile,
+            )
+        )
         self._service = ExcelRightsStatementService(
             settings,
             logger,
@@ -51,8 +78,7 @@ class DesktopWorkbench:
         if self._browser is not None:
             return
         self._start_browser()
-        self._authenticate_page()
-        self._progress("工作台登录完成，正在进入权益单页面")
+        self._progress("工作台已启动，将优先使用本地 Access-Token")
 
     def stop(self) -> None:
         if self._browser is not None:
@@ -66,6 +92,10 @@ class DesktopWorkbench:
             raise RuntimeError("桌面工作台尚未启动")
         return self._page
 
+    @property
+    def access_token_manager(self) -> AccessTokenManager:
+        return self._access_token_manager
+
     def run(self, request: ExcelTaskRequest) -> ExcelRunResult:
         page = self._ensure_work_page()
         return self._service.execute_with_page(
@@ -75,6 +105,65 @@ class DesktopWorkbench:
             request.output_dir,
             request.source_excel,
         )
+
+    def query_people(self, query: PersonQueryRequest) -> PersonQueryResult:
+        """Queries people through the authenticated API instead of page controls."""
+        return self._rights_api_session().execute(
+            lambda client: client.query_people(query),
+            operation_name="人员查询",
+        )
+
+    def generate_rights_bill(
+        self,
+        print_request: RightsBillPrintRequest,
+    ) -> RightsBillPdf:
+        """Generates a rights-statement PDF through the authenticated API."""
+        return self._rights_api_session().execute(
+            lambda client: client.generate_rights_bill(print_request),
+            operation_name="权益单打印",
+        )
+
+    def download_rights_bill(
+        self,
+        print_request: RightsBillPrintRequest,
+        output_dir: Path,
+        filename: str,
+    ) -> Path:
+        """Generates and saves a rights-statement PDF."""
+        return self._rights_api_session().execute(
+            lambda client: client.download_rights_bill(
+                print_request,
+                output_dir,
+                filename,
+            ),
+            operation_name="权益单打印",
+        )
+
+    def _rights_api_client(self) -> RightsStatementApiClient:
+        page = self._ensure_api_page()
+        return RightsStatementApiClient(
+            self.settings,
+            page.request,
+            self._access_token_manager,
+            self.logger,
+        )
+
+    def _rights_api_session(self) -> RightsStatementApiSession:
+        return RightsStatementApiSession(
+            self._rights_api_client,
+            self._authenticate_page,
+            self.logger,
+            self._progress,
+        )
+
+    def _ensure_api_page(self) -> Page:
+        if self._browser is None or self._browser.context is None:
+            self._start_browser()
+        if self._page is None or self._page.is_closed():
+            assert self._browser is not None
+            assert self._browser.context is not None
+            self._page = self._browser.context.new_page()
+        return self._page
 
     def _ensure_work_page(self) -> Page:
         try:
@@ -102,6 +191,7 @@ class DesktopWorkbench:
                     self.settings,
                     self._cancel_check,
                     self._progress_callback,
+                    self._access_token_manager,
                 )
                 if not login.is_authenticated():
                     login.ensure_authenticated()
@@ -123,6 +213,7 @@ class DesktopWorkbench:
             self.settings,
             self._cancel_check,
             self._progress_callback,
+            self._access_token_manager,
         )
         login.ensure_authenticated()
         self._page = login.page
@@ -141,7 +232,6 @@ class DesktopWorkbench:
         )
         browser = BrowserManager(
             self.settings.browser,
-            headless=False,
             stealth_enabled=stealth_enabled,
         )
         browser.__enter__()

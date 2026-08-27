@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
+from ehrm.browser.access_token import AccessTokenManager, MemoryAccessTokenStore
 from ehrm.browser.login import LoginService
 from ehrm.core.exceptions import AuthenticationFailedError
 from ehrm.core.settings import load_settings
@@ -70,6 +71,32 @@ class FakePage:
 
     def wait_for_timeout(self, _timeout_ms: int) -> None:
         return None
+
+
+class FakeLoginResponse:
+    def __init__(
+        self,
+        settings,
+        *,
+        status: int,
+        payload: dict[str, object],
+    ) -> None:
+        login_url = urlsplit(settings.site.login_url)
+        self.url = urlunsplit(
+            (
+                login_url.scheme,
+                login_url.netloc,
+                settings.site.unit_password_login_path,
+                "",
+                "",
+            )
+        )
+        self.status = status
+        self.request = SimpleNamespace(method="POST")
+        self._payload = payload
+
+    def json(self) -> dict[str, object]:
+        return self._payload
 
 
 def test_login_method_tabs_are_clicked_and_verified_active(tmp_path: Path) -> None:
@@ -138,6 +165,121 @@ def test_unit_login_autofills_three_fields_and_submits(tmp_path: Path) -> None:
     assert page.fields[settings.login.mobile].value == "13800000000"
     assert page.fields[settings.login.password].value == "secret"
     assert page.fields[settings.login.submit].clicked is True
+
+
+def test_unit_password_login_error_response_is_forwarded(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    updates: list[str] = []
+    service = LoginService(  # type: ignore[arg-type]
+        FakePage(settings),
+        settings,
+        progress_callback=updates.append,
+    )
+    response = FakeLoginResponse(
+        settings,
+        status=500,
+        payload={
+            "appcode": "test-error-code",
+            "msg": "测试账号密码错误",
+            "map": {},
+        },
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    with pytest.raises(AuthenticationFailedError, match="测试账号密码错误") as error:
+        service._raise_login_failure()
+    assert error.value.details == "HTTP=500，appcode=test-error-code"
+    assert updates == [
+        "登录失败：测试账号密码错误（HTTP=500，appcode=test-error-code）"
+    ]
+
+
+def test_successful_login_response_saves_access_token(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    updates: list[str] = []
+    store = MemoryAccessTokenStore()
+    manager = AccessTokenManager("test-account", store)
+    service = LoginService(  # type: ignore[arg-type]
+        FakePage(settings),
+        settings,
+        progress_callback=updates.append,
+        access_token_manager=manager,
+    )
+    response = FakeLoginResponse(
+        settings,
+        status=200,
+        payload={
+            "appcode": "0",
+            "msg": "登录成功",
+            "map": {"Access-Token": "test-secret-token"},
+        },
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    service._raise_login_failure()
+    assert manager.get_token() == "test-secret-token"
+    assert AccessTokenManager("test-account", store).get_token() == (
+        "test-secret-token"
+    )
+    assert updates == [
+        "账号登录成功，Access-Token 已安全保存，正在确认登录状态……"
+    ]
+    assert all("test-secret-token" not in update for update in updates)
+
+
+def test_successful_login_without_access_token_is_rejected(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    manager = AccessTokenManager("test-account", MemoryAccessTokenStore())
+    service = LoginService(  # type: ignore[arg-type]
+        FakePage(settings),
+        settings,
+        access_token_manager=manager,
+    )
+    response = FakeLoginResponse(
+        settings,
+        status=200,
+        payload={"appcode": "0", "msg": "登录成功", "map": {}},
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    with pytest.raises(AuthenticationFailedError, match="缺少 Access-Token"):
+        service._raise_login_failure()
+    assert manager.get_token() is None
+
+
+def test_business_error_is_rejected_even_with_http_200(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeLoginResponse(
+        settings,
+        status=200,
+        payload={"appcode": "test-error-code", "msg": "测试业务错误"},
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    with pytest.raises(AuthenticationFailedError, match="测试业务错误"):
+        service._raise_login_failure()
+
+
+def test_unit_password_login_listener_ignores_other_paths(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeLoginResponse(
+        settings,
+        status=500,
+        payload={"appcode": "test-error-code", "msg": "不应捕获"},
+    )
+    response.url += "/other"
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    service._raise_login_failure()
 
 
 def test_unit_login_does_not_submit_when_credentials_are_incomplete(

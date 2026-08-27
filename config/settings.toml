@@ -23,20 +23,35 @@ engine = "chromium"
 # firefox/webkit 不支持 channel，使用它们时必须填写空字符串。
 channel = ""
 
-# 智慧人社需要人工安全验证，因此始终使用可见浏览器。
-headless = false
+# true 使用无头浏览器，false 显示浏览器窗口；所有智慧人社入口均服从此配置。
+headless = true
 silent_session_check = false
 slow_mo_ms = 100
 navigation_timeout_ms = 60000
 manual_login_timeout_seconds = 300
 
 # 相对于操作系统应用数据目录解析，不会写入程序安装目录。
-user_data_dir = "data/browser-profile-diagnostic-20260827"
-storage_state_path = "data/session-state-diagnostic-20260827.json"
+user_data_dir = "data/browser-profile"
+storage_state_path = "data/session-state.json"
 
 [rights_statement.site]
-login_url = "https://127.0.0.1:8000/web/login"
-page_url = "https://127.0.0.1:8000/web/center/unit/rightsBill"
+login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
+page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
+# 单位账号密码登录接口。这里只配置路径，主机和端口始终取 login_url。
+unit_password_login_path = "/zuul/api/auth/unit/unitPasswordLogin"
+
+[rights_statement.api]
+# 智慧人社业务接口只配置路径，主机和端口始终取 login_url。
+# 根据身份证或姓名查询人员，并返回打印所需的 bac001。
+query_common_path = "/api/ggfw-business-center/insurance/queryCommon"
+# 每次打印前领取服务端生成的 businessNo。
+acquire_business_no_path = "/api/ggfw-affair-base-center/affair/case/right/bill"
+# 使用 businessNo、险种、期间和 bac001 列表生成 Base64 PDF。
+load_unit_rights_bill_path = "/api/ggfw-business-center/insurance/loadUnitRightsBill"
+# 人员查询接口默认每页数量。
+page_size = 100
+# 单次业务 API 请求超时，单位毫秒。
+request_timeout_ms = 30000
 
 [rights_statement.credentials]
 # 这里只保存环境变量名称，不保存真实账号密码。
@@ -48,11 +63,13 @@ password_env = "EHRM_RIGHTS_PASSWORD"
 # 仅在白名单主机上启用自动验证。这里只填写主机/IP，不填写端口；
 # 因此 127.0.0.1:6066 和 127.0.0.1:8000 都匹配 127.0.0.1。
 enabled = true
-# 仅用于自有测试环境的浏览器特征对照实验。注入仍受 allowed_hosts 严格限制。
+# 仅当 login_url 命中 allowed_hosts 时，才对该测试 BrowserContext 启用官方 stealth 注入。
 stealth_enabled = true
 allowed_hosts = [
   "127.0.0.1",
-  "localhost"
+  "localhost",
+  "rs.jshrss.jiangsu.gov.cn",
+  "turing.captcha.qcloud.com"
 ]
 verify_path = "/cap_union_new_verify"
 max_attempts = 3
@@ -66,10 +83,11 @@ verify_timeout_ms = 15000
 image_change_timeout_ms = 10000
 
 [rights_statement.selectors.login]
-# 定位到 li.tab 本身，便于点击后校验 tab-active；:visible 避免命中隐藏面板。
-unit_login_tab = 'li.tab:visible:has-text("单位登录")'
-account_password_tab = 'li.tab:visible:has-text("账号密码")'
-# 以下定位器来自 Playwright 对智慧人社真实登录页的录制结果。
+# 以下定位器来自 Playwright 对登录页的实际录制结果：
+# “单位登录”只有一个匹配项；单位登录区域的“账号密码”是页面中的第二个同名项。
+unit_login_tab = 'text="单位登录"'
+account_password_tab = 'text="账号密码" >> nth=1'
+# 输入框定位器同样来自 Playwright 录制结果。
 # 图形安全验证仍由用户手动完成。
 credit_code = 'role=textbox[name="统一社会信用代码/单位编号/机构编号"]'
 mobile = 'role=textbox[name="证件号码/移动电话"]'

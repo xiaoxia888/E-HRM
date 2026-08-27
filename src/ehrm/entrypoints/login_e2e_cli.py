@@ -11,6 +11,10 @@ from tempfile import TemporaryDirectory
 
 from playwright.sync_api import Error as PlaywrightError
 
+from ehrm.browser.access_token import (
+    AccessTokenManager,
+    build_access_token_account_key,
+)
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
 from ehrm.browser.captcha_policy import is_allowed_host_url
@@ -21,7 +25,7 @@ from ehrm.core.settings import AppSettings, DEFAULT_SETTINGS_PATH, load_settings
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ehrm-login-e2e",
-        description="运行一次完整的可见浏览器登录端到端验证。",
+        description="按配置的浏览器模式运行一次完整登录端到端验证。",
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
     parser.add_argument(
@@ -84,7 +88,6 @@ def _isolated_settings(
         root = Path(temporary)
         browser = replace(
             settings.browser,
-            headless=False,
             silent_session_check=False,
             user_data_dir=root / "browser-profile",
             storage_state_path=root / "storage-state.json",
@@ -105,7 +108,8 @@ def _print_targets(settings: AppSettings) -> None:
     browser_name = settings.browser.channel or settings.browser.engine
     print(
         f"浏览器：{browser_name}（engine={settings.browser.engine}, "
-        f"channel={settings.browser.channel or '内置'}）"
+        f"channel={settings.browser.channel or '内置'}, "
+        f"mode={'无头' if settings.browser.headless else '可见'}）"
     )
     print(f"登录地址：{settings.site.login_url}")
     print(f"登录成功后的业务页：{settings.site.rights_statement_url}")
@@ -159,9 +163,15 @@ def main(argv: list[str] | None = None) -> int:
         with _isolated_settings(
             settings, reuse_profile=args.reuse_profile
         ) as runtime_settings:
+            access_tokens = AccessTokenManager(
+                build_access_token_account_key(
+                    runtime_settings.site.login_url,
+                    credit_code,
+                    mobile,
+                )
+            )
             with BrowserManager(
                 runtime_settings.browser,
-                headless=False,
                 ignore_https_errors=args.ignore_https_errors,
                 stealth_enabled=(
                     runtime_settings.captcha.stealth_enabled
@@ -172,7 +182,11 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             ) as browser:
                 page = browser.page
-                service = LoginService(page, runtime_settings)
+                service = LoginService(
+                    page,
+                    runtime_settings,
+                    access_token_manager=access_tokens,
+                )
                 try:
                     service.ensure_authenticated(
                         username=credit_code,
@@ -194,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"最终页面：{service.page.url}")
                 return 0
     except (EhrmError, OSError, PlaywrightError) as exc:
-        print(f"完整登录 E2E 验证失败：{exc}")
+        failure = str(exc)
+        details = getattr(exc, "details", None)
+        if details and details != failure:
+            failure += f"；{details}"
+        print(f"完整登录 E2E 验证失败：{failure}")
         return 1
 
 

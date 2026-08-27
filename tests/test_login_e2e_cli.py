@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.core.settings import load_settings
 from ehrm.entrypoints.login_e2e_cli import main
 
@@ -64,7 +65,16 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
     assert result == 0
     runtime_browser = browser_manager.call_args.args[0]
     assert runtime_browser.user_data_dir != settings.browser.user_data_dir
-    assert browser_manager.call_args.kwargs["stealth_enabled"] is True
+    assert runtime_browser.headless is settings.browser.headless
+    assert "headless" not in browser_manager.call_args.kwargs
+    expected_stealth = (
+        settings.captcha.stealth_enabled
+        and is_allowed_host_url(
+            settings.site.login_url,
+            settings.captcha.allowed_hosts,
+        )
+    )
+    assert browser_manager.call_args.kwargs["stealth_enabled"] is expected_stealth
     service.ensure_authenticated.assert_called_once_with(
         username=supplied[credentials.credit_code_env],
         mobile=supplied[credentials.mobile_env],

@@ -31,6 +31,7 @@ def test_browser_manager_forwards_configured_engine_and_channel(
 
     launch = browser_type.launch_persistent_context.call_args.kwargs
     assert launch["user_data_dir"] == settings.user_data_dir
+    assert launch["headless"] is settings.headless
     if settings.channel:
         assert launch["channel"] == settings.channel
     else:

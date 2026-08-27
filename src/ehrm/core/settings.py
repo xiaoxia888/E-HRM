@@ -47,6 +47,16 @@ class BrowserSettings:
 class SiteSettings:
     login_url: str
     rights_statement_url: str
+    unit_password_login_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class RightsApiSettings:
+    query_common_path: str
+    acquire_business_no_path: str
+    load_unit_rights_bill_path: str
+    page_size: int
+    request_timeout_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +194,7 @@ class OllamaSettings:
 class AppSettings:
     browser: BrowserSettings
     site: SiteSettings
+    rights_api: RightsApiSettings
     rights_credentials: RightsCredentialsSettings
     login: LoginSelectors
     captcha: CaptchaSettings
@@ -494,6 +505,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         rights_root, "browser", parent="rights_statement"
     )
     rights_site = _required_section(rights_root, "site", parent="rights_statement")
+    rights_api = _required_section(rights_root, "api", parent="rights_statement")
     rights_credentials = _required_section(
         rights_root, "credentials", parent="rights_statement"
     )
@@ -529,6 +541,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     common_name = "common"
     rights_browser_name = "rights_statement.browser"
     rights_site_name = "rights_statement.site"
+    rights_api_name = "rights_statement.api"
     rights_credentials_name = "rights_statement.credentials"
     rights_login_name = "rights_statement.selectors.login"
     rights_captcha_name = "rights_statement.captcha"
@@ -571,8 +584,62 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         )
     login_url = _text(rights_site, "login_url", rights_site_name)
     page_url = _text(rights_site, "page_url", rights_site_name)
+    unit_password_login_path = _text(
+        rights_site,
+        "unit_password_login_path",
+        rights_site_name,
+    )
     if not login_url:
         raise ConfigurationError("配置项 rights_statement.site.login_url 不能为空")
+    if not unit_password_login_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.site.unit_password_login_path 必须以 / 开头"
+        )
+    query_common_path = _text(
+        rights_api,
+        "query_common_path",
+        rights_api_name,
+    )
+    if not query_common_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.api.query_common_path 必须以 / 开头"
+        )
+    acquire_business_no_path = _text(
+        rights_api,
+        "acquire_business_no_path",
+        rights_api_name,
+    )
+    if not acquire_business_no_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.api.acquire_business_no_path 必须以 / 开头"
+        )
+    load_unit_rights_bill_path = _text(
+        rights_api,
+        "load_unit_rights_bill_path",
+        rights_api_name,
+    )
+    if not load_unit_rights_bill_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.api.load_unit_rights_bill_path 必须以 / 开头"
+        )
+    rights_api_page_size = _integer(
+        rights_api,
+        "page_size",
+        rights_api_name,
+    )
+    rights_api_request_timeout_ms = _integer(
+        rights_api,
+        "request_timeout_ms",
+        rights_api_name,
+    )
+    if rights_api_page_size < 1:
+        raise ConfigurationError(
+            "配置项 rights_statement.api.page_size 必须大于 0"
+        )
+    if rights_api_request_timeout_ms < 1:
+        raise ConfigurationError(
+            "配置项 rights_statement.api.request_timeout_ms 必须大于 0"
+        )
 
     ai_models, active_ai_model = _load_ai_models(
         ai_root,
@@ -665,6 +732,14 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         site=SiteSettings(
             login_url=login_url,
             rights_statement_url=page_url,
+            unit_password_login_path=unit_password_login_path,
+        ),
+        rights_api=RightsApiSettings(
+            query_common_path=query_common_path,
+            acquire_business_no_path=acquire_business_no_path,
+            load_unit_rights_bill_path=load_unit_rights_bill_path,
+            page_size=rights_api_page_size,
+            request_timeout_ms=rights_api_request_timeout_ms,
         ),
         rights_credentials=RightsCredentialsSettings(
             credit_code_env=_text(

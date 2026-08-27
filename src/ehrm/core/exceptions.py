@@ -35,6 +35,10 @@ class AuthenticationFailedError(EhrmError):
     code = ErrorCode.AUTHENTICATION_FAILED
 
 
+class RightsApiRequestError(EhrmError):
+    code = ErrorCode.RIGHTS_API_REQUEST_FAILED
+
+
 class EmployeeNotFoundError(EhrmError):
     code = ErrorCode.EMPLOYEE_NOT_FOUND
 

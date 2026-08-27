@@ -4,15 +4,24 @@ import os
 import time
 import logging
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page
+from playwright.sync_api import Page, Response
 
+from ehrm.browser.access_token import (
+    AccessTokenManager,
+    build_access_token_account_key,
+)
 from ehrm.browser.captcha_policy import (
     is_allowed_host_url,
     url_without_sensitive_query,
 )
-from ehrm.core.exceptions import AuthenticationFailedError, TaskCancelledError
+from ehrm.core.exceptions import (
+    AuthenticationFailedError,
+    EhrmError,
+    TaskCancelledError,
+)
 from ehrm.core.settings import AppSettings
 
 
@@ -28,13 +37,18 @@ class LoginService:
         settings: AppSettings,
         cancel_check: Callable[[], bool] | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        access_token_manager: AccessTokenManager | None = None,
     ) -> None:
         self.page = page
         self.settings = settings
         self.cancel_check = cancel_check
         self._progress_callback = progress_callback
+        self._access_token_manager = access_token_manager
         self._manual_login_status: str | None = None
+        self._login_failure: AuthenticationFailedError | None = None
+        self._response_listener_page_ids: set[int] = set()
         self._context = getattr(page, "context", None)
+        self._listen_for_login_response(page)
         if self._context is not None:
             # Some login gateways replace the original tab with a newly opened
             # page. Keep the service attached to that page instead of retaining
@@ -43,6 +57,115 @@ class LoginService:
 
     def _adopt_page(self, page: Page) -> None:
         self.page = page
+        self._listen_for_login_response(page)
+
+    def _listen_for_login_response(self, page: object) -> None:
+        page_id = id(page)
+        if page_id in self._response_listener_page_ids:
+            return
+        on = getattr(page, "on", None)
+        if not callable(on):
+            return
+        on("response", self._capture_login_response)
+        self._response_listener_page_ids.add(page_id)
+
+    def _capture_login_response(self, response: Response) -> None:
+        """Captures the unit-password result without raising in an event hook."""
+        try:
+            if not self._is_unit_password_login_response(response):
+                return
+            try:
+                payload = response.json()
+            except (PlaywrightError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            appcode = str(payload.get("appcode") or "").strip()
+            message = str(payload.get("msg") or "").strip()
+            status = response.status
+            _LOGGER.info(
+                "单位账号密码登录接口响应 HTTP=%s appcode=%s msg=%s",
+                status,
+                appcode or "无",
+                message or "无",
+            )
+
+            business_failed = bool(appcode and appcode != "0")
+            if status >= 400 or business_failed:
+                visible_message = message or f"账号登录接口返回 HTTP {status}"
+                details = f"HTTP={status}，appcode={appcode or '无'}"
+                self._login_failure = AuthenticationFailedError(
+                    visible_message,
+                    details=details,
+                )
+                self._progress(
+                    f"登录失败：{visible_message}（{details}）"
+                )
+            elif appcode == "0":
+                self._store_successful_access_token(payload)
+            else:
+                summary = f"HTTP={status}"
+                if appcode:
+                    summary += f"，appcode={appcode}"
+                self._progress(f"账号登录接口已返回（{summary}），正在确认登录状态……")
+        except Exception:
+            # Playwright event callbacks must not interrupt its internal event loop.
+            _LOGGER.exception("解析单位账号密码登录接口响应失败")
+
+    def _store_successful_access_token(self, payload: dict[str, object]) -> None:
+        raw_map = payload.get("map")
+        response_map = raw_map if isinstance(raw_map, dict) else {}
+        token = str(response_map.get("Access-Token") or "").strip()
+        if not token:
+            self._login_failure = AuthenticationFailedError(
+                "登录成功响应中缺少 Access-Token",
+                details="appcode=0，但 map.Access-Token 为空",
+            )
+            self._progress("登录失败：登录成功响应中缺少 Access-Token")
+            return
+        if self._access_token_manager is None:
+            self._login_failure = AuthenticationFailedError(
+                "Access-Token 管理器尚未初始化"
+            )
+            self._progress("登录失败：Access-Token 管理器尚未初始化")
+            return
+        try:
+            self._access_token_manager.save_token(token)
+        except (EhrmError, OSError, ValueError) as exc:
+            self._login_failure = AuthenticationFailedError(
+                "Access-Token 安全保存失败",
+                details=str(exc),
+            )
+            self._progress(f"登录失败：Access-Token 安全保存失败：{exc}")
+            return
+        _LOGGER.info("智慧人社 Access-Token 已保存到内存和安全存储")
+        self._progress(
+            "账号登录成功，Access-Token 已安全保存，正在确认登录状态……"
+        )
+
+    def _is_unit_password_login_response(self, response: Response) -> bool:
+        try:
+            if response.request.method.upper() != "POST":
+                return False
+            actual = urlsplit(response.url)
+            configured = urlsplit(self.settings.site.login_url)
+            expected_path = self.settings.site.unit_password_login_path.rstrip("/")
+            return (
+                actual.scheme.casefold() == configured.scheme.casefold()
+                and actual.netloc.casefold() == configured.netloc.casefold()
+                and actual.path.rstrip("/") == expected_path
+            )
+        except (AttributeError, ValueError):
+            return False
+
+    def _raise_login_failure(self) -> None:
+        if self._login_failure is not None:
+            raise self._login_failure
+
+    @property
+    def access_token_manager(self) -> AccessTokenManager | None:
+        return self._access_token_manager
 
     def _open_pages(self) -> list[Page]:
         if self._context is None:
@@ -88,10 +211,7 @@ class LoginService:
         mobile: str | None = None,
     ) -> None:
         self._manual_login_status = None
-        self._open_login_entry()
-        if self.is_authenticated():
-            return
-
+        self._login_failure = None
         credentials = self.settings.rights_credentials
         credit_code = (
             username
@@ -108,12 +228,25 @@ class LoginService:
             or credentials.password
             or os.getenv(credentials.password_env)
         )
+        if self._access_token_manager is None:
+            account_key = build_access_token_account_key(
+                self.settings.site.login_url,
+                credit_code,
+                mobile_number,
+            )
+            self._access_token_manager = AccessTokenManager(account_key)
+
+        self._open_login_entry()
+        if self.is_authenticated():
+            return
+
         submitted = self._autofill_and_submit(
             credit_code=credit_code,
             mobile=mobile_number,
             password=resolved_password,
         )
         captcha_solved = submitted and self._try_automated_captcha()
+        self._raise_login_failure()
 
         if not captcha_solved:
             self._progress(
@@ -122,6 +255,7 @@ class LoginService:
             )
         deadline = time.monotonic() + self.settings.browser.manual_login_timeout_seconds
         while time.monotonic() < deadline:
+            self._raise_login_failure()
             if self.cancel_check is not None and self.cancel_check():
                 raise TaskCancelledError("用户在登录阶段停止任务")
             if self.is_authenticated():

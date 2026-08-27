@@ -139,6 +139,25 @@ ehrm download \
 
 用户可见的中文异常文案集中维护在 `config/error_messages.toml`。编码键属于系统协议，不应修改或删除；等号右侧中文可以按业务口径调整。程序启动时会校验每个 `ErrorCode` 都存在映射，缺项、未知编码或 TOML 格式错误都会在任务开始前报出配置错误。
 
+登录成功并保存 Access-Token 后，可以通过工作台的面向对象 API 查询人员：
+
+```python
+from ehrm.modules.rights_statement.api_models import PersonQueryRequest
+
+result = workbench.query_people(
+    PersonQueryRequest(
+        identity_number="测试身份证号",
+        name="",
+        start_month="202601",
+        end_month="202608",
+    )
+)
+for person in result.records:
+    print(person.person_id, person.identity_number, person.name)
+```
+
+`person.person_id` 对应接口字段 `bac001`，供后续权益单生成和 PDF 下载接口使用。请求使用浏览器关联的 `APIRequestContext`，因此会复用当前登录 Cookie，同时从 `AccessTokenManager` 获取内存中的 Token；Token 不进入日志或普通配置文件。接口路径、请求头名称、`apiCode`、分页大小和超时统一维护在 `[rights_statement.api]`。
+
 也可以通过 `EHRM_USERNAME`、`EHRM_PASSWORD` 环境变量提供登录信息。不要把密码写入 TOML、命令参数或源码。
 
 首次运行或登录状态过期时，程序会进入登录页面。验证码页面主机和图片/校验接口主机都在 `rights_statement.captcha.allowed_hosts` 中时，程序会自动识别并按顺序点击；否则等待人工完成。验证成功后继续执行，后续运行复用 `data/browser-profile/` 内的合法登录会话。

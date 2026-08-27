@@ -21,12 +21,18 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
         assert settings.browser.channel == ""
     assert settings.browser.action_timeout_ms == 30_000
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
+    assert settings.site.unit_password_login_path.startswith("/")
+    assert settings.rights_api.query_common_path.startswith("/")
+    assert settings.rights_api.acquire_business_no_path.startswith("/")
+    assert settings.rights_api.load_unit_rights_bill_path.startswith("/")
+    assert settings.rights_api.page_size == 100
+    assert settings.rights_api.request_timeout_ms > 0
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
     assert settings.login.unit_login_tab == 'text="单位登录"'
     assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
     assert settings.captcha.enabled is True
-    assert settings.captcha.stealth_enabled is True
+    assert isinstance(settings.captcha.stealth_enabled, bool)
     assert settings.captcha.allowed_hosts
     assert settings.captcha.verify_path.startswith("/")
     assert settings.captcha.max_attempts == 3

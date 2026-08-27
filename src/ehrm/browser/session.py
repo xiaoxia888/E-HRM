@@ -7,6 +7,10 @@ import os
 
 from playwright.sync_api import Error as PlaywrightError
 
+from ehrm.browser.access_token import (
+    AccessTokenManager,
+    build_access_token_account_key,
+)
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
@@ -21,13 +25,21 @@ def authenticated_browser(
     password: str | None = None,
     mobile: str | None = None,
 ) -> Iterator[BrowserManager]:
-    """Uses headless mode when a saved session is valid, otherwise hands off to a human."""
+    """Uses the configured browser mode and restores any saved login session."""
 
     stealth_enabled = (
         settings.captcha.stealth_enabled
         and is_allowed_host_url(
             settings.site.login_url,
             settings.captcha.allowed_hosts,
+        )
+    )
+    credentials = settings.rights_credentials
+    token_manager = AccessTokenManager(
+        build_access_token_account_key(
+            settings.site.login_url,
+            username or credentials.credit_code,
+            mobile or credentials.mobile,
         )
     )
 
@@ -39,7 +51,11 @@ def authenticated_browser(
                 stealth_enabled=stealth_enabled,
             ) as checker:
                 _restore_storage_state(checker, settings)
-                if LoginService(checker.page, settings).check_authenticated():
+                if LoginService(
+                    checker.page,
+                    settings,
+                    access_token_manager=token_manager,
+                ).check_authenticated():
                     try:
                         yield checker
                     finally:
@@ -49,18 +65,18 @@ def authenticated_browser(
             # A site can refuse headless mode. The visible human-login path remains usable.
             pass
 
-    print("登录状态已失效，即将打开可见浏览器供人工登录。")
+    browser_mode = "无头浏览器" if settings.browser.headless else "可见浏览器"
+    print(f"登录状态已失效，即将打开{browser_mode}完成登录。")
     with BrowserManager(
         settings.browser,
-        headless=False,
         stealth_enabled=stealth_enabled,
     ) as browser:
         _restore_storage_state(browser, settings)
-        LoginService(browser.page, settings).ensure_authenticated(
-            username,
-            password,
-            mobile,
-        )
+        LoginService(
+            browser.page,
+            settings,
+            access_token_manager=token_manager,
+        ).ensure_authenticated(username, password, mobile)
         _save_storage_state(browser, settings)
         print("登录成功，程序将在当前浏览器中继续自动执行。")
         try:
