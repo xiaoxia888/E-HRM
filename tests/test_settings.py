@@ -23,8 +23,8 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
-    assert settings.login.unit_login_tab.startswith("li.tab:visible")
-    assert settings.login.account_password_tab.startswith("li.tab:visible")
+    assert settings.login.unit_login_tab == 'text="单位登录"'
+    assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
     assert settings.captcha.enabled is True
     assert settings.captcha.stealth_enabled is True
     assert settings.captcha.allowed_hosts

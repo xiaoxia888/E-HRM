@@ -13,6 +13,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
+from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.settings import AppSettings, DEFAULT_SETTINGS_PATH, load_settings
 
@@ -162,10 +163,12 @@ def main(argv: list[str] | None = None) -> int:
                 runtime_settings.browser,
                 headless=False,
                 ignore_https_errors=args.ignore_https_errors,
-                stealth_allowed_hosts=(
-                    runtime_settings.captcha.allowed_hosts
-                    if runtime_settings.captcha.stealth_enabled
-                    else ()
+                stealth_enabled=(
+                    runtime_settings.captcha.stealth_enabled
+                    and is_allowed_host_url(
+                        runtime_settings.site.login_url,
+                        runtime_settings.captcha.allowed_hosts,
+                    )
                 ),
             ) as browser:
                 page = browser.page

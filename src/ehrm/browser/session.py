@@ -7,6 +7,7 @@ import os
 
 from playwright.sync_api import Error as PlaywrightError
 
+from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
 from ehrm.core.settings import AppSettings
@@ -22,10 +23,12 @@ def authenticated_browser(
 ) -> Iterator[BrowserManager]:
     """Uses headless mode when a saved session is valid, otherwise hands off to a human."""
 
-    stealth_hosts = (
-        settings.captcha.allowed_hosts
-        if settings.captcha.stealth_enabled
-        else ()
+    stealth_enabled = (
+        settings.captcha.stealth_enabled
+        and is_allowed_host_url(
+            settings.site.login_url,
+            settings.captcha.allowed_hosts,
+        )
     )
 
     if settings.browser.silent_session_check:
@@ -33,7 +36,7 @@ def authenticated_browser(
             with BrowserManager(
                 settings.browser,
                 headless=True,
-                stealth_allowed_hosts=stealth_hosts,
+                stealth_enabled=stealth_enabled,
             ) as checker:
                 _restore_storage_state(checker, settings)
                 if LoginService(checker.page, settings).check_authenticated():
@@ -50,7 +53,7 @@ def authenticated_browser(
     with BrowserManager(
         settings.browser,
         headless=False,
-        stealth_allowed_hosts=stealth_hosts,
+        stealth_enabled=stealth_enabled,
     ) as browser:
         _restore_storage_state(browser, settings)
         LoginService(browser.page, settings).ensure_authenticated(

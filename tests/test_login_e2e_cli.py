@@ -64,6 +64,7 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
     assert result == 0
     runtime_browser = browser_manager.call_args.args[0]
     assert runtime_browser.user_data_dir != settings.browser.user_data_dir
+    assert browser_manager.call_args.kwargs["stealth_enabled"] is True
     service.ensure_authenticated.assert_called_once_with(
         username=supplied[credentials.credit_code_env],
         mobile=supplied[credentials.mobile_env],

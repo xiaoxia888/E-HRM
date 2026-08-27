@@ -37,7 +37,7 @@ def test_browser_manager_forwards_configured_engine_and_channel(
         assert "channel" not in launch
 
 
-def test_browser_manager_limits_stealth_script_to_allowed_hosts(
+def test_browser_manager_uses_official_stealth_context_api(
     tmp_path: Path,
 ) -> None:
     settings = load_settings(
@@ -56,7 +56,6 @@ def test_browser_manager_limits_stealth_script_to_allowed_hosts(
     starter = Mock()
     starter.start.return_value = playwright
     stealth = Mock()
-    stealth.script_payload = "globalThis.__ehrmStealthApplied = true;"
 
     with (
         patch("ehrm.browser.manager.sync_playwright", return_value=starter),
@@ -64,18 +63,14 @@ def test_browser_manager_limits_stealth_script_to_allowed_hosts(
     ):
         with BrowserManager(
             settings.browser,
-            stealth_allowed_hosts=settings.captcha.allowed_hosts,
+            stealth_enabled=True,
         ):
             pass
 
-    script = context.add_init_script.call_args.kwargs["script"]
-    for host in settings.captcha.allowed_hosts:
-        assert host in script
-    assert settings.site.login_url.split("://", 1)[1].split(":", 1)[0] in script
-    assert "__ehrmStealthApplied" in script
+    stealth.apply_stealth_sync.assert_called_once_with(context)
 
 
-def test_browser_manager_does_not_load_stealth_without_allowed_hosts(
+def test_browser_manager_does_not_load_stealth_when_disabled(
     tmp_path: Path,
 ) -> None:
     settings = load_settings(

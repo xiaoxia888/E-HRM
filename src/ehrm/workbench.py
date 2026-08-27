@@ -6,6 +6,7 @@ from typing import Callable
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
 from ehrm.core.settings import AppSettings
@@ -131,15 +132,17 @@ class DesktopWorkbench:
             self._progress_callback(message)
 
     def _start_browser(self) -> None:
-        stealth_hosts = (
-            self.settings.captcha.allowed_hosts
-            if self.settings.captcha.stealth_enabled
-            else ()
+        stealth_enabled = (
+            self.settings.captcha.stealth_enabled
+            and is_allowed_host_url(
+                self.settings.site.login_url,
+                self.settings.captcha.allowed_hosts,
+            )
         )
         browser = BrowserManager(
             self.settings.browser,
             headless=False,
-            stealth_allowed_hosts=stealth_hosts,
+            stealth_enabled=stealth_enabled,
         )
         browser.__enter__()
         self._browser = browser

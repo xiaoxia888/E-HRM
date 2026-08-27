@@ -158,7 +158,7 @@ verify_path = "/cap_union_new_verify"
 click_offset_max_px = 3
 ```
 
-`stealth_enabled` 仅用于自有测试环境的浏览器特征对照实验。启用后仍会对每个页面的 hostname 执行 `allowed_hosts` 精确匹配；未列入白名单的页面保留原始 Playwright 特征。设置为 `false` 可完全关闭注入。`playwright-stealth` 本身只是实验性特征修正，不保证改变任何验证服务的判定。
+`stealth_enabled` 仅用于自有测试环境的浏览器特征对照实验。程序启动浏览器前会将 `login_url` 与 `allowed_hosts` 精确匹配；只有命中时，才会通过官方 `apply_stealth_sync(context)` 为该专用 BrowserContext 启用注入，同时覆盖其验证码 iframe。注入中关闭了 platform、languages 和 WebGL 改写，保留浏览器真实系统值。设置为 `false` 可完全关闭。`playwright-stealth` 本身只是实验性特征修正，不保证改变任何验证服务的判定。
 
 `click_offset_max_px` 控制识别点在网页 CSS 像素中的最大随机偏移，实际偏移会被限制在匹配框内部；设置为 `0` 可关闭偏移。
 

@@ -319,14 +319,17 @@ class LoginService:
         candidates = page.locator(selector)
         timeout = self.settings.browser.action_timeout_ms
         try:
+            # The login tabs are rendered asynchronously by Vue after
+            # DOMContentLoaded. Wait for the configured occurrence before
+            # checking uniqueness; an immediate count can transiently be 0.
+            tab = candidates.first
+            tab.wait_for(state="visible", timeout=timeout)
             count = candidates.count()
             if count != 1:
                 raise AuthenticationFailedError(
                     f"无法唯一定位“{label}”登录方式",
                     details=f"当前可见匹配数量：{count}；定位器：{selector}",
                 )
-            tab = candidates.first
-            tab.wait_for(state="visible", timeout=timeout)
             if not self._tab_is_active(tab):
                 tab.click()
 
@@ -348,14 +351,23 @@ class LoginService:
 
         raise AuthenticationFailedError(
             f"选择“{label}”登录方式后未进入激活状态",
-            details=f"未检测到 CSS 类 tab-active；定位器：{selector}",
+            details=(
+                "未检测到 CSS 类 tab-active 或 tab-active-r；"
+                f"定位器：{selector}"
+            ),
         )
 
     @staticmethod
     def _tab_is_active(tab: object) -> bool:
         return bool(
             tab.evaluate(  # type: ignore[attr-defined]
-                "element => element.classList.contains('tab-active')"
+                "element => {"
+                "const classes = element.closest('li.tab')?.classList;"
+                "return Boolean("
+                "classes?.contains('tab-active') || "
+                "classes?.contains('tab-active-r')"
+                ");"
+                "}"
             )
         )
 

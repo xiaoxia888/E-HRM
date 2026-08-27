@@ -40,6 +40,20 @@ class FakeLocator:
         return self.active
 
 
+class DelayedFakeLocator(FakeLocator):
+    """Simulates a Vue tab that appears after DOMContentLoaded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready = False
+
+    def count(self) -> int:
+        return 1 if self.ready else 0
+
+    def wait_for(self, **_: object) -> None:
+        self.ready = True
+
+
 class FakePage:
     def __init__(self, settings) -> None:
         self.fields = {
@@ -73,6 +87,20 @@ def test_login_method_tabs_are_clicked_and_verified_active(tmp_path: Path) -> No
     assert page.fields[settings.login.unit_login_tab].active is True
     assert page.fields[settings.login.account_password_tab].clicked is True
     assert page.fields[settings.login.account_password_tab].active is True
+
+
+def test_login_method_waits_for_vue_render_before_counting(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakePage(settings)
+    delayed_tab = DelayedFakeLocator()
+    page.fields[settings.login.unit_login_tab] = delayed_tab
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    service._ensure_login_tab_active(settings.login.unit_login_tab, "单位登录")
+
+    assert delayed_tab.ready is True
+    assert delayed_tab.clicked is True
+    assert delayed_tab.active is True
 
 
 def test_login_method_tab_must_reach_active_state(tmp_path: Path) -> None:

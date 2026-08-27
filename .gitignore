@@ -7,7 +7,6 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
-.test-venv/
 
 # Browser/network captures may contain credentials, tokens and business data.
 *.har
