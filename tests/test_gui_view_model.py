@@ -843,6 +843,39 @@ def test_cancelled_result_is_presented_separately_from_failures(
     assert messages[0][1] == "已完成 1 人，未处理 1 人"
 
 
+def test_completed_result_displays_specific_failure_reason(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    messages: list[tuple[str, str, str]] = []
+    view_model.executionFinished.connect(
+        lambda title, message, details: messages.append((title, message, details))
+    )
+    result = ExcelRunResult(
+        mode=ExportMode.BATCH,
+        total=1,
+        succeeded=0,
+        failed=1,
+        manifest_path=tmp_path / "result.json",
+        result_workbook_path=tmp_path / "result.xlsx",
+        items=(
+            ItemResult(
+                2,
+                False,
+                "RIGHTS_API_REQUEST_FAILED",
+                "智慧人社业务接口请求失败\n权益单打印接口响应超时，请稍后再试",
+            ),
+        ),
+    )
+
+    view_model._on_completed(result)
+
+    assert application is not None
+    assert "失败原因" in messages[0][2]
+    assert "权益单打印接口响应超时" in messages[0][2]
+
+
 def test_completed_result_exposes_unique_existing_pdf_files(
     tmp_path: Path,
 ) -> None:

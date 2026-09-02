@@ -31,7 +31,7 @@ channel = ""
 
 # true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
 # browser 后端需要人工观察或接管登录时，应设置为 false。
-headless = true
+headless = false
 silent_session_check = false
 slow_mo_ms = 100
 navigation_timeout_ms = 60000
@@ -57,7 +57,7 @@ acquire_business_no_path = "/api/ggfw-affair-base-center/affair/case/right/bill"
 load_unit_rights_bill_path = "/api/ggfw-business-center/insurance/loadUnitRightsBill"
 # 人员查询接口默认每页数量。
 page_size = 100
-# 单次业务 API 请求超时，单位毫秒。
+# 单次业务 API 请求超时，单位毫秒；正常接口应快速返回，此值仅作为异常保护上限。
 request_timeout_ms = 30000
 
 [rights_statement.credentials]
@@ -88,7 +88,7 @@ click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
 click_offset_max_px = 3
 # 是否保存验证码识别诊断图片；正常运行建议关闭。
-diagnostic_images_enabled = false
+diagnostic_images_enabled = true
 # 开启后按运行批次保存目标图、背景图和标注最终点击顺序的结果图。
 # 相对于程序的 runtime 目录解析，源码和安装环境使用相同目录结构。
 diagnostic_output_dir = "diagnostics/captcha"
@@ -147,6 +147,21 @@ download_ready = "text=缴费月数"
 download_button = 'role=button[name="图标: download 下载"]'
 preview_dialog = ".ant-modal:visible"
 close_preview = 'role=button[name="Close"]'
+
+# -----------------------------------------------------------------------------
+# NocoBase 权益单申请模块
+# -----------------------------------------------------------------------------
+
+[nocobase.site]
+# NocoBase 服务地址集中配置，业务代码和测试中不写死主机、端口。
+base_url = "http://211.138.201.5:443"
+sign_in_path = "/api/auth:signIn"
+request_timeout_ms = 15000
+
+[nocobase.credentials]
+# 这里只配置环境变量名称，不在配置文件中保存真实账号密码。
+account_env = "EHRM_NOCOBASE_ACCOUNT"
+password_env = "EHRM_NOCOBASE_PASSWORD"
 
 # -----------------------------------------------------------------------------
 # ERP 附件模块

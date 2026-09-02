@@ -31,10 +31,11 @@ class ExceptionManager:
         if isinstance(exc, EhrmError):
             message = display_message(exc.code, exc.message)
             self.logger.error(
-                "任务失败 code=%s message=%s internal=%s diagnostic=%s",
+                "任务失败 code=%s message=%s internal=%s details=%s diagnostic=%s",
                 exc.code,
                 message,
                 exc.message,
+                exc.details,
                 diagnostic,
             )
             return ExecutionResult(

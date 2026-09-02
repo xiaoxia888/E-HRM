@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.browser.access_token import AccessTokenManager, MemoryAccessTokenStore
 from ehrm.core.exceptions import (
@@ -38,7 +39,7 @@ class FakeResponse:
 
 
 class FakeRequestContext:
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(self, responses: list[FakeResponse | Exception]) -> None:
         self.responses = responses
         self.calls: list[dict[str, object]] = []
 
@@ -46,7 +47,10 @@ class FakeRequestContext:
         self.calls.append({"url": url, **kwargs})
         if not self.responses:
             raise AssertionError("测试响应数量不足")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def _success_payload() -> dict[str, object]:
@@ -93,7 +97,10 @@ def _business_no_response(
     )
 
 
-def _client(tmp_path: Path, responses: FakeResponse | list[FakeResponse]):
+def _client(
+    tmp_path: Path,
+    responses: FakeResponse | list[FakeResponse | Exception],
+):
     settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
     store = MemoryAccessTokenStore()
     tokens = AccessTokenManager("test-account", store)
@@ -211,6 +218,31 @@ def test_generate_rights_bill_posts_expected_payload_and_decodes_pdf(
     assert call["timeout"] == settings.rights_api.request_timeout_ms
     assert business_response.disposed is True
     assert response.disposed is True
+
+
+def test_print_timeout_returns_actionable_message(tmp_path: Path) -> None:
+    settings, _, _, _, client = _client(
+        tmp_path,
+        [
+            _business_no_response(),
+            PlaywrightError("APIRequestContext.post: Timeout exceeded"),
+        ],
+    )
+
+    with pytest.raises(RightsApiRequestError) as error:
+        client.generate_rights_bill(
+            RightsBillPrintRequest(
+                "202601",
+                "202608",
+                InsuranceCode.PENSION,
+                ("person-1",),
+            )
+        )
+
+    assert settings.rights_api.request_timeout_ms == 30_000
+    assert error.value.message == "权益单打印接口响应超时，请稍后再试"
+    assert error.value.details is not None
+    assert "请勿立即连续重复提交" in error.value.details
 
 
 def test_print_diagnostic_exposes_request_and_response_without_token(

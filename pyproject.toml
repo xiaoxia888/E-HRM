@@ -29,6 +29,7 @@ ehrm-erp-extract = "ehrm.entrypoints.erp_task_extraction_cli:main"
 ehrm-login-e2e = "ehrm.entrypoints.login_e2e_cli:main"
 ehrm-rights-api-e2e = "ehrm.entrypoints.rights_api_e2e_cli:main"
 ehrm-captcha-match-test = "ehrm.entrypoints.captcha_match_cli:main"
+ehrm-nocobase-login-test = "ehrm.entrypoints.nocobase_login_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

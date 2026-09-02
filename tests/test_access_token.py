@@ -37,3 +37,14 @@ def test_access_token_manager_invalidates_memory_and_persistent_store() -> None:
 
     assert manager.get_token() is None
     assert AccessTokenManager("test-account", store).get_token() is None
+
+
+def test_manager_reloads_token_saved_by_another_manager_after_empty_cache() -> None:
+    store = MemoryAccessTokenStore()
+    waiting_manager = AccessTokenManager("test-account", store)
+    login_manager = AccessTokenManager("test-account", store)
+
+    assert waiting_manager.get_token() is None
+    login_manager.save_token("new-access-token")
+
+    assert waiting_manager.get_token() == "new-access-token"

@@ -1711,6 +1711,17 @@ class DesktopViewModel(QObject):
             f"结果 Excel：{result.result_workbook_path or '生成失败'}\n"
             f"结果清单：{result.manifest_path}"
         )
+        failure_reasons = list(
+            dict.fromkeys(
+                item.message.strip()
+                for item in result.items
+                if not item.success
+                and item.code != str(ErrorCode.TASK_CANCELLED)
+                and item.message.strip()
+            )
+        )
+        if failure_reasons:
+            details += "\n\n失败原因：\n" + "\n\n".join(failure_reasons)
         self.executionFinished.emit(title, message, details)
         if self._preferences.open_output_folder and self._last_output_dir is not None:
             self.openFolder(str(self._last_output_dir))

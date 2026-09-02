@@ -72,7 +72,9 @@ class AccessTokenManager:
 
     def get_token(self) -> str | None:
         with self._lock:
-            if not self._loaded:
+            # A separate login/test worker may refresh this account's token.
+            # Do not cache an empty vault result forever.
+            if not self._loaded or self._token is None:
                 persisted = self._store.load_token(self.account_key)
                 self._token = persisted.strip() if persisted else None
                 self._loaded = True

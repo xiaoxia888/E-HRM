@@ -12,7 +12,7 @@ from playwright.sync_api import Page
 from ehrm.browser.download import DownloadManager
 from ehrm.browser.session import authenticated_browser
 from ehrm.core.error_catalog import ErrorCode, display_message
-from ehrm.core.exceptions import TaskCancelledError
+from ehrm.core.exceptions import EhrmError, TaskCancelledError
 from ehrm.core.exception_handler import ExceptionManager
 from ehrm.core.settings import AppSettings
 from ehrm.modules.rights_statement.excel_models import (
@@ -323,7 +323,14 @@ class ExcelRightsStatementService:
         page: Page | None,
     ) -> tuple[str, str]:
         result = self.exceptions.handle(exc, page)
-        return result.code, result.message
+        if not isinstance(exc, EhrmError):
+            return result.code, result.message
+        messages = [result.message]
+        if exc.message and exc.message not in messages:
+            messages.append(exc.message)
+        if exc.details and exc.details not in messages:
+            messages.append(exc.details)
+        return result.code, "\n".join(messages)
 
     @classmethod
     def _download_target(

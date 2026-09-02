@@ -151,6 +151,15 @@ class ErpLoginSelectors:
 
 
 @dataclass(frozen=True, slots=True)
+class NocoBaseSettings:
+    base_url: str
+    sign_in_path: str
+    request_timeout_ms: int
+    account_env: str
+    password_env: str
+
+
+@dataclass(frozen=True, slots=True)
 class ErpSettings:
     base_url: str
     login_url: str
@@ -211,6 +220,7 @@ class AppSettings:
     captcha: CaptchaSettings
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
+    nocobase: NocoBaseSettings
     erp: ErpSettings
     ai: OllamaSettings
     ai_models: tuple[OllamaSettings, ...]
@@ -549,6 +559,14 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         erp_selectors, "login", parent="erp.selectors"
     )
 
+    nocobase_root = _required_section(data, "nocobase")
+    nocobase_site = _required_section(
+        nocobase_root, "site", parent="nocobase"
+    )
+    nocobase_credentials = _required_section(
+        nocobase_root, "credentials", parent="nocobase"
+    )
+
     ai_root = _required_section(data, "ai")
 
     relative_root = data_root or Path.cwd()
@@ -567,6 +585,8 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     erp_upload_name = "erp.upload"
     erp_credentials_name = "erp.credentials"
     erp_login_name = "erp.selectors.login"
+    nocobase_site_name = "nocobase.site"
+    nocobase_credentials_name = "nocobase.credentials"
 
     action_timeout_ms = _integer(common, "action_timeout_ms", common_name)
     raw_rights_print_backend = _text(
@@ -667,6 +687,32 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     if rights_api_request_timeout_ms < 1:
         raise ConfigurationError(
             "配置项 rights_statement.api.request_timeout_ms 必须大于 0"
+        )
+
+    nocobase_base_url = _text(
+        nocobase_site,
+        "base_url",
+        nocobase_site_name,
+    ).rstrip("/")
+    nocobase_sign_in_path = _text(
+        nocobase_site,
+        "sign_in_path",
+        nocobase_site_name,
+    )
+    nocobase_request_timeout_ms = _integer(
+        nocobase_site,
+        "request_timeout_ms",
+        nocobase_site_name,
+    )
+    if not nocobase_base_url:
+        raise ConfigurationError("配置项 nocobase.site.base_url 不能为空")
+    if not nocobase_sign_in_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 nocobase.site.sign_in_path 必须以 / 开头"
+        )
+    if nocobase_request_timeout_ms < 1:
+        raise ConfigurationError(
+            "配置项 nocobase.site.request_timeout_ms 必须大于 0"
         )
 
     ai_models, active_ai_model = _load_ai_models(
@@ -873,6 +919,21 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             download_button=_text(rights_page, "download_button", rights_page_name),
             preview_dialog=_text(rights_page, "preview_dialog", rights_page_name),
             close_preview=_text(rights_page, "close_preview", rights_page_name),
+        ),
+        nocobase=NocoBaseSettings(
+            base_url=nocobase_base_url,
+            sign_in_path=nocobase_sign_in_path,
+            request_timeout_ms=nocobase_request_timeout_ms,
+            account_env=_text(
+                nocobase_credentials,
+                "account_env",
+                nocobase_credentials_name,
+            ),
+            password_env=_text(
+                nocobase_credentials,
+                "password_env",
+                nocobase_credentials_name,
+            ),
         ),
         erp=ErpSettings(
             base_url=_text(erp_site, "base_url", erp_site_name),

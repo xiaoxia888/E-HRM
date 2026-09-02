@@ -48,6 +48,12 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     )
     assert settings.erp.base_url
     assert settings.erp.headless is True
+    assert settings.nocobase.base_url == configured["nocobase"]["site"][
+        "base_url"
+    ]
+    assert settings.nocobase.sign_in_path == "/api/auth:signIn"
+    assert settings.nocobase.request_timeout_ms == 15_000
+    assert settings.nocobase.account_env == "EHRM_NOCOBASE_ACCOUNT"
     assert settings.ai.model == "qwen3.5:9b"
     assert settings.ai.profile_id == "qwen3_5_9b"
     assert settings.ai.default_reasoning_mode == "off"

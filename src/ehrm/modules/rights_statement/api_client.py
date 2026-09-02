@@ -6,6 +6,7 @@ from collections.abc import Callable
 import json
 import logging
 from pathlib import Path
+import time
 from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import APIRequestContext, APIResponse
@@ -120,6 +121,7 @@ class RightsStatementApiClient:
                 "body": payload,
             },
         )
+        started_at = time.monotonic()
         try:
             response = self.request.post(
                 url,
@@ -131,9 +133,26 @@ class RightsStatementApiClient:
                 timeout=self.settings.rights_api.request_timeout_ms,
             )
         except PlaywrightError as exc:
+            elapsed_seconds = time.monotonic() - started_at
+            details = str(exc)
+            self.logger.error(
+                "智慧人社权益单打印请求异常 elapsed=%.3fs path=%s error_type=%s error=%s",
+                elapsed_seconds,
+                self.settings.rights_api.load_unit_rights_bill_path,
+                type(exc).__name__,
+                details,
+            )
+            if "timeout" in details.casefold():
+                raise RightsApiRequestError(
+                    "权益单打印接口响应超时，请稍后再试",
+                    details=(
+                        f"请求异常等待 {elapsed_seconds:.1f} 秒后终止；"
+                        "请勿立即连续重复提交，以免触发请求频率限制"
+                    ),
+                ) from exc
             raise RightsApiRequestError(
                 "权益单打印请求失败",
-                details=str(exc),
+                details=details,
             ) from exc
 
         result = self._parse_print_response(
