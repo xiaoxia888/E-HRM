@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,3 +70,74 @@ class NocoBaseLoginResult:
 
     def is_expired(self, *, now_timestamp: float | None = None) -> bool:
         return self.claims.is_expired(now_timestamp=now_timestamp)
+
+
+class NocoBaseProblemType(str, Enum):
+    SOCIAL_SECURITY_RIGHTS = "social_security_rights"
+
+
+@dataclass(frozen=True, slots=True)
+class NocoBaseRightsApplication:
+    application_id: int
+    code: str
+    status: str
+    title: str
+    problem_type: str
+    initiator_id: int | None
+    initiator_name: str
+    initiation_date: datetime | None
+    estimate_time: float
+    actual_time: float
+    estimate_date: datetime | None
+    actual_date: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class NocoBasePageMeta:
+    count: int
+    page: int
+    page_size: int
+    total_page: int
+    allowed_actions: dict[str, tuple[int, ...]]
+
+
+@dataclass(frozen=True, slots=True)
+class NocoBaseRightsApplicationPage:
+    records: tuple[NocoBaseRightsApplication, ...]
+    meta: NocoBasePageMeta
+
+
+@dataclass(frozen=True, slots=True)
+class NocoBaseRelatedPerson:
+    person_id: int
+    status: str
+    insurance_type: str
+    start_month: datetime | None
+    end_month: datetime | None
+    identity_number: str
+    department: str
+    name: str
+    company: str
+    print_group: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class NocoBaseRightsApplicationDetail:
+    application_id: int
+    code: str
+    status: str
+    title: str
+    problem_type: str
+    created_at: datetime | None
+    initiation_date: datetime | None
+    estimate_time: float
+    actual_time: float
+    estimate_date: datetime | None
+    actual_date: datetime | None
+    created_by_name: str
+    initiator_name: str
+    problem_description: str
+    handling_method: str
+    related_persons: tuple[NocoBaseRelatedPerson, ...]
+    attachment_names: tuple[str, ...]
+    allowed_actions: dict[str, tuple[int, ...]]

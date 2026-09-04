@@ -154,6 +154,9 @@ class ErpLoginSelectors:
 class NocoBaseSettings:
     base_url: str
     sign_in_path: str
+    rights_application_list_path: str
+    rights_application_detail_path: str
+    default_page_size: int
     request_timeout_ms: int
     account_env: str
     password_env: str
@@ -211,6 +214,7 @@ class OllamaSettings:
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
+    auth_database_path: Path
     rights_print_backend: RightsPrintBackend
     browser: BrowserSettings
     site: SiteSettings
@@ -699,6 +703,21 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         "sign_in_path",
         nocobase_site_name,
     )
+    nocobase_rights_application_list_path = _text(
+        nocobase_site,
+        "rights_application_list_path",
+        nocobase_site_name,
+    )
+    nocobase_rights_application_detail_path = _text(
+        nocobase_site,
+        "rights_application_detail_path",
+        nocobase_site_name,
+    )
+    nocobase_default_page_size = _integer(
+        nocobase_site,
+        "default_page_size",
+        nocobase_site_name,
+    )
     nocobase_request_timeout_ms = _integer(
         nocobase_site,
         "request_timeout_ms",
@@ -709,6 +728,18 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     if not nocobase_sign_in_path.startswith("/"):
         raise ConfigurationError(
             "配置项 nocobase.site.sign_in_path 必须以 / 开头"
+        )
+    if not nocobase_rights_application_list_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 nocobase.site.rights_application_list_path 必须以 / 开头"
+        )
+    if not nocobase_rights_application_detail_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 nocobase.site.rights_application_detail_path 必须以 / 开头"
+        )
+    if nocobase_default_page_size < 1:
+        raise ConfigurationError(
+            "配置项 nocobase.site.default_page_size 必须大于 0"
         )
     if nocobase_request_timeout_ms < 1:
         raise ConfigurationError(
@@ -790,6 +821,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         )
 
     return AppSettings(
+        auth_database_path=(relative_root / "data" / "auth.sqlite3").resolve(),
         rights_print_backend=rights_print_backend,
         browser=BrowserSettings(
             engine=browser_engine,
@@ -923,6 +955,13 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         nocobase=NocoBaseSettings(
             base_url=nocobase_base_url,
             sign_in_path=nocobase_sign_in_path,
+            rights_application_list_path=(
+                nocobase_rights_application_list_path
+            ),
+            rights_application_detail_path=(
+                nocobase_rights_application_detail_path
+            ),
+            default_page_size=nocobase_default_page_size,
             request_timeout_ms=nocobase_request_timeout_ms,
             account_env=_text(
                 nocobase_credentials,

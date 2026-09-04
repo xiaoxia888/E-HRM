@@ -2,24 +2,40 @@
 
 from ehrm.modules.nocobase.auth_client import NocoBaseAuthClient
 from ehrm.modules.nocobase.auth_session import NocoBaseAuthSession
+from ehrm.modules.nocobase.credential_store import NocoBaseCredentialStore
 from ehrm.modules.nocobase.models import (
     NocoBaseCredentials,
     NocoBaseLoginResult,
+    NocoBasePageMeta,
+    NocoBaseProblemType,
+    NocoBaseRightsApplication,
+    NocoBaseRightsApplicationDetail,
+    NocoBaseRightsApplicationPage,
+    NocoBaseRelatedPerson,
     NocoBaseTokenClaims,
     NocoBaseUser,
 )
 from ehrm.modules.nocobase.token_store import (
-    NocoBaseSystemTokenStore,
-    build_nocobase_token_account_key,
+    create_nocobase_token_manager,
+)
+from ehrm.modules.nocobase.rights_application_client import (
+    NocoBaseRightsApplicationClient,
 )
 
 __all__ = [
     "NocoBaseAuthClient",
     "NocoBaseAuthSession",
     "NocoBaseCredentials",
+    "NocoBaseCredentialStore",
     "NocoBaseLoginResult",
+    "NocoBasePageMeta",
+    "NocoBaseProblemType",
+    "NocoBaseRightsApplication",
+    "NocoBaseRightsApplicationDetail",
+    "NocoBaseRightsApplicationClient",
+    "NocoBaseRightsApplicationPage",
+    "NocoBaseRelatedPerson",
     "NocoBaseTokenClaims",
     "NocoBaseUser",
-    "NocoBaseSystemTokenStore",
-    "build_nocobase_token_account_key",
+    "create_nocobase_token_manager",
 ]

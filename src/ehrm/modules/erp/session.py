@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
+import json
 import logging
 import time
 from typing import Callable
@@ -12,6 +13,11 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from ehrm.browser.manager import BrowserManager
+from ehrm.core.auth_repository import (
+    AuthenticationRepository,
+    SystemAccount,
+    SystemType,
+)
 from ehrm.core.exceptions import ErpAuthenticationFailedError, TaskCancelledError
 from ehrm.core.settings import AppSettings
 from ehrm.modules.erp.codec import ErpQueryCodec
@@ -35,6 +41,9 @@ class ErpSession:
         self._page: Page | None = None
         self._progress_callback = progress_callback
         self._cancel_check = cancel_check
+        self._repository = AuthenticationRepository(settings.auth_database_path)
+        self._account: SystemAccount | None = None
+        self._authenticated = False
 
     def __enter__(self) -> "ErpSession":
         browser_settings = replace(
@@ -52,6 +61,9 @@ class ErpSession:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if exc_type is None and self._authenticated:
+            self._save_account_session()
+        self._clear_context_auth()
         if self._browser is not None:
             self._browser.__exit__(exc_type, exc, traceback)
         self._browser = None
@@ -77,6 +89,7 @@ class ErpSession:
         *,
         force_login: bool = False,
     ) -> None:
+        self._prepare_account_session(credentials, restore=not force_login)
         page = self.page
         try:
             self._raise_if_cancelled()
@@ -92,6 +105,8 @@ class ErpSession:
                 if self._wait_for_codec(timeout_ms=10_000) and self._api_session_valid():
                     self._logger.info("ERP 已存在有效登录状态")
                     self._progress("ERP：登录状态有效")
+                    self._authenticated = True
+                    self._save_account_session()
                     return
                 self._progress("ERP：登录状态已失效，正在自动重新登录")
             else:
@@ -121,6 +136,9 @@ class ErpSession:
                 raise ErpAuthenticationFailedError(
                     "ERP 页面登录成功，但接口登录状态校验失败"
                 )
+            self._persist_verified_credentials(credentials)
+            self._authenticated = True
+            self._save_account_session()
             self._logger.info("ERP 自动登录成功")
             self._progress("ERP：自动登录成功")
         except ErpAuthenticationFailedError:
@@ -338,6 +356,9 @@ class ErpSession:
         if self._browser is None or self._browser.context is None:
             return
         self._logger.info("ERP 接口会话无效，清除旧登录状态后重新登录")
+        self._authenticated = False
+        if self._account is not None:
+            self._repository.delete_session(self._account.id)
         self._browser.context.clear_cookies()
         try:
             self.page.goto(self._erp.base_url, wait_until="domcontentloaded")
@@ -346,6 +367,110 @@ class ErpSession:
             )
         except PlaywrightError:
             # Navigating to the explicit login URL below remains the fallback.
+            pass
+
+    def _prepare_account_session(
+        self,
+        credentials: ErpCredentials,
+        *,
+        restore: bool,
+    ) -> None:
+        account = self._repository.get_account(
+            SystemType.ERP,
+            credentials.username,
+        )
+        self._account = account
+        self._authenticated = False
+        if self._browser is None or self._browser.context is None:
+            return
+        self._browser.context.clear_cookies()
+        try:
+            self.page.goto(
+                self._erp.base_url,
+                wait_until="domcontentloaded",
+                timeout=self._navigation_timeout_ms(),
+            )
+            self.page.evaluate(
+                "() => { localStorage.clear(); sessionStorage.clear(); }"
+            )
+        except PlaywrightError:
+            pass
+        if not restore or account is None:
+            return
+        saved = self._repository.get_session(account.id)
+        if saved is None:
+            return
+        try:
+            payload = json.loads(saved.session_data)
+            cookies = payload.get("cookies", [])
+            if isinstance(cookies, list) and cookies:
+                self._browser.context.add_cookies(cookies)
+            origins = payload.get("origins", [])
+            if isinstance(origins, list):
+                current_origin = self._erp.base_url.rstrip("/")
+                for origin in origins:
+                    if not isinstance(origin, dict):
+                        continue
+                    if str(origin.get("origin", "")).rstrip("/") != current_origin:
+                        continue
+                    entries = origin.get("localStorage", [])
+                    if isinstance(entries, list):
+                        self.page.evaluate(
+                            "entries => entries.forEach(item => "
+                            "localStorage.setItem(item.name, item.value))",
+                            entries,
+                        )
+            self._logger.info("ERP 已从 SQLite 恢复浏览器登录状态")
+        except (TypeError, ValueError, PlaywrightError):
+            self._repository.delete_session(account.id)
+            self._logger.info("ERP SQLite 浏览器登录状态无效，已清除")
+
+    def _save_account_session(self) -> None:
+        if (
+            self._account is None
+            or self._browser is None
+            or self._browser.context is None
+        ):
+            return
+        try:
+            state = self._browser.context.storage_state()
+            self._repository.save_session(
+                self._account.id,
+                json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                verified=True,
+            )
+        except (TypeError, ValueError, PlaywrightError) as exc:
+            self._logger.warning(
+                "ERP 浏览器登录状态写入 SQLite 失败 type=%s",
+                type(exc).__name__,
+            )
+
+    def _persist_verified_credentials(self, credentials: ErpCredentials) -> None:
+        """Persists credentials only after ERP has accepted them."""
+        current = self._repository.get_account(
+            SystemType.ERP,
+            credentials.username,
+        )
+        if current is not None and current.password == credentials.password:
+            self._account = current
+            return
+        self._account = self._repository.save_account(
+            SystemType.ERP,
+            credentials.username,
+            credentials.password,
+        )
+
+    def _clear_context_auth(self) -> None:
+        """Keeps the persistent browser profile free of ERP credentials."""
+        if self._browser is None or self._browser.context is None:
+            return
+        try:
+            self._browser.context.clear_cookies()
+            if self._page is not None and not self._page.is_closed():
+                self._page.evaluate(
+                    "() => { localStorage.clear(); sessionStorage.clear(); }"
+                )
+        except PlaywrightError:
             pass
 
     def _log_auth_storage_names(self) -> None:

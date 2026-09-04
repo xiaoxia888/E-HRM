@@ -10,12 +10,13 @@ from playwright.sync_api import Page
 
 from ehrm.browser.access_token import (
     AccessTokenManager,
-    build_access_token_account_key,
+    create_rights_access_token_manager,
 )
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
 from ehrm.core.settings import AppSettings, RightsPrintBackend
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.modules.rights_statement.api_excel_service import (
     ApiExcelRightsStatementService,
 )
@@ -51,17 +52,28 @@ class DesktopWorkbench:
         self._cancel_check = cancel_check
         self._progress_callback = progress_callback
         credentials = settings.rights_credentials
+        saved_account = AuthenticationRepository(
+            settings.auth_database_path
+        ).get_default_account(SystemType.JSHRSS)
         credit_code = credentials.credit_code or os.getenv(
             credentials.credit_code_env,
             "",
+        ) or (saved_account.account if saved_account else "")
+        mobile = (
+            credentials.mobile
+            or os.getenv(credentials.mobile_env, "")
+            or (saved_account.secondary_account if saved_account else "")
         )
-        mobile = credentials.mobile or os.getenv(credentials.mobile_env, "")
-        self._access_token_manager = AccessTokenManager(
-            build_access_token_account_key(
-                settings.site.login_url,
-                credit_code,
-                mobile,
-            )
+        password = (
+            credentials.password
+            or os.getenv(credentials.password_env, "")
+            or (saved_account.password if saved_account else "")
+        )
+        self._access_token_manager = create_rights_access_token_manager(
+            settings.auth_database_path,
+            credit_code,
+            mobile,
+            password=password,
         )
         self._service = ExcelRightsStatementService(
             settings,

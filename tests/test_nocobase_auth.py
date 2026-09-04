@@ -16,7 +16,7 @@ from ehrm.modules.nocobase.exceptions import (
 from ehrm.modules.nocobase.jwt_token import decode_jwt_claims
 from ehrm.modules.nocobase.models import NocoBaseCredentials
 from ehrm.modules.nocobase.response import raise_for_nocobase_errors
-from ehrm.modules.nocobase.token_store import build_nocobase_token_account_key
+from ehrm.modules.nocobase.token_store import create_nocobase_token_manager
 
 
 def _jwt(*, user_id: int = 25, issued_at: int = 1_788_336_046, expires_at: int = 4_102_444_800) -> str:
@@ -212,15 +212,18 @@ def test_auth_session_clears_expired_token_and_logs_in_again() -> None:
     assert AccessTokenManager("nocobase-account", store).get_token() == _jwt()
 
 
-def test_nocobase_token_account_key_hides_account_and_separates_hosts() -> None:
-    first = build_nocobase_token_account_key(
-        "https://nocobase.example.test:443",
-        "private-user",
-    )
-    second = build_nocobase_token_account_key(
-        "https://another.example.test",
-        "private-user",
-    )
+def test_nocobase_token_manager_persists_separate_accounts(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "auth.sqlite3"
+    first = create_nocobase_token_manager(database, "account-1", password="p1")
+    second = create_nocobase_token_manager(database, "account-2", password="p2")
+    first.save_token(_jwt(user_id=1))
+    second.save_token(_jwt(user_id=2))
 
-    assert "private-user" not in first
-    assert first != second
+    assert create_nocobase_token_manager(database, "account-1").get_token() == _jwt(
+        user_id=1
+    )
+    assert create_nocobase_token_manager(database, "account-2").get_token() == _jwt(
+        user_id=2
+    )

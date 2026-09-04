@@ -14,9 +14,6 @@ class UserPreferences:
     batch_size: int = 50
     upload_to_erp: bool = False
     open_output_folder: bool = False
-    erp_username: str = ""
-    rights_credit_code: str = ""
-    rights_mobile: str = ""
     ai_model_profile: str = ""
     ai_reasoning_mode: str = ""
     execution_speed: str = "standard"
@@ -58,9 +55,6 @@ class UserPreferencesStore:
                 values[key] = defaults[key]
         for key in (
             "output_path",
-            "erp_username",
-            "rights_credit_code",
-            "rights_mobile",
             "ai_model_profile",
         ):
             if not isinstance(values[key], str):

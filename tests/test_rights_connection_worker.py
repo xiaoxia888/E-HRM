@@ -6,8 +6,9 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from ehrm.core.settings import load_settings
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.exceptions import CaptchaRateLimitedAuthenticationError
+from ehrm.core.settings import load_settings
 from ehrm.gui import rights_connection_worker as worker_module
 
 
@@ -20,14 +21,6 @@ def test_rights_connection_test_uses_isolated_profile_and_requires_token(
         data_root=tmp_path / "runtime",
     )
     observed: dict[str, object] = {}
-
-    class FakeAccessTokenManager:
-        def __init__(self, account_key: str) -> None:
-            observed["account_key"] = account_key
-            self.token = None
-
-        def get_token(self):
-            return self.token
 
     class FakeBrowserManager:
         def __init__(self, browser_settings, **_kwargs) -> None:
@@ -53,13 +46,7 @@ def test_rights_connection_test_uses_isolated_profile_and_requires_token(
 
         def ensure_authenticated(self, *, username, mobile, password) -> None:
             observed["credentials"] = (username, mobile, password)
-            self.access_tokens.token = "test-access-token"
-
-    monkeypatch.setattr(
-        worker_module,
-        "AccessTokenManager",
-        FakeAccessTokenManager,
-    )
+            self.access_tokens.save_token("test-access-token")
     monkeypatch.setattr(
         worker_module,
         "BrowserManager",
@@ -93,6 +80,17 @@ def test_rights_connection_test_uses_isolated_profile_and_requires_token(
         "test-mobile",
         "test-password",
     )
+    repository = AuthenticationRepository(settings.auth_database_path)
+    account = repository.get_default_account(SystemType.JSHRSS)
+    assert account is not None
+    assert (account.account, account.secondary_account, account.password) == (
+        "test-credit",
+        "test-mobile",
+        "test-password",
+    )
+    session = repository.get_session(account.id)
+    assert session is not None
+    assert session.session_data == "test-access-token"
     assert succeeded == [True]
     assert failed == []
 
@@ -105,13 +103,6 @@ def test_captcha_rate_limit_is_forwarded_to_frontend(
         Path("config/settings.toml"),
         data_root=tmp_path / "runtime",
     )
-
-    class FakeAccessTokenManager:
-        def __init__(self, _account_key: str) -> None:
-            pass
-
-        def get_token(self):
-            return None
 
     class FakeBrowserManager:
         def __init__(self, _browser_settings, **_kwargs) -> None:
@@ -133,11 +124,6 @@ def test_captcha_rate_limit_is_forwarded_to_frontend(
                 details="验证码服务返回 errorCode=12",
             )
 
-    monkeypatch.setattr(
-        worker_module,
-        "AccessTokenManager",
-        FakeAccessTokenManager,
-    )
     monkeypatch.setattr(
         worker_module,
         "BrowserManager",
@@ -168,3 +154,5 @@ def test_captcha_rate_limit_is_forwarded_to_frontend(
             "验证码服务返回 errorCode=12",
         )
     ]
+    repository = AuthenticationRepository(settings.auth_database_path)
+    assert repository.get_default_account(SystemType.JSHRSS) is None

@@ -80,6 +80,7 @@ class RightsStatementApiClient:
             ) from exc
 
         result = self._parse_query_response(response)
+        self.access_tokens.mark_verified()
         self.logger.info(
             "智慧人社人员接口查询完成 count=%s page=%s/%s",
             len(result.records),
@@ -163,6 +164,7 @@ class RightsStatementApiClient:
                 for person_id in print_request.person_ids
             ),
         )
+        self.access_tokens.mark_verified()
         self.logger.info(
             "智慧人社权益单生成完成 insurance=%s person_count=%s bytes=%s",
             result.insurance.display_name,

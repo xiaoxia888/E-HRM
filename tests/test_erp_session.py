@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ehrm.core.auth_repository import SystemType
 from ehrm.core.exceptions import ErpAuthenticationFailedError
 from ehrm.core.settings import load_settings
 from ehrm.modules.erp.models import ErpCredentials
@@ -148,3 +149,16 @@ def test_login_accepts_non_json_response_when_auth_cookie_was_created(
     session._perform_login(ErpCredentials(username="user", password="pass"))
 
     assert page.submit.clicked
+
+
+def test_verified_erp_credentials_are_persisted_to_sqlite(tmp_path: Path) -> None:
+    session, _ = _session(tmp_path, {"success": True}, authenticated=True)
+
+    session._persist_verified_credentials(
+        ErpCredentials(username="verified-user", password="verified-password")
+    )
+
+    account = session._repository.get_default_account(SystemType.ERP)
+    assert account is not None
+    assert account.account == "verified-user"
+    assert account.password == "verified-password"

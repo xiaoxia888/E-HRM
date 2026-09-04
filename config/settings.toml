@@ -31,7 +31,7 @@ channel = ""
 
 # true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
 # browser 后端需要人工观察或接管登录时，应设置为 false。
-headless = false
+headless = true
 silent_session_check = false
 slow_mo_ms = 100
 navigation_timeout_ms = 60000
@@ -88,7 +88,7 @@ click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
 click_offset_max_px = 3
 # 是否保存验证码识别诊断图片；正常运行建议关闭。
-diagnostic_images_enabled = true
+diagnostic_images_enabled = false
 # 开启后按运行批次保存目标图、背景图和标注最终点击顺序的结果图。
 # 相对于程序的 runtime 目录解析，源码和安装环境使用相同目录结构。
 diagnostic_output_dir = "diagnostics/captcha"
@@ -156,6 +156,12 @@ close_preview = 'role=button[name="Close"]'
 # NocoBase 服务地址集中配置，业务代码和测试中不写死主机、端口。
 base_url = "http://211.138.201.5:443"
 sign_in_path = "/api/auth:signIn"
+# 权益申请分页查询资源路径；主机和端口统一继承 base_url。
+rights_application_list_path = "/api/NCC_HumProblem:list"
+# 权益申请详情查询资源路径；具体记录编号由程序作为 filterByTk 参数传入。
+rights_application_detail_path = "/api/NCC_HumProblem:get"
+# 分页列表默认每页数量。
+default_page_size = 20
 request_timeout_ms = 15000
 
 [nocobase.credentials]

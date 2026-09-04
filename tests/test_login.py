@@ -226,7 +226,7 @@ def test_successful_login_response_saves_access_token(tmp_path: Path) -> None:
         "test-secret-token"
     )
     assert updates == [
-        "账号登录成功，Access-Token 已安全保存，正在确认登录状态……"
+        "账号登录成功，Access-Token 已保存到应用数据库，正在确认登录状态……"
     ]
     assert all("test-secret-token" not in update for update in updates)
 

@@ -37,18 +37,29 @@ Item {
         page.forceActiveFocus()
     }
 
+    function resetNocobaseAccountEditor() {
+        nocobaseAccountField.text = appBackend.nocobaseAccount
+        nocobasePasswordField.text = ""
+        nocobasePasswordField.revealPassword = false
+        nocobasePasswordField.inputItem.focus = false
+        page.forceActiveFocus()
+    }
+
     onCategoryIndexChanged: {
         resetErpAccountEditor()
         resetRightsAccountEditor()
+        resetNocobaseAccountEditor()
     }
     onAccountSiteIndexChanged: {
         resetErpAccountEditor()
         resetRightsAccountEditor()
+        resetNocobaseAccountEditor()
     }
     onVisibleChanged: {
         if (!visible) {
             resetErpAccountEditor()
             resetRightsAccountEditor()
+            resetNocobaseAccountEditor()
         }
     }
 
@@ -498,7 +509,7 @@ Item {
                     Layout.fillHeight: true
                     currentIndex: page.categoryIndex === 0
                         ? page.accountSiteIndex
-                        : page.categoryIndex + 1
+                        : page.categoryIndex + 2
 
                     // 江苏智慧人社
                     SettingsPane {
@@ -522,6 +533,11 @@ Item {
                                     selected: page.accountSiteIndex === 1
                                     text: "ERP"
                                     onChosen: page.accountSiteIndex = 1
+                                }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 2
+                                    text: "NocoBase"
+                                    onChosen: page.accountSiteIndex = 2
                                 }
                                 Item { Layout.fillWidth: true }
                             }
@@ -578,7 +594,7 @@ Item {
                                         Layout.fillWidth: true
                                         passwordMode: true
                                         placeholderText: appBackend.rightsPasswordStored
-                                            ? "••••••••  已安全保存"
+                                            ? "••••••••  已保存"
                                             : "请输入智慧人社密码"
                                         onEditingStarted: {
                                             if (text.length === 0 && appBackend.rightsPasswordStored)
@@ -592,9 +608,7 @@ Item {
                                     Text {
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        text: Qt.platform.os === "windows"
-                                            ? "密码已加密保存在 Windows 凭据管理器，软件登录时会自动填写三项信息。"
-                                            : "密码已加密保存在 macOS 钥匙串，软件登录时会自动填写三项信息。"
+                                        text: "账号和密码保存在应用 SQLite 数据库中，软件登录时会自动填写三项信息。"
                                         color: page.secondaryColor
                                         font.pixelSize: 12
                                     }
@@ -726,6 +740,11 @@ Item {
                                     text: "ERP"
                                     onChosen: page.accountSiteIndex = 1
                                 }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 2
+                                    text: "NocoBase"
+                                    onChosen: page.accountSiteIndex = 2
+                                }
                                 Item { Layout.fillWidth: true }
                             }
 
@@ -761,7 +780,7 @@ Item {
                                         Layout.fillWidth: true
                                         passwordMode: true
                                         placeholderText: appBackend.erpPasswordStored
-                                            ? "••••••••  已安全保存"
+                                            ? "••••••••  已保存"
                                             : "请输入 ERP 密码"
                                         onEditingStarted: {
                                             if (text.length === 0 && appBackend.erpPasswordStored)
@@ -774,9 +793,7 @@ Item {
                                     Text {
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        text: Qt.platform.os === "windows"
-                                            ? "密码已加密保存在 Windows 凭据管理器；点击密码框可输入新密码。"
-                                            : "密码已加密保存在 macOS 钥匙串；点击密码框可输入新密码。"
+                                        text: "账号和密码保存在应用 SQLite 数据库中；点击密码框可输入新密码。"
                                         color: page.secondaryColor
                                         font.pixelSize: 12
                                     }
@@ -838,6 +855,177 @@ Item {
                                 AppButton {
                                     text: "清除"
                                     onClicked: appBackend.clearErpLoginState()
+                                }
+                            }
+                    }
+
+                    // NocoBase 账号
+                    SettingsPane {
+                        objectName: "nocobaseSettingsPane"
+                        contentSpacing: 18
+
+                            SectionTitle {
+                                title: "账号与密码"
+                                description: "每个网站独立保存账号和密码"
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 0
+                                    text: "江苏智慧人社"
+                                    onChosen: page.accountSiteIndex = 0
+                                }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 1
+                                    text: "ERP"
+                                    onChosen: page.accountSiteIndex = 1
+                                }
+                                AccountSiteTab {
+                                    selected: page.accountSiteIndex === 2
+                                    text: "NocoBase"
+                                    onChosen: page.accountSiteIndex = 2
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            SectionTitle {
+                                title: "NocoBase 账号"
+                                description: "用于读取权益申请、查看详情并发起权益单打印"
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 250
+                                radius: 9
+                                color: "#fbfcfe"
+                                border.color: page.borderColor
+
+                                GridLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 22
+                                    columns: 2
+                                    columnSpacing: 20
+                                    rowSpacing: 10
+
+                                    FieldLabel { text: "登录账号" }
+                                    FieldLabel { text: "密码" }
+                                    SettingsInput {
+                                        id: nocobaseAccountField
+                                        Layout.fillWidth: true
+                                        text: appBackend.nocobaseAccount
+                                        placeholderText: "请输入 NocoBase 登录账号"
+                                    }
+                                    SettingsInput {
+                                        id: nocobasePasswordField
+                                        Layout.fillWidth: true
+                                        passwordMode: true
+                                        placeholderText: appBackend.nocobasePasswordStored
+                                            ? "••••••••  已保存"
+                                            : "请输入 NocoBase 登录密码"
+                                        onEditingStarted: {
+                                            if (text.length === 0 && appBackend.nocobasePasswordStored)
+                                                text = appBackend.loadSavedNocobasePassword(
+                                                    nocobaseAccountField.text
+                                                )
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        text: "账号和密码保存在应用 SQLite 数据库中；登录 Token 及到期时间由系统自动维护。"
+                                        color: page.secondaryColor
+                                        font.pixelSize: 12
+                                    }
+
+                                    RowLayout {
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: 8
+                                        spacing: 10
+                                        Rectangle {
+                                            width: 9
+                                            height: 9
+                                            radius: 5
+                                            color: appBackend.nocobaseConnectionBusy
+                                                ? "#f5a623"
+                                                : appBackend.nocobaseConnectionSuccess
+                                                    ? "#12a150" : "#98a2b3"
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: appBackend.nocobaseConnectionStatus
+                                            color: appBackend.nocobaseConnectionSuccess
+                                                ? "#12834a" : page.bodyColor
+                                            font.pixelSize: 13
+                                            elide: Text.ElideRight
+                                        }
+                                        AppButton {
+                                            objectName: "nocobaseTestConnectionButton"
+                                            text: "测试连接"
+                                            enabled: !appBackend.nocobaseConnectionBusy
+                                            onClicked: appBackend.testNocobaseConnection(
+                                                nocobaseAccountField.text,
+                                                nocobasePasswordField.text
+                                            )
+                                        }
+                                        AppButton {
+                                            text: "保存账号"
+                                            primary: true
+                                            enabled: !appBackend.nocobaseConnectionBusy
+                                            onClicked: appBackend.saveNocobaseAccount(
+                                                nocobaseAccountField.text,
+                                                nocobasePasswordField.text
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "登录状态"
+                                color: page.titleColor
+                                font.pixelSize: 17
+                                font.weight: Font.DemiBold
+                            }
+                            SettingRow {
+                                Layout.fillWidth: true
+                                title: "清除 NocoBase 登录状态"
+                                description: "账号密码不会被删除；下次读取申请时将重新获取 Token"
+                                AppButton {
+                                    text: "清除"
+                                    enabled: !appBackend.nocobaseConnectionBusy
+                                    onClicked: appBackend.clearNocobaseLoginState()
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 72
+                                radius: 8
+                                color: "#eef7ff"
+                                border.color: "#b9d8ff"
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 18
+                                    anchors.rightMargin: 18
+                                    spacing: 12
+                                    Text {
+                                        text: "i"
+                                        color: page.blue
+                                        font.pixelSize: 18
+                                        font.weight: Font.Bold
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "测试连接会直接调用登录接口；验证成功后保存 JWT，Token 到期或被接口拒绝时会自动重新登录。"
+                                        color: "#24568f"
+                                        font.pixelSize: 13
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
                             }
                     }

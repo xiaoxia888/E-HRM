@@ -66,7 +66,7 @@ if (-not $PythonVersion.StartsWith("3.11.")) {
     throw "Current Python version is $PythonVersion. This project requires Python 3.11.x."
 }
 
-python -c "import PySide6, PyInstaller, playwright; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}')"
+python -c "import PySide6, PyInstaller, playwright, playwright_stealth; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}; Playwright and playwright-stealth installed')"
 if ($LASTEXITCODE -ne 0) {
     throw "Required Windows build dependencies are missing."
 }

@@ -21,7 +21,8 @@
 - 人员查询优先使用身份证作为社会保障号码，姓名仅作为非 Excel 调用的兜底。
 - 权益单下载完成后，可按 Excel 任务编号静默上传至 ERP 并回写结果。
 
-智慧人社和 ERP 的 URL、定位器及系统级超时统一维护在 `config/settings.toml`。
+智慧人社、ERP 和 NocoBase 的 URL、定位器及系统级超时统一维护在
+`config/settings.toml`。
 
 ## 1. 创建环境
 
@@ -52,8 +53,9 @@ playwright install chromium
 项目只有一个系统配置入口 `config/settings.toml`，不再使用样例配置和隐式
 Python 默认值。配置按命名空间分为：
 
-- `[common]`：两个自动化模块真正共用的参数；
+- `[common]`：自动化模块真正共用的参数；
 - `[rights_statement.*]`：智慧人社及单位权益单配置；
+- `[nocobase.*]`：NocoBase 登录、权益申请分页及详情接口配置；
 - `[erp.*]`：ERP 登录、查询和附件上传配置。
 - `[rights_statement.captcha]`：验证码自动化主机白名单、重试和点击间隔。
 - `[ai]`：Ollama 公共连接、提示词与默认模型选择。
@@ -249,10 +251,10 @@ ehrm-gui
 - Playwright 在单一常驻线程的任务队列中运行，浏览器创建、连续任务和关闭始终位于同一 Python 执行上下文；
 - 可勾选“下载完成后自动上传至 ERP”，按任务编号匹配申请并静默上传；
 - 独立“上传至 ERP”页面支持选择 PDF、Word、Excel 文件，填写任务编号后确认上传；
-- 系统设置页可维护 ERP 账号、默认下载规则、自动化节奏及运行数据。
+- 系统设置页可维护智慧人社、ERP、NocoBase 账号，以及默认下载规则、自动化节奏及运行数据。
 
-ERP 用户名保存在程序目录下的 `runtime/data/preferences.json`，密码由 macOS
-钥匙串或 Windows 凭据管理器保存，不会写入 `config/settings.toml` 或偏好文件。
+ERP、江苏智慧人社和 NocoBase 的账号、密码及登录会话统一保存在程序目录下的
+`runtime/data/auth.sqlite3`。账号数据不会写入 `config/settings.toml` 或偏好文件。
 
 界面层使用 Qt Quick/QML 组件化实现，Python 仅通过
 `DesktopViewModel` 暴露状态和命令。自动化、Excel 校验和业务规则仍保持在
@@ -361,7 +363,9 @@ ERP 模块采用“Playwright 自动登录 + 同一浏览器上下文直接调�
 
 选择文件并通过校验后，程序会弹出任务编号确认窗口；确认后在后台静默登录 ERP、精确匹配申请编号并上传附件。
 
-ERP 默认使用无界面 Chromium 静默执行，不显示浏览器窗口。智慧人社的人工安全验证浏览器配置保持不变；需要排查 ERP 页面时，可在 `config/settings.toml` 的 `[erp.browser]` 中临时设置 `headless = false`。
+ERP 默认使用无界面 Chromium 静默执行，不显示浏览器窗口。智慧人社按
+`[rights_statement.captcha]` 配置执行自动或人工安全验证；需要排查 ERP 页面时，
+可在 `config/settings.toml` 的 `[erp.browser]` 中临时设置 `headless = false`。
 
 桌面端可在“系统设置 → 账户与连接”中保存 ERP 凭据。命令行联调也可通过
 环境变量提供 ERP 凭据，不要将账号密码写入配置文件：

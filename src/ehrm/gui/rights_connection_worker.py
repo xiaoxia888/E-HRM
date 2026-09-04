@@ -8,13 +8,11 @@ from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 
-from ehrm.browser.access_token import (
-    AccessTokenManager,
-    build_access_token_account_key,
-)
+from ehrm.browser.access_token import AccessTokenManager, MemoryAccessTokenStore
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import AuthenticationFailedError, EhrmError
 from ehrm.core.settings import AppSettings
@@ -65,12 +63,11 @@ class RightsConnectionWorker(QThread):
                         password=self._password,
                     ),
                 )
+                # A connection test must not persist unverified credentials.
+                # Keep its token in memory until the complete login succeeds.
                 access_tokens = AccessTokenManager(
-                    build_access_token_account_key(
-                        runtime_settings.site.login_url,
-                        self._credit_code,
-                        self._mobile,
-                    )
+                    "rights-connection-test",
+                    MemoryAccessTokenStore(),
                 )
                 stealth_enabled = (
                     runtime_settings.captcha.stealth_enabled
@@ -95,10 +92,21 @@ class RightsConnectionWorker(QThread):
                         mobile=self._mobile,
                         password=self._password,
                     )
-                    if not access_tokens.get_token():
+                    token = access_tokens.get_token()
+                    if not token:
                         raise AuthenticationFailedError(
                             "登录完成但未获取 Access-Token"
                         )
+                repository = AuthenticationRepository(
+                    runtime_settings.auth_database_path
+                )
+                account = repository.save_account(
+                    SystemType.JSHRSS,
+                    self._credit_code,
+                    self._password,
+                    secondary_account=self._mobile,
+                )
+                repository.save_session(account.id, token, verified=True)
             self.succeeded.emit()
         except EhrmError as exc:
             summary = display_message(exc.code, exc.message)

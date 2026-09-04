@@ -124,22 +124,33 @@ ApplicationWindow {
                 }
                 NavItem {
                     width: parent.width
-                    text: "任务记录"
-                    iconSource: "../assets/history.svg"
+                    text: "权益申请"
+                    iconSource: "../assets/list.svg"
                     selected: window.activeModule === 2
                     compact: window.navigationCollapsed
-                    onClicked: window.activeModule = 2
+                    onClicked: {
+                        window.activeModule = 2
+                        window.backend.loadNocobaseApplications(1)
+                    }
+                }
+                NavItem {
+                    width: parent.width
+                    text: "任务记录"
+                    iconSource: "../assets/history.svg"
+                    selected: window.activeModule === 3
+                    compact: window.navigationCollapsed
+                    onClicked: window.activeModule = 3
                 }
 
-                Item { width: 1; height: Math.max(10, parent.height - 82 - 52 * 4 - 28) }
+                Item { width: 1; height: Math.max(10, parent.height - 82 - 52 * 5 - 28) }
 
                 NavItem {
                     width: parent.width
                     text: "系统设置"
                     iconSource: "../assets/settings.svg"
-                    selected: window.activeModule === 3
+                    selected: window.activeModule === 4
                     compact: window.navigationCollapsed
-                    onClicked: window.activeModule = 3
+                    onClicked: window.activeModule = 4
                 }
             }
 
@@ -806,6 +817,9 @@ ApplicationWindow {
             ErpUploadPage {
                 backend: appBackend
             }
+            NocoBaseApplicationsPage {
+                backend: appBackend
+            }
             PlaceholderPage {
                 title: "任务记录"
                 subtitle: "统一查看权益单下载和 ERP 上传任务。"
@@ -850,6 +864,21 @@ ApplicationWindow {
     PdfPreviewDialog {
         id: pdfPreviewDialog
         backend: appBackend
+    }
+
+    NocoBaseApplicationDetailDialog {
+        id: nocobaseApplicationDetailDialog
+        backend: appBackend
+    }
+
+    NocoBasePrintProgressDialog {
+        id: nocobasePrintProgressDialog
+        backend: appBackend
+        onPreviewRequested: {
+            if (window.backend.preparePdfPreview()) {
+                pdfPreviewDialog.openPreview()
+            }
+        }
     }
 
     Dialog {
@@ -1210,6 +1239,12 @@ ApplicationWindow {
             messageDialog.heading = title
             messageDialog.message = message
             messageDialog.open()
+        }
+        function onNocobaseApplicationDetailStarted() {
+            nocobaseApplicationDetailDialog.open()
+        }
+        function onNocobasePrintStarted() {
+            nocobasePrintProgressDialog.open()
         }
     }
 }

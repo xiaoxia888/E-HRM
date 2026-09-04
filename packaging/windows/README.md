@@ -20,6 +20,16 @@ conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
 ```
 
+已有 `ehrm` 环境在打包前也应同步运行依赖，避免沿用缺少
+`playwright-stealth` 或 `QtQuick.Pdf` 的旧环境：
+
+```powershell
+conda env update -n ehrm -f environment.yml
+conda env update -n ehrm -f environment.windows-build.yml
+conda activate ehrm
+python -c "import PySide6, PyInstaller, playwright, playwright_stealth; print('打包依赖正常')"
+```
+
 如需生成安装程序，请安装 Inno Setup 6。没有安装时，脚本仍会生成可运行目录
 和 ZIP 便携版。
 
@@ -62,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.
 3. 下载并内置当前 Playwright 版本对应的 Chromium；
 4. 生成 Windows 图标和版本信息；
 5. 生成 onedir 冻结包；
-6. 校验配置、QML、Playwright Driver 和 Chromium 是否完整；
+6. 校验配置、NocoBase 页面、Qt PDF、Playwright Driver、stealth 脚本和 Chromium 是否完整；
 7. 生成 ZIP，并在可用时生成安装程序 EXE。
 
 ## 发布前验证
@@ -70,10 +80,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.
 请在一台没有安装 Python、Conda 和 Playwright 的 Windows 电脑上验证：
 
 1. 软件可以启动且不出现控制台窗口；
-2. 智慧人社浏览器能够打开并完成人工安全验证；
+2. 智慧人社能够登录并完成配置的安全验证流程；
 3. 权益单可以下载到指定目录；
-4. ERP 凭据能够写入 Windows 凭据管理器；
+4. ERP、智慧人社和 NocoBase 账号能够写入 `runtime/data/auth.sqlite3`；
 5. ERP 可以静默登录并上传附件；
-6. 正常关闭软件时没有崩溃提示。
+6. NocoBase 能够测试连接、查询权益申请、查看详情并发起打印；
+7. 正常关闭软件时没有崩溃提示。
 
 个人账号、密码、浏览器资料、日志和下载结果不会进入安装包。

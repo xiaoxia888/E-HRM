@@ -1,6 +1,9 @@
+import base64
+import json
 import logging
 import os
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -16,11 +19,26 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.settings import load_settings
 from ehrm.gui import view_model as view_model_module
+from ehrm.gui import nocobase_connection_worker as nocobase_connection_module
+from ehrm.gui.nocobase_connection_worker import NocoBaseConnectionWorker
 from ehrm.gui.view_model import DesktopViewModel
+from ehrm.modules.nocobase.models import (
+    NocoBaseCredentials,
+    NocoBaseLoginResult,
+    NocoBasePageMeta,
+    NocoBaseRelatedPerson,
+    NocoBaseRightsApplication,
+    NocoBaseRightsApplicationDetail,
+    NocoBaseRightsApplicationPage,
+    NocoBaseTokenClaims,
+    NocoBaseUser,
+)
 from ehrm.modules.rights_statement.excel_models import (
     ExcelRunResult,
+    ExcelTaskRequest,
     ExportMode,
     ItemResult,
 )
@@ -641,6 +659,8 @@ def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
     assert record_edit_dialog is not None
     rights_settings_pane = window.findChild(QObject, "rightsSettingsPane")
     assert rights_settings_pane is not None
+    assert window.findChild(QObject, "nocobaseSettingsPane") is not None
+    assert window.findChild(QQuickItem, "nocobaseTestConnectionButton") is not None
     assert (
         rights_settings_pane.property("contentHeight")
         > rights_settings_pane.property("height")
@@ -655,9 +675,269 @@ def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
     button_left = test_button.mapToScene(QPointF(0, 0)).x()
     assert status_right <= button_left
     assert status_text.property("lineCount") <= 2
+    assert window.findChild(QQuickItem, "nocobaseApplicationsPage") is not None
+    assert window.findChild(QObject, "nocobaseApplicationDetailDialog") is not None
+    assert window.findChild(QObject, "nocobasePrintProgressDialog") is not None
     assert not window.property("navigationCollapsed")
     window.setProperty("navigationCollapsed", True)
     assert window.property("navigationCollapsed")
+    window.close()
+    application.processEvents()
+
+
+def test_nocobase_application_page_is_exposed_to_qml(tmp_path: Path) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    result = NocoBaseRightsApplicationPage(
+        records=(
+            NocoBaseRightsApplication(
+                application_id=384427705696256,
+                code="RLSQ20260902-0002",
+                status="NEW",
+                title="测试社保权益单申请2",
+                problem_type="social_security_rights",
+                initiator_id=25,
+                initiator_name="夏国玺",
+                initiation_date=datetime(
+                    2026, 9, 2, 7, 16, tzinfo=timezone.utc
+                ),
+                estimate_time=0,
+                actual_time=0,
+                estimate_date=None,
+                actual_date=None,
+            ),
+        ),
+        meta=NocoBasePageMeta(
+            count=1,
+            page=1,
+            page_size=20,
+            total_page=1,
+            allowed_actions={"view": (384427705696256,)},
+        ),
+    )
+
+    view_model._on_nocobase_applications_succeeded(result)
+
+    assert application is not None
+    assert view_model.nocobaseApplicationsCount == 1
+    assert view_model.nocobaseApplicationsPage == 1
+    assert view_model.nocobaseApplicationsTotalPage == 1
+    assert view_model.nocobaseApplications == [
+        {
+            "id": "384427705696256",
+            "code": "RLSQ20260902-0002",
+            "status": "NEW",
+            "statusLabel": "新增",
+            "title": "测试社保权益单申请2",
+            "problemType": "social_security_rights",
+            "problemTypeLabel": "单位社保权益单",
+            "initiator": "夏国玺",
+            "initiationDate": "2026-09-02",
+            "estimateTime": "0.00",
+            "actualTime": "0.00",
+            "estimateDate": "-",
+            "actualDate": "-",
+        }
+    ]
+
+
+def test_nocobase_application_page_size_reloads_first_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    requested_pages: list[int] = []
+    notifications: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        view_model,
+        "loadNocobaseApplications",
+        lambda page=1: requested_pages.append(page),
+    )
+    view_model.notification.connect(
+        lambda title, message: notifications.append((title, message))
+    )
+
+    view_model.setNocobaseApplicationsPageSize(10)
+
+    assert application is not None
+    assert view_model.nocobaseApplicationsPageSize == 10
+    assert requested_pages == [1]
+
+    view_model.setNocobaseApplicationsPageSize(15)
+
+    assert view_model.nocobaseApplicationsPageSize == 10
+    assert requested_pages == [1]
+    assert notifications[-1][0] == "无法切换分页"
+
+
+def test_nocobase_detail_maps_people_and_starts_dedicated_print(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    view_model._output_path = tmp_path / "output"
+    detail = NocoBaseRightsApplicationDetail(
+        application_id=384427705696256,
+        code="RLSQ20260902-0002",
+        status="NEW",
+        title="测试社保权益单申请2",
+        problem_type="social_security_rights",
+        created_at=datetime(2026, 9, 2, 7, 16, tzinfo=timezone.utc),
+        initiation_date=datetime(2026, 9, 2, 7, 16, tzinfo=timezone.utc),
+        estimate_time=0,
+        actual_time=0,
+        estimate_date=None,
+        actual_date=None,
+        created_by_name="夏国玺",
+        initiator_name="夏国玺",
+        problem_description="",
+        handling_method="",
+        related_persons=(
+            NocoBaseRelatedPerson(
+                person_id=384427705696257,
+                status="NEW",
+                insurance_type="elderly_care",
+                start_month=datetime(2025, 5, 1, tzinfo=timezone.utc),
+                end_month=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                identity_number="410423199005124058",
+                department="第十六分公司",
+                name="王明明",
+                company="南京南化建设有限公司",
+                print_group="组1",
+            ),
+            NocoBaseRelatedPerson(
+                person_id=384427705696258,
+                status="NEW",
+                insurance_type="elderly_care",
+                start_month=datetime(2025, 5, 1, tzinfo=timezone.utc),
+                end_month=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                identity_number="320124199410222629",
+                department="第十五分公司",
+                name="夏素平",
+                company="南京南化建设有限公司",
+                print_group="组1",
+            ),
+            NocoBaseRelatedPerson(
+                person_id=384427705696259,
+                status="NEW",
+                insurance_type="elderly_care",
+                start_month=datetime(2025, 5, 1, tzinfo=timezone.utc),
+                end_month=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                identity_number="320101199001011234",
+                department="第十五分公司",
+                name="张三",
+                company="南京南化建设有限公司",
+            ),
+        ),
+        attachment_names=(),
+        allowed_actions={"view": (384427705696256,)},
+    )
+
+    class FakeWorker:
+        submitted: ExcelTaskRequest | None = None
+
+        def submit(self, request: ExcelTaskRequest) -> bool:
+            self.submitted = request
+            return True
+
+    worker = FakeWorker()
+    view_model._worker = worker  # type: ignore[assignment]
+    started: list[bool] = []
+    finished: list[bool] = []
+    generic_results: list[tuple[str, str, str]] = []
+    view_model.nocobasePrintStarted.connect(lambda: started.append(True))
+    view_model.nocobasePrintFinished.connect(lambda: finished.append(True))
+    view_model.executionFinished.connect(
+        lambda title, message, details: generic_results.append(
+            (title, message, details)
+        )
+    )
+    view_model._on_nocobase_application_detail_succeeded(detail)
+
+    assert view_model.nocobaseApplicationDetail["createdBy"] == "夏国玺"
+    assert view_model.nocobaseApplicationPeople[0]["insuranceLabel"] == "养老"
+    assert view_model.nocobaseApplicationPeople[0]["startMonth"] == "2025-05"
+    assert view_model.nocobaseApplicationPeople[0]["printGroup"] == "组1"
+    assert view_model.nocobaseApplicationPeople[2]["printGroup"] == "单独打印"
+
+    view_model.startNocobaseApplicationPrint()
+
+    assert application is not None
+    assert started == [True]
+    assert view_model.nocobasePrintState == "running"
+    assert view_model.nocobasePrintRunning
+    assert worker.submitted is not None
+    assert worker.submitted.mode is ExportMode.BATCH
+    assert len(worker.submitted.groups) == 2
+    assert [len(group.records) for group in worker.submitted.groups] == [2, 1]
+    assert [group.mode for group in worker.submitted.groups] == [
+        ExportMode.BATCH,
+        ExportMode.INDIVIDUAL,
+    ]
+    assert {
+        item.print_group_id for item in worker.submitted.groups[0].records
+    } == {"384427705696256:group:组1"}
+    assert worker.submitted.groups[1].first.print_group_id == (
+        "384427705696256:person:384427705696259"
+    )
+    assert worker.submitted.groups[0].records[0].start_month == "2025-05"
+    assert worker.submitted.groups[0].records[0].end_month == "2026-01"
+    assert worker.submitted.groups[0].records[0].insurance_type == "养老"
+    assert worker.submitted.source_excel.is_file()
+    worker.submitted.output_dir.mkdir(parents=True)
+    pdf = worker.submitted.output_dir / "权益单.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n%%EOF")
+    view_model._on_completed(
+        ExcelRunResult(
+            mode=ExportMode.BATCH,
+            total=1,
+            succeeded=1,
+            failed=0,
+            manifest_path=worker.submitted.output_dir / "result.json",
+            result_workbook_path=worker.submitted.output_dir / "result.xlsx",
+            items=(ItemResult(2, True, "SUCCESS", "处理成功", pdf),),
+        )
+    )
+
+    assert finished == [True]
+    assert generic_results == []
+    assert view_model.nocobasePrintState == "completed"
+    assert view_model.lastPdfCount == 1
+    assert not worker.submitted.source_excel.exists()
+
+
+def test_nocobase_application_table_resizes_without_phantom_space(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("appBackend", view_model)
+    engine.setInitialProperties({"backend": view_model})
+    engine.load(
+        QUrl.fromLocalFile(
+            str(Path("src/ehrm/gui/qml/Main.qml").resolve())
+        )
+    )
+    window = engine.rootObjects()[0]
+    window.setProperty("activeModule", 2)
+    window.resize(1900, 1000)
+    window.show()
+    QTest.qWait(60)
+    application.processEvents()
+
+    table = window.findChild(QQuickItem, "nocobaseApplicationsTableFlick")
+    assert table is not None
+    assert table.property("contentWidth") == pytest.approx(table.width(), abs=1)
+
+    window.resize(1100, 700)
+    QTest.qWait(60)
+    application.processEvents()
+    assert table.property("contentWidth") == pytest.approx(1330, abs=1)
+    maximum = max(0, table.property("contentWidth") - table.width())
+    assert 0 <= table.property("contentX") <= maximum
+
     window.close()
     application.processEvents()
 
@@ -807,6 +1087,63 @@ def test_pdf_preview_dialog_loads_and_changes_pages(tmp_path: Path) -> None:
 
     assert dialog.property("currentPageNumber") == 2
     dialog.close()
+    window.close()
+    application.processEvents()
+
+
+def test_closing_pdf_preview_returns_to_nocobase_completed_dialog(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    pdf_path = tmp_path / "completed.pdf"
+    writer = QPdfWriter(str(pdf_path))
+    painter = QPainter(writer)
+    painter.drawText(120, 160, "Completed")
+    painter.end()
+
+    view_model = _view_model(tmp_path)
+    view_model._active_execution_source = "nocobase"
+    view_model._progress_total = 1
+    view_model._on_completed(
+        ExcelRunResult(
+            mode=ExportMode.BATCH,
+            total=1,
+            succeeded=1,
+            failed=0,
+            manifest_path=tmp_path / "result.json",
+            result_workbook_path=tmp_path / "result.xlsx",
+            items=(ItemResult(2, True, "SUCCESS", "处理成功", pdf_path),),
+        )
+    )
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("appBackend", view_model)
+    engine.setInitialProperties({"backend": view_model})
+    engine.load(QUrl.fromLocalFile(str(Path("src/ehrm/gui/qml/Main.qml").resolve())))
+    window = engine.rootObjects()[0]
+    window.show()
+    progress_dialog = window.findChild(QObject, "nocobasePrintProgressDialog")
+    preview_dialog = window.findChild(QObject, "pdfPreviewDialog")
+    assert progress_dialog is not None
+    assert preview_dialog is not None
+
+    assert QMetaObject.invokeMethod(progress_dialog, "open")
+    application.processEvents()
+    assert progress_dialog.property("opened")
+
+    assert QMetaObject.invokeMethod(progress_dialog, "previewRequested")
+    for _ in range(30):
+        QTest.qWait(20)
+        application.processEvents()
+        if preview_dialog.property("opened"):
+            break
+
+    assert preview_dialog.property("opened")
+    assert progress_dialog.property("opened")
+    preview_dialog.close()
+    application.processEvents()
+    assert progress_dialog.property("opened")
+
+    progress_dialog.close()
     window.close()
     application.processEvents()
 
@@ -996,7 +1333,7 @@ def test_ai_model_and_supported_reasoning_mode_are_persisted(
     assert restored._settings.ai.model == "qwen3.8:27b"
 
 
-def test_erp_password_is_delegated_to_system_credential_store(
+def test_erp_password_is_saved_in_sqlite_account_database(
     tmp_path: Path,
 ) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
@@ -1023,17 +1360,13 @@ def test_erp_password_is_delegated_to_system_credential_store(
 
     assert application is not None
     assert store.saved == ("erp-user", "secret-value")
-    preferences_path = (
-        view_model._settings.browser.user_data_dir.parent / "preferences.json"
-    )
-    assert "secret-value" not in preferences_path.read_text(encoding="utf-8")
     assert view_model.erpUsername == "erp-user"
     assert view_model.erpPasswordStored
     assert view_model.loadSavedErpPassword("erp-user") == "secret-value"
     assert view_model.loadSavedErpPassword("another-user") == ""
 
 
-def test_rights_password_is_delegated_to_system_credential_store(
+def test_rights_password_is_saved_in_sqlite_account_database(
     tmp_path: Path,
 ) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
@@ -1067,10 +1400,6 @@ def test_rights_password_is_delegated_to_system_credential_store(
         "91320000TEST000001|13800000000",
         "rights-secret",
     )
-    preferences_path = (
-        view_model._settings.browser.user_data_dir.parent / "preferences.json"
-    )
-    assert "rights-secret" not in preferences_path.read_text(encoding="utf-8")
     assert view_model.rightsCreditCode == "91320000TEST000001"
     assert view_model.rightsMobile == "13800000000"
     assert view_model.rightsPasswordStored
@@ -1081,28 +1410,208 @@ def test_rights_password_is_delegated_to_system_credential_store(
     ) == "rights-secret"
 
 
+def test_nocobase_password_is_saved_in_sqlite_account_database(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+
+    view_model.saveNocobaseAccount("nocobase-user", "nocobase-secret")
+
+    assert application is not None
+    assert view_model.nocobaseAccount == "nocobase-user"
+    assert view_model.nocobasePasswordStored
+    assert view_model.loadSavedNocobasePassword("nocobase-user") == (
+        "nocobase-secret"
+    )
+    assert view_model.loadSavedNocobasePassword("another-user") == ""
+    assert view_model.nocobaseConnectionStatus == "账号已保存，尚未测试连接"
+    assert not view_model.nocobaseConnectionSuccess
+
+
+def test_saved_accounts_are_restored_from_sqlite_not_preferences(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    view_model.saveErpAccount("erp-sqlite-user", "erp-sqlite-password")
+    view_model.saveRightsAccount(
+        "91320000SQLITE0001",
+        "13900000000",
+        "rights-sqlite-password",
+    )
+    view_model.saveNocobaseAccount(
+        "nocobase-sqlite-user",
+        "nocobase-sqlite-password",
+    )
+
+    restored = _view_model(tmp_path)
+
+    assert application is not None
+    assert restored.erpUsername == "erp-sqlite-user"
+    assert restored.loadSavedErpPassword("erp-sqlite-user") == (
+        "erp-sqlite-password"
+    )
+    assert restored.rightsCreditCode == "91320000SQLITE0001"
+    assert restored.rightsMobile == "13900000000"
+    assert restored.loadSavedRightsPassword(
+        "91320000SQLITE0001", "13900000000"
+    ) == "rights-sqlite-password"
+    assert restored.nocobaseAccount == "nocobase-sqlite-user"
+    assert restored.loadSavedNocobasePassword("nocobase-sqlite-user") == (
+        "nocobase-sqlite-password"
+    )
+    preferences_path = (
+        restored._settings.browser.user_data_dir.parent / "preferences.json"
+    )
+    if preferences_path.exists():
+        text = preferences_path.read_text(encoding="utf-8")
+        assert "erp-sqlite-user" not in text
+        assert "91320000SQLITE0001" not in text
+        assert "nocobase-sqlite-user" not in text
+
+
+def test_clear_nocobase_login_state_keeps_credentials_and_removes_session(
+    tmp_path: Path,
+) -> None:
+    application = QGuiApplication.instance() or QGuiApplication([])
+    view_model = _view_model(tmp_path)
+    view_model.saveNocobaseAccount("nocobase-user", "nocobase-secret")
+    account = view_model._nocobase_credential_store.default_account()
+    assert account is not None
+    view_model._nocobase_credential_store.repository.save_session(
+        account.id,
+        "test-nocobase-token",
+        expires_at=2_000_000_000,
+    )
+    notifications: list[tuple[str, str]] = []
+    view_model.notification.connect(
+        lambda title, details: notifications.append((title, details))
+    )
+
+    view_model.clearNocobaseLoginState()
+
+    assert application is not None
+    assert (
+        view_model._nocobase_credential_store.repository.get_session(account.id)
+        is None
+    )
+    assert view_model.loadSavedNocobasePassword("nocobase-user") == (
+        "nocobase-secret"
+    )
+    assert view_model.nocobaseConnectionStatus == "NocoBase 登录状态已清除"
+    assert notifications[-1][0] == "清除成功"
+
+
+def test_nocobase_connection_test_persists_verified_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_settings(
+        Path("config/settings.toml"),
+        data_root=tmp_path / "runtime",
+    )
+
+    def encode(payload: dict[str, object]) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    token = ".".join(
+        (
+            encode({"alg": "HS256", "typ": "JWT"}),
+            encode({"userId": 25, "temp": True, "iat": 1, "exp": 2_000_000_000}),
+            "test-signature",
+        )
+    )
+    login_result = NocoBaseLoginResult(
+        user=NocoBaseUser(25, "nocobase-user", "测试用户", "erp-id"),
+        token=token,
+        claims=NocoBaseTokenClaims(25, True, 1, 2_000_000_000),
+    )
+
+    class FakeRequestContext:
+        def dispose(self) -> None:
+            pass
+
+    class FakeRequestFactory:
+        def new_context(self) -> FakeRequestContext:
+            return FakeRequestContext()
+
+    class FakePlaywright:
+        request = FakeRequestFactory()
+
+    class FakePlaywrightContext:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+    class FakeAuthClient:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def sign_in(self, credentials: NocoBaseCredentials) -> NocoBaseLoginResult:
+            assert credentials == NocoBaseCredentials(
+                "nocobase-user",
+                "nocobase-secret",
+            )
+            return login_result
+
+    monkeypatch.setattr(
+        nocobase_connection_module,
+        "sync_playwright",
+        lambda: FakePlaywrightContext(),
+    )
+    monkeypatch.setattr(
+        nocobase_connection_module,
+        "NocoBaseAuthClient",
+        FakeAuthClient,
+    )
+    worker = NocoBaseConnectionWorker(
+        settings,
+        logging.getLogger("test.nocobase-connection"),
+        NocoBaseCredentials("nocobase-user", "nocobase-secret"),
+    )
+    succeeded: list[bool] = []
+    worker.succeeded.connect(lambda: succeeded.append(True))
+
+    worker.run()
+
+    account = AuthenticationRepository(
+        settings.auth_database_path
+    ).get_default_account(SystemType.NOCOBASE)
+    assert succeeded == [True]
+    assert account is not None
+    assert account.account == "nocobase-user"
+    assert account.password == "nocobase-secret"
+    assert account.display_name == "测试用户"
+    session = AuthenticationRepository(
+        settings.auth_database_path
+    ).get_session(account.id)
+    assert session is not None
+    assert session.session_data == token
+    assert session.expires_at == 2_000_000_000
+    assert session.last_verified_at is not None
+
+
 def test_clear_rights_login_state_keeps_credentials_and_removes_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     view_model = _view_model(tmp_path)
-    assert view_model._save_preferences(
-        rights_credit_code="91320000TEST000001",
-        rights_mobile="13800000000",
+    view_model.saveRightsAccount(
+        "91320000TEST000001",
+        "13800000000",
+        "rights-secret",
     )
-
-    class FakeCredentialStore:
-        deleted = False
-
-        def load_password(self, _username: str) -> str | None:
-            return "rights-secret"
-
-        def delete_password(self, _username: str) -> None:
-            self.deleted = True
-
-    credential_store = FakeCredentialStore()
-    view_model._rights_credential_store = credential_store
+    account = view_model._rights_credential_store.default_account()
+    assert account is not None
+    view_model._rights_credential_store.repository.save_session(
+        account.id,
+        "test-access-token",
+    )
     profile = view_model._settings.browser.user_data_dir
     profile.mkdir(parents=True, exist_ok=True)
     (profile / "cookie-state").write_text("old", encoding="utf-8")
@@ -1110,20 +1619,6 @@ def test_clear_rights_login_state_keeps_credentials_and_removes_session(
     storage_state.parent.mkdir(parents=True, exist_ok=True)
     storage_state.write_text("{}", encoding="utf-8")
 
-    invalidated: list[str] = []
-
-    class FakeAccessTokenManager:
-        def __init__(self, account_key: str) -> None:
-            self.account_key = account_key
-
-        def invalidate(self) -> None:
-            invalidated.append(self.account_key)
-
-    monkeypatch.setattr(
-        view_model_module,
-        "AccessTokenManager",
-        FakeAccessTokenManager,
-    )
     notifications: list[tuple[str, str]] = []
     view_model.notification.connect(
         lambda title, details: notifications.append((title, details))
@@ -1132,10 +1627,12 @@ def test_clear_rights_login_state_keeps_credentials_and_removes_session(
     view_model.clearRightsLoginState()
 
     assert application is not None
-    assert len(invalidated) == 1
+    assert view_model._rights_credential_store.repository.get_session(account.id) is None
     assert not storage_state.exists()
     assert profile.is_dir()
     assert list(profile.iterdir()) == []
-    assert not credential_store.deleted
+    assert view_model.loadSavedRightsPassword(
+        "91320000TEST000001", "13800000000"
+    ) == "rights-secret"
     assert view_model.rightsConnectionStatus == "智慧人社登录状态已清除"
     assert notifications[-1][0] == "清除成功"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import sqlite3
 from collections import Counter
 from dataclasses import replace
 from datetime import datetime
@@ -12,16 +13,18 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from ehrm import __version__
-from ehrm.browser.access_token import (
-    AccessTokenManager,
-    build_access_token_account_key,
-)
+from ehrm.core.auth_repository import SystemType
 from ehrm.core.error_catalog import ErrorCode, display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.preferences import UserPreferences, UserPreferencesStore
 from ehrm.core.settings import AppSettings, select_ai_model
 from ehrm.modules.ai.models import ReasoningMode
 from ehrm.gui.erp_connection_worker import ErpConnectionWorker
+from ehrm.gui.nocobase_application_detail_worker import (
+    NocoBaseApplicationDetailWorker,
+)
+from ehrm.gui.nocobase_applications_worker import NocoBaseApplicationsWorker
+from ehrm.gui.nocobase_connection_worker import NocoBaseConnectionWorker
 from ehrm.gui.rights_connection_worker import RightsConnectionWorker
 from ehrm.gui.erp_task_extraction_worker import (
     ErpTaskExtractionRequest,
@@ -40,6 +43,12 @@ from ehrm.modules.erp.credential_store import (
     RightsCredentialStore,
 )
 from ehrm.modules.erp.models import ErpCredentials, ErpUploadResult
+from ehrm.modules.nocobase.models import (
+    NocoBaseCredentials,
+    NocoBaseRightsApplicationDetail,
+    NocoBaseRightsApplicationPage,
+)
+from ehrm.modules.nocobase.credential_store import NocoBaseCredentialStore
 from ehrm.modules.rights_statement.excel_models import (
     EmployeeRecord,
     ExcelRunResult,
@@ -70,10 +79,15 @@ class DesktopViewModel(QObject):
     preferencesChanged = Signal()
     erpAccountChanged = Signal()
     rightsAccountChanged = Signal()
+    nocobaseAccountChanged = Signal()
     rightsConnectionChanged = Signal()
     erpConnectionChanged = Signal()
+    nocobaseConnectionChanged = Signal()
     erpTaskExtractionChanged = Signal()
     pdfPreviewChanged = Signal()
+    nocobaseApplicationsChanged = Signal()
+    nocobaseApplicationDetailChanged = Signal()
+    nocobasePrintChanged = Signal()
 
     validationFailed = Signal(str, str)
     notification = Signal(str, str)
@@ -83,6 +97,9 @@ class DesktopViewModel(QObject):
     manualErpUploadFinished = Signal(str, str, str)
     erpTaskExtractionStarted = Signal()
     erpTaskExtractionFinished = Signal(str, str)
+    nocobaseApplicationDetailStarted = Signal()
+    nocobasePrintStarted = Signal()
+    nocobasePrintFinished = Signal()
 
     def __init__(
         self,
@@ -92,15 +109,31 @@ class DesktopViewModel(QObject):
         start_worker: bool = True,
     ) -> None:
         super().__init__()
+        self._logger = logger
+        self._base_settings = settings
         self._preferences_store = UserPreferencesStore(
             settings.browser.user_data_dir.parent / "preferences.json"
         )
         self._preferences = self._preferences_store.load()
-        self._credential_store = ErpCredentialStore()
-        self._rights_credential_store = RightsCredentialStore()
-        self._base_settings = settings
+        self._credential_store = ErpCredentialStore(settings.auth_database_path)
+        self._rights_credential_store = RightsCredentialStore(
+            settings.auth_database_path
+        )
+        self._nocobase_credential_store = NocoBaseCredentialStore(
+            settings.auth_database_path
+        )
+        erp_account = self._credential_store.default_account()
+        rights_account = self._rights_credential_store.default_account()
+        nocobase_account = self._nocobase_credential_store.default_account()
+        self._erp_username = erp_account.account if erp_account else ""
+        self._rights_credit_code = rights_account.account if rights_account else ""
+        self._rights_mobile = (
+            rights_account.secondary_account if rights_account else ""
+        )
+        self._nocobase_account = (
+            nocobase_account.account if nocobase_account else ""
+        )
         self._settings = self._settings_with_preferences(settings)
-        self._logger = logger
         self._loader = RightsStatementExcelLoader()
         self._template = RightsStatementTemplateService()
         self._records: list[EmployeeRecord] = []
@@ -141,6 +174,29 @@ class DesktopViewModel(QObject):
         self._rights_connection_worker: RightsConnectionWorker | None = None
         self._rights_connection_status = "尚未测试连接"
         self._rights_connection_success = False
+        self._nocobase_connection_worker: NocoBaseConnectionWorker | None = None
+        self._nocobase_connection_status = "尚未测试连接"
+        self._nocobase_connection_success = False
+        self._nocobase_applications_worker: NocoBaseApplicationsWorker | None = None
+        self._nocobase_applications: list[dict[str, object]] = []
+        self._nocobase_applications_page = 1
+        self._nocobase_applications_page_size = (
+            settings.nocobase.default_page_size
+        )
+        self._nocobase_applications_total_page = 0
+        self._nocobase_applications_count = 0
+        self._nocobase_applications_status = "尚未加载权益申请"
+        self._nocobase_application_detail_worker: (
+            NocoBaseApplicationDetailWorker | None
+        ) = None
+        self._nocobase_application_detail: (
+            NocoBaseRightsApplicationDetail | None
+        ) = None
+        self._nocobase_application_detail_error = ""
+        self._active_execution_source = ""
+        self._nocobase_print_state = "idle"
+        self._nocobase_print_message = ""
+        self._nocobase_print_details = ""
         self._erp_task_extraction_worker: ErpTaskExtractionWorker | None = None
         self._erp_task_extraction_running = False
         self._erp_task_extraction_stopping = False
@@ -149,18 +205,25 @@ class DesktopViewModel(QObject):
         self._erp_task_extraction_total = 0
         self._erp_task_extraction_task = ""
         self._erp_password_stored = bool(
-            self._credential_store.load_password(self._preferences.erp_username)
+            self._credential_store.load_password(self._erp_username)
         )
         self._rights_password_stored = bool(
             self._rights_credential_store.load_password(
                 self._rights_account_key(
-                    self._preferences.rights_credit_code,
-                    self._preferences.rights_mobile,
+                    self._rights_credit_code,
+                    self._rights_mobile,
                 )
+            )
+        )
+        self._nocobase_password_stored = bool(
+            self._nocobase_credential_store.load_password(
+                self._nocobase_account
             )
         )
         if self._rights_password_stored:
             self._rights_connection_status = "账号已保存，尚未测试连接"
+        if self._nocobase_password_stored:
+            self._nocobase_connection_status = "账号已保存，尚未测试连接"
         self._worker_enabled = start_worker
         if start_worker:
             self._start_worker()
@@ -439,7 +502,7 @@ class DesktopViewModel(QObject):
 
     @Property(str, notify=erpAccountChanged)
     def erpUsername(self) -> str:
-        return self._preferences.erp_username
+        return self._erp_username
 
     @Property(bool, notify=erpAccountChanged)
     def erpPasswordStored(self) -> bool:
@@ -454,17 +517,32 @@ class DesktopViewModel(QObject):
         settings page.
         """
         normalized = username.strip()
-        if not normalized or normalized != self._preferences.erp_username:
+        if not normalized or normalized != self._erp_username:
             return ""
         return self._credential_store.load_password(normalized) or ""
 
+    @Property(str, notify=nocobaseAccountChanged)
+    def nocobaseAccount(self) -> str:
+        return self._nocobase_account
+
+    @Property(bool, notify=nocobaseAccountChanged)
+    def nocobasePasswordStored(self) -> bool:
+        return self._nocobase_password_stored
+
+    @Slot(str, result=str)
+    def loadSavedNocobasePassword(self, account: str) -> str:
+        normalized = account.strip()
+        if not normalized or normalized != self._nocobase_account:
+            return ""
+        return self._nocobase_credential_store.load_password(normalized) or ""
+
     @Property(str, notify=rightsAccountChanged)
     def rightsCreditCode(self) -> str:
-        return self._preferences.rights_credit_code
+        return self._rights_credit_code
 
     @Property(str, notify=rightsAccountChanged)
     def rightsMobile(self) -> str:
-        return self._preferences.rights_mobile
+        return self._rights_mobile
 
     @Property(bool, notify=rightsAccountChanged)
     def rightsPasswordStored(self) -> bool:
@@ -487,8 +565,8 @@ class DesktopViewModel(QObject):
         normalized_credit = credit_code.strip()
         normalized_mobile = mobile.strip()
         if (
-            normalized_credit != self._preferences.rights_credit_code
-            or normalized_mobile != self._preferences.rights_mobile
+            normalized_credit != self._rights_credit_code
+            or normalized_mobile != self._rights_mobile
         ):
             return ""
         key = self._rights_account_key(normalized_credit, normalized_mobile)
@@ -505,6 +583,306 @@ class DesktopViewModel(QObject):
     @Property(bool, notify=erpConnectionChanged)
     def erpConnectionSuccess(self) -> bool:
         return self._erp_connection_success
+
+    @Property(bool, notify=nocobaseConnectionChanged)
+    def nocobaseConnectionBusy(self) -> bool:
+        return self._nocobase_connection_worker is not None
+
+    @Property(str, notify=nocobaseConnectionChanged)
+    def nocobaseConnectionStatus(self) -> str:
+        return self._nocobase_connection_status
+
+    @Property(bool, notify=nocobaseConnectionChanged)
+    def nocobaseConnectionSuccess(self) -> bool:
+        return self._nocobase_connection_success
+
+    @Property("QVariantList", notify=nocobaseApplicationsChanged)
+    def nocobaseApplications(self) -> list[dict[str, object]]:
+        return self._nocobase_applications
+
+    @Property(int, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsPage(self) -> int:
+        return self._nocobase_applications_page
+
+    @Property(int, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsPageSize(self) -> int:
+        return self._nocobase_applications_page_size
+
+    @Property(int, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsTotalPage(self) -> int:
+        return self._nocobase_applications_total_page
+
+    @Property(int, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsCount(self) -> int:
+        return self._nocobase_applications_count
+
+    @Property(str, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsStatus(self) -> str:
+        return self._nocobase_applications_status
+
+    @Property(bool, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsLoading(self) -> bool:
+        return self._nocobase_applications_worker is not None
+
+    @Property(bool, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsHasPrevious(self) -> bool:
+        return self._nocobase_applications_page > 1
+
+    @Property(bool, notify=nocobaseApplicationsChanged)
+    def nocobaseApplicationsHasNext(self) -> bool:
+        return (
+            self._nocobase_applications_total_page > 0
+            and self._nocobase_applications_page
+            < self._nocobase_applications_total_page
+        )
+
+    @Slot(int)
+    def loadNocobaseApplications(self, page: int = 1) -> None:
+        if self._nocobase_applications_worker is not None:
+            return
+        requested_page = max(1, page)
+        worker = NocoBaseApplicationsWorker(
+            self._settings,
+            self._logger,
+            requested_page,
+            self._nocobase_applications_page_size,
+        )
+        worker.succeeded.connect(self._on_nocobase_applications_succeeded)
+        worker.failed.connect(self._on_nocobase_applications_failed)
+        worker.finished.connect(self._on_nocobase_applications_finished)
+        self._nocobase_applications_worker = worker
+        self._nocobase_applications_status = (
+            f"正在加载第 {requested_page} 页权益申请…"
+        )
+        self.nocobaseApplicationsChanged.emit()
+        worker.start()
+
+    @Slot()
+    def loadPreviousNocobaseApplicationsPage(self) -> None:
+        if self.nocobaseApplicationsHasPrevious:
+            self.loadNocobaseApplications(self._nocobase_applications_page - 1)
+
+    @Slot()
+    def loadNextNocobaseApplicationsPage(self) -> None:
+        if self.nocobaseApplicationsHasNext:
+            self.loadNocobaseApplications(self._nocobase_applications_page + 1)
+
+    @Slot(int)
+    def setNocobaseApplicationsPageSize(self, page_size: int) -> None:
+        if self._nocobase_applications_worker is not None:
+            return
+        if page_size not in (10, 20, 50, 100):
+            self.notification.emit("无法切换分页", "每页条数必须是 10、20、50 或 100")
+            return
+        if page_size == self._nocobase_applications_page_size:
+            return
+        self._nocobase_applications_page_size = page_size
+        self.nocobaseApplicationsChanged.emit()
+        self.loadNocobaseApplications(1)
+
+    @Property(bool, notify=nocobaseApplicationDetailChanged)
+    def nocobaseApplicationDetailLoading(self) -> bool:
+        return self._nocobase_application_detail_worker is not None
+
+    @Property(str, notify=nocobaseApplicationDetailChanged)
+    def nocobaseApplicationDetailError(self) -> str:
+        return self._nocobase_application_detail_error
+
+    @Property("QVariantMap", notify=nocobaseApplicationDetailChanged)
+    def nocobaseApplicationDetail(self) -> dict[str, object]:
+        detail = self._nocobase_application_detail
+        if detail is None:
+            return {}
+        return {
+            "id": str(detail.application_id),
+            "code": detail.code or "-",
+            "status": detail.status,
+            "statusLabel": self._nocobase_status_label(detail.status),
+            "title": detail.title or "-",
+            "problemType": detail.problem_type,
+            "problemTypeLabel": self._nocobase_problem_type_label(
+                detail.problem_type
+            ),
+            "createdBy": detail.created_by_name or "-",
+            "createdAt": self._format_nocobase_date(detail.created_at),
+            "initiator": detail.initiator_name or "-",
+            "initiationDate": self._format_nocobase_date(
+                detail.initiation_date
+            ),
+            "estimateTime": f"{detail.estimate_time:.2f}",
+            "actualTime": f"{detail.actual_time:.2f}",
+            "estimateDate": self._format_nocobase_date(detail.estimate_date),
+            "actualDate": self._format_nocobase_date(detail.actual_date),
+            "problemDescription": detail.problem_description,
+            "handlingMethod": detail.handling_method,
+            "attachmentCount": len(detail.attachment_names),
+            "attachmentNames": list(detail.attachment_names),
+            "peopleCount": len(detail.related_persons),
+        }
+
+    @Property("QVariantList", notify=nocobaseApplicationDetailChanged)
+    def nocobaseApplicationPeople(self) -> list[dict[str, object]]:
+        detail = self._nocobase_application_detail
+        if detail is None:
+            return []
+        return [
+            {
+                "id": str(person.person_id),
+                "status": person.status,
+                "statusLabel": self._nocobase_status_label(person.status),
+                "insuranceType": person.insurance_type,
+                "insuranceLabel": self._nocobase_insurance_label(
+                    person.insurance_type
+                ),
+                "company": person.company or "-",
+                "department": person.department or "-",
+                "name": person.name or "-",
+                "identity": person.identity_number or "-",
+                "printGroup": person.print_group or "单独打印",
+                "startMonth": self._format_nocobase_month(person.start_month),
+                "endMonth": self._format_nocobase_month(person.end_month),
+            }
+            for person in detail.related_persons
+        ]
+
+    @Property(str, notify=nocobasePrintChanged)
+    def nocobasePrintState(self) -> str:
+        return self._nocobase_print_state
+
+    @Property(str, notify=nocobasePrintChanged)
+    def nocobasePrintMessage(self) -> str:
+        return self._nocobase_print_message
+
+    @Property(str, notify=nocobasePrintChanged)
+    def nocobasePrintDetails(self) -> str:
+        return self._nocobase_print_details
+
+    @Property(bool, notify=nocobasePrintChanged)
+    def nocobasePrintRunning(self) -> bool:
+        return self._active_execution_source == "nocobase" and self._running
+
+    @Slot(str)
+    def loadNocobaseApplicationDetail(self, application_id: str) -> None:
+        if self._nocobase_application_detail_worker is not None:
+            return
+        try:
+            normalized_id = int(application_id)
+            if normalized_id < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            self.notification.emit("无法查看申请", "权益申请记录编号无效")
+            return
+        self._nocobase_application_detail = None
+        self._nocobase_application_detail_error = ""
+        worker = NocoBaseApplicationDetailWorker(
+            self._settings,
+            self._logger,
+            normalized_id,
+        )
+        worker.succeeded.connect(self._on_nocobase_application_detail_succeeded)
+        worker.failed.connect(self._on_nocobase_application_detail_failed)
+        worker.finished.connect(self._on_nocobase_application_detail_finished)
+        self._nocobase_application_detail_worker = worker
+        self.nocobaseApplicationDetailChanged.emit()
+        self.nocobaseApplicationDetailStarted.emit()
+        worker.start()
+
+    @Slot()
+    def startNocobaseApplicationPrint(self) -> None:
+        detail = self._nocobase_application_detail
+        if detail is None or self._running:
+            return
+        if not detail.related_persons:
+            self.notification.emit("无法打印权益单", "当前申请没有申请人员")
+            return
+        try:
+            group_sequences: dict[str, int] = {}
+            records: list[EmployeeRecord] = []
+            for index, person in enumerate(detail.related_persons, start=2):
+                logical_group = (
+                    f"group:{person.print_group}"
+                    if person.print_group
+                    else f"person:{person.person_id}"
+                )
+                if logical_group not in group_sequences:
+                    group_sequences[logical_group] = len(group_sequences) + 1
+                print_mode = "combined" if person.print_group else "individual"
+                records.append(
+                    EmployeeRecord(
+                        row_number=index,
+                        unit=person.company,
+                        department=person.department,
+                        name=person.name,
+                        identity_number=person.identity_number,
+                        insurance_type=self._nocobase_insurance_label(
+                            person.insurance_type
+                        ),
+                        start_month=self._format_nocobase_month(
+                            person.start_month,
+                            compact=True,
+                        ),
+                        end_month=self._format_nocobase_month(
+                            person.end_month,
+                            compact=True,
+                        ),
+                        task_number=detail.code,
+                        print_group_id=f"{detail.application_id}:{logical_group}",
+                        print_group_sequence=group_sequences[logical_group],
+                        source_print_mode=print_mode,
+                        resolved_print_mode=print_mode,
+                    )
+                )
+            records = self._loader.validate_records(records)
+            groups = self._loader.plan(records, ExportMode.BATCH, self._batch_size)
+            task_dir = self._settings.browser.user_data_dir.parent / "tasks"
+            source = task_dir / (
+                f"NocoBase权益申请_{detail.code}_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
+            )
+            self._generated_source_excel = self._template.write_records(
+                source,
+                records,
+                include_print_groups=False,
+            )
+        except Exception as exc:
+            self._logger.exception("准备 NocoBase 权益申请打印任务失败")
+            self.notification.emit("无法打印权益单", str(exc))
+            self._cleanup_generated_source_workbook()
+            return
+
+        output_dir = self._output_path / (
+            f"{detail.code}_权益单_{datetime.now():%Y%m%d_%H%M%S}"
+        )
+        request = ExcelTaskRequest(
+            groups=tuple(groups),
+            mode=ExportMode.BATCH,
+            output_dir=output_dir,
+            source_excel=self._generated_source_excel,
+            upload_to_erp=False,
+        )
+        self._last_pdf_files = []
+        self._last_output_dir = output_dir
+        self.pdfPreviewChanged.emit()
+        self.confirmationChanged.emit()
+        self._active_execution_source = "nocobase"
+        self._nocobase_print_state = "running"
+        self._nocobase_print_message = "正在启动权益单打印任务"
+        self._nocobase_print_details = ""
+        self._set_running(True)
+        self._set_stopping(False)
+        self._set_status("正在准备智慧人社登录状态")
+        self._progress_current = 0
+        self._progress_total = max(1, len(groups))
+        self.progressChanged.emit()
+        self.nocobasePrintChanged.emit()
+        self.nocobasePrintStarted.emit()
+        if self._worker is None or not self._worker.submit(request):
+            self._set_running(False)
+            self._nocobase_print_state = "failed"
+            self._nocobase_print_message = "权益单打印任务启动失败"
+            self._nocobase_print_details = "自动化工作线程已停止，请重新启动程序"
+            self._cleanup_generated_source_workbook()
+            self.nocobasePrintChanged.emit()
+            self.nocobasePrintFinished.emit()
 
     @Property(bool, notify=preferencesChanged)
     def openOutputFolderAfterRun(self) -> bool:
@@ -984,36 +1362,64 @@ class DesktopViewModel(QObject):
         if not normalized:
             self.notification.emit("账号不能为空", "请输入 ERP 用户名")
             return
-        existing_password = (
-            self._credential_store.load_password(normalized)
-            if normalized == self._preferences.erp_username
-            else None
-        )
+        existing_password = self._credential_store.load_password(normalized)
         if not password and not existing_password:
             self.notification.emit("密码不能为空", "请输入 ERP 密码")
             return
         try:
-            if password:
-                if (
-                    self._preferences.erp_username
-                    and self._preferences.erp_username != normalized
-                ):
-                    self._credential_store.delete_password(
-                        self._preferences.erp_username
-                    )
-                self._credential_store.save_password(normalized, password)
-            if not self._save_preferences(erp_username=normalized):
-                return
-        except (EhrmError, OSError) as exc:
+            self._credential_store.save_password(
+                normalized,
+                password or existing_password or "",
+            )
+        except (EhrmError, OSError, sqlite3.Error) as exc:
             message = exc.message if isinstance(exc, EhrmError) else str(exc)
             self.notification.emit("ERP 账号保存失败", message)
             return
+        self._erp_username = normalized
         self._erp_password_stored = True
         self._erp_connection_success = False
         self._erp_connection_status = "账号已保存，尚未测试连接"
         self.erpAccountChanged.emit()
         self.erpConnectionChanged.emit()
-        self.notification.emit("保存成功", "ERP 账号已安全保存")
+        self.notification.emit("保存成功", "ERP 账号已保存到应用数据库")
+
+    @Slot(str, str)
+    def saveNocobaseAccount(self, account: str, password: str) -> None:
+        normalized = account.strip()
+        if not normalized:
+            self.notification.emit("账号不能为空", "请输入 NocoBase 登录账号")
+            return
+        existing = self._nocobase_credential_store.repository.get_account(
+            SystemType.NOCOBASE,
+            normalized,
+        )
+        existing_password = existing.password if existing is not None else ""
+        resolved_password = password or existing_password
+        if not resolved_password:
+            self.notification.emit("密码不能为空", "请输入 NocoBase 登录密码")
+            return
+        try:
+            self._nocobase_credential_store.save_password(
+                normalized,
+                resolved_password,
+            )
+            saved = self._nocobase_credential_store.default_account()
+            if saved is None or saved.password != resolved_password:
+                raise OSError("账号写入应用数据库后无法读取，请重新保存")
+            if existing is not None and existing.password != resolved_password:
+                self._nocobase_credential_store.repository.delete_session(saved.id)
+        except (EhrmError, OSError, sqlite3.Error, ValueError) as exc:
+            message = exc.message if isinstance(exc, EhrmError) else str(exc)
+            self.notification.emit("NocoBase 账号保存失败", message)
+            return
+
+        self._nocobase_account = normalized
+        self._nocobase_password_stored = True
+        self._nocobase_connection_success = False
+        self._nocobase_connection_status = "账号已保存，尚未测试连接"
+        self.nocobaseAccountChanged.emit()
+        self.nocobaseConnectionChanged.emit()
+        self.notification.emit("保存成功", "NocoBase 账号已保存到应用数据库")
 
     @Slot(str, str, str)
     def saveRightsAccount(
@@ -1035,34 +1441,22 @@ class DesktopViewModel(QObject):
             return
 
         new_key = self._rights_account_key(normalized_credit, normalized_mobile)
-        old_key = self._rights_account_key(
-            self._preferences.rights_credit_code,
-            self._preferences.rights_mobile,
-        )
-        existing_password = (
-            self._rights_credential_store.load_password(new_key)
-            if new_key == old_key
-            else None
-        )
+        existing_password = self._rights_credential_store.load_password(new_key)
         if not password and not existing_password:
             self.notification.emit("密码不能为空", "请输入江苏智慧人社密码")
             return
         try:
-            if password:
-                if old_key and old_key != new_key:
-                    self._rights_credential_store.delete_password(old_key)
-                self._rights_credential_store.save_password(new_key, password)
-                verified_password = self._rights_credential_store.load_password(
-                    new_key
-                )
-                if verified_password != password:
-                    raise OSError("密码写入系统凭据库后无法读取，请重新保存")
-            if not self._save_preferences(
-                rights_credit_code=normalized_credit,
-                rights_mobile=normalized_mobile,
-            ):
-                return
-        except (EhrmError, OSError) as exc:
+            resolved_password = password or existing_password or ""
+            self._rights_credential_store.save_password(
+                new_key,
+                resolved_password,
+            )
+            verified_password = self._rights_credential_store.load_password(
+                new_key
+            )
+            if verified_password != resolved_password:
+                raise OSError("密码写入账号数据库后无法读取，请重新保存")
+        except (EhrmError, OSError, sqlite3.Error) as exc:
             if isinstance(exc, EhrmError):
                 message = exc.message
                 if exc.details:
@@ -1072,13 +1466,17 @@ class DesktopViewModel(QObject):
             self.notification.emit("智慧人社账号保存失败", message)
             return
 
+        self._rights_credit_code = normalized_credit
+        self._rights_mobile = normalized_mobile
         self._rights_password_stored = True
         self._rights_connection_success = False
         self._rights_connection_status = "账号已保存，尚未测试连接"
         self._apply_automation_preferences()
         self.rightsAccountChanged.emit()
         self.rightsConnectionChanged.emit()
-        self.notification.emit("保存成功", "江苏智慧人社账号已安全保存")
+        self.notification.emit(
+            "保存成功", "江苏智慧人社账号已保存到应用数据库"
+        )
 
     @Slot(str, str, str)
     def testRightsConnection(
@@ -1151,12 +1549,9 @@ class DesktopViewModel(QObject):
             self._worker = None
 
         try:
-            account_key = build_access_token_account_key(
-                self._settings.site.login_url,
-                self._preferences.rights_credit_code,
-                self._preferences.rights_mobile,
-            )
-            AccessTokenManager(account_key).invalidate()
+            account = self._rights_credential_store.default_account()
+            if account is not None:
+                self._rights_credential_store.repository.delete_session(account.id)
             storage_state = self._settings.browser.storage_state_path
             if storage_state.is_file():
                 storage_state.unlink()
@@ -1164,7 +1559,7 @@ class DesktopViewModel(QObject):
             if profile.exists():
                 shutil.rmtree(profile)
             profile.mkdir(parents=True, exist_ok=True)
-        except (EhrmError, OSError, ValueError) as exc:
+        except (EhrmError, OSError, ValueError, sqlite3.Error) as exc:
             self.notification.emit("清除失败", str(exc))
             if restart_worker:
                 self._start_worker()
@@ -1204,16 +1599,71 @@ class DesktopViewModel(QObject):
         self.erpConnectionChanged.emit()
         worker.start()
 
+    @Slot(str, str)
+    def testNocobaseConnection(self, account: str, password: str) -> None:
+        if self._nocobase_connection_worker is not None:
+            return
+        normalized = account.strip()
+        resolved_password = password or (
+            self._nocobase_credential_store.load_password(normalized) or ""
+        )
+        if not normalized or not resolved_password:
+            self.notification.emit(
+                "账号信息不完整",
+                "请填写 NocoBase 登录账号和密码",
+            )
+            return
+        worker = NocoBaseConnectionWorker(
+            self._settings,
+            self._logger,
+            NocoBaseCredentials(normalized, resolved_password),
+        )
+        worker.status_changed.connect(self._on_nocobase_connection_status)
+        worker.succeeded.connect(self._on_nocobase_connection_succeeded)
+        worker.failed.connect(self._on_nocobase_connection_failed)
+        worker.finished.connect(self._on_nocobase_connection_finished)
+        self._nocobase_connection_worker = worker
+        self._nocobase_connection_success = False
+        self._nocobase_connection_status = "正在测试 NocoBase 登录…"
+        self.nocobaseConnectionChanged.emit()
+        worker.start()
+
+    @Slot()
+    def clearNocobaseLoginState(self) -> None:
+        if self._nocobase_connection_worker is not None:
+            self.notification.emit(
+                "当前无法清除",
+                "请等待 NocoBase 连接测试结束后重试",
+            )
+            return
+        try:
+            account = self._nocobase_credential_store.default_account()
+            if account is not None:
+                self._nocobase_credential_store.repository.delete_session(account.id)
+        except sqlite3.Error as exc:
+            self.notification.emit("清除失败", str(exc))
+            return
+        self._nocobase_connection_success = False
+        self._nocobase_connection_status = "NocoBase 登录状态已清除"
+        self.nocobaseConnectionChanged.emit()
+        self.notification.emit(
+            "清除成功",
+            "账号密码仍保留；下次 NocoBase 操作将重新登录",
+        )
+
     @Slot()
     def clearErpLoginState(self) -> None:
         if self._erp_uploading or self._erp_connection_worker is not None:
             self.notification.emit("当前无法清除", "请等待 ERP 操作结束后重试")
             return
         try:
+            account = self._credential_store.default_account()
+            if account is not None:
+                self._credential_store.repository.delete_session(account.id)
             if self._settings.erp.user_data_dir.exists():
                 shutil.rmtree(self._settings.erp.user_data_dir)
             self._settings.erp.user_data_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             self.notification.emit("清除失败", str(exc))
             return
         self._erp_connection_success = False
@@ -1453,6 +1903,7 @@ class DesktopViewModel(QObject):
             self.pdfPreviewChanged.emit()
         self._last_output_dir = self._pending_output_dir
         self.confirmationChanged.emit()
+        self._active_execution_source = "standard"
         self._set_running(True)
         self._set_stopping(False)
         self._set_status("正在启动浏览器")
@@ -1547,6 +1998,36 @@ class DesktopViewModel(QObject):
                     self._rights_connection_worker = None
             else:
                 self._rights_connection_worker = None
+        if self._nocobase_connection_worker is not None:
+            connection_worker = self._nocobase_connection_worker
+            if connection_worker.isRunning():
+                connection_worker.cancel()
+                if not connection_worker.wait(30_000):
+                    self._logger.error("NocoBase 连接测试线程未在 30 秒内停止")
+                else:
+                    self._nocobase_connection_worker = None
+            else:
+                self._nocobase_connection_worker = None
+        if self._nocobase_applications_worker is not None:
+            applications_worker = self._nocobase_applications_worker
+            if applications_worker.isRunning():
+                if not applications_worker.wait(30_000):
+                    self._logger.error("NocoBase 权益申请查询线程未在 30 秒内停止")
+                else:
+                    self._nocobase_applications_worker = None
+            else:
+                self._nocobase_applications_worker = None
+        if self._nocobase_application_detail_worker is not None:
+            detail_worker = self._nocobase_application_detail_worker
+            if detail_worker.isRunning():
+                if not detail_worker.wait(30_000):
+                    self._logger.error(
+                        "NocoBase 权益申请详情查询线程未在 30 秒内停止"
+                    )
+                else:
+                    self._nocobase_application_detail_worker = None
+            else:
+                self._nocobase_application_detail_worker = None
         if self._erp_task_extraction_worker is not None:
             extraction_worker = self._erp_task_extraction_worker
             if extraction_worker.isRunning():
@@ -1654,6 +2135,9 @@ class DesktopViewModel(QObject):
     @Slot(str)
     def _on_status(self, text: str) -> None:
         self._set_status(text)
+        if self._active_execution_source == "nocobase":
+            self._nocobase_print_message = text
+            self.nocobasePrintChanged.emit()
         match = re.search(r"批次\s+(\d+)/(\d+)", text)
         if match:
             current, total = (int(value) for value in match.groups())
@@ -1665,6 +2149,7 @@ class DesktopViewModel(QObject):
 
     @Slot(object)
     def _on_completed(self, result: ExcelRunResult) -> None:
+        execution_source = self._active_execution_source
         self._set_running(False)
         self._set_stopping(False)
         unique_pdf_files: list[Path] = []
@@ -1722,6 +2207,18 @@ class DesktopViewModel(QObject):
         )
         if failure_reasons:
             details += "\n\n失败原因：\n" + "\n\n".join(failure_reasons)
+        if execution_source == "nocobase":
+            self._nocobase_print_state = (
+                "stopped"
+                if cancelled
+                else ("failed" if result.failed else "completed")
+            )
+            self._nocobase_print_message = message
+            self._nocobase_print_details = details
+            self.nocobasePrintChanged.emit()
+            self.nocobasePrintFinished.emit()
+            self._cleanup_generated_source_workbook()
+            return
         self.executionFinished.emit(title, message, details)
         if self._preferences.open_output_folder and self._last_output_dir is not None:
             self.openFolder(str(self._last_output_dir))
@@ -1729,10 +2226,18 @@ class DesktopViewModel(QObject):
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
+        execution_source = self._active_execution_source
         self._set_running(False)
         self._set_stopping(False)
         self._set_status("执行失败")
         self._cleanup_generated_source_workbook()
+        if execution_source == "nocobase":
+            self._nocobase_print_state = "failed"
+            self._nocobase_print_message = "权益单打印失败"
+            self._nocobase_print_details = message
+            self.nocobasePrintChanged.emit()
+            self.nocobasePrintFinished.emit()
+            return
         self.notification.emit("执行失败", message)
 
     @Slot(str)
@@ -1774,8 +2279,12 @@ class DesktopViewModel(QObject):
 
     @Slot()
     def _on_erp_connection_succeeded(self) -> None:
+        account = self._credential_store.default_account()
+        self._erp_username = account.account if account is not None else ""
+        self._erp_password_stored = bool(account and account.password)
         self._erp_connection_success = True
         self._erp_connection_status = "ERP 连接正常"
+        self.erpAccountChanged.emit()
         self.erpConnectionChanged.emit()
 
     @Slot(str, str)
@@ -1802,8 +2311,16 @@ class DesktopViewModel(QObject):
 
     @Slot()
     def _on_rights_connection_succeeded(self) -> None:
+        account = self._rights_credential_store.default_account()
+        self._rights_credit_code = account.account if account is not None else ""
+        self._rights_mobile = (
+            account.secondary_account if account is not None else ""
+        )
+        self._rights_password_stored = bool(account and account.password)
+        self._apply_automation_preferences()
         self._rights_connection_success = True
         self._rights_connection_status = "智慧人社登录与 Access-Token 正常"
+        self.rightsAccountChanged.emit()
         self.rightsConnectionChanged.emit()
 
     @Slot(str, str)
@@ -1820,6 +2337,124 @@ class DesktopViewModel(QObject):
     def _on_rights_connection_finished(self) -> None:
         self._rights_connection_worker = None
         self.rightsConnectionChanged.emit()
+
+    @Slot(str)
+    def _on_nocobase_connection_status(self, text: str) -> None:
+        self._nocobase_connection_status = (
+            text.strip() or "正在测试 NocoBase 登录…"
+        )
+        self.nocobaseConnectionChanged.emit()
+
+    @Slot()
+    def _on_nocobase_connection_succeeded(self) -> None:
+        account = self._nocobase_credential_store.default_account()
+        self._nocobase_account = account.account if account is not None else ""
+        self._nocobase_password_stored = bool(account and account.password)
+        self._nocobase_connection_success = True
+        self._nocobase_connection_status = "NocoBase 登录与 Token 正常"
+        self.nocobaseAccountChanged.emit()
+        self.nocobaseConnectionChanged.emit()
+
+    @Slot(str, str)
+    def _on_nocobase_connection_failed(
+        self,
+        summary: str,
+        details: str,
+    ) -> None:
+        self._nocobase_connection_success = False
+        self._nocobase_connection_status = summary or "NocoBase 连接失败"
+        self.nocobaseConnectionChanged.emit()
+        self.notification.emit(
+            "NocoBase 连接失败",
+            details or summary or "请检查账号、密码、服务地址和网络连接",
+        )
+
+    @Slot()
+    def _on_nocobase_connection_finished(self) -> None:
+        self._nocobase_connection_worker = None
+        self.nocobaseConnectionChanged.emit()
+
+    @Slot(object)
+    def _on_nocobase_applications_succeeded(
+        self,
+        result: NocoBaseRightsApplicationPage,
+    ) -> None:
+        self._nocobase_applications = [
+            {
+                "id": str(record.application_id),
+                "code": record.code or "-",
+                "status": record.status,
+                "statusLabel": self._nocobase_status_label(record.status),
+                "title": record.title or "-",
+                "problemType": record.problem_type,
+                "problemTypeLabel": self._nocobase_problem_type_label(
+                    record.problem_type
+                ),
+                "initiator": record.initiator_name or "-",
+                "initiationDate": self._format_nocobase_date(
+                    record.initiation_date
+                ),
+                "estimateTime": f"{record.estimate_time:.2f}",
+                "actualTime": f"{record.actual_time:.2f}",
+                "estimateDate": self._format_nocobase_date(
+                    record.estimate_date
+                ),
+                "actualDate": self._format_nocobase_date(record.actual_date),
+            }
+            for record in result.records
+        ]
+        self._nocobase_applications_page = result.meta.page
+        self._nocobase_applications_page_size = result.meta.page_size
+        self._nocobase_applications_total_page = result.meta.total_page
+        self._nocobase_applications_count = result.meta.count
+        self._nocobase_applications_status = (
+            f"已加载 {len(result.records)} 条，共 {result.meta.count} 条"
+        )
+        self.nocobaseApplicationsChanged.emit()
+
+    @Slot(str, str)
+    def _on_nocobase_applications_failed(
+        self,
+        summary: str,
+        details: str,
+    ) -> None:
+        self._nocobase_applications_status = summary or "权益申请查询失败"
+        self.nocobaseApplicationsChanged.emit()
+        self.notification.emit(
+            "权益申请查询失败",
+            details or summary or "请检查 NocoBase 账号和网络连接",
+        )
+
+    @Slot()
+    def _on_nocobase_applications_finished(self) -> None:
+        self._nocobase_applications_worker = None
+        self.nocobaseApplicationsChanged.emit()
+
+    @Slot(object)
+    def _on_nocobase_application_detail_succeeded(
+        self,
+        result: NocoBaseRightsApplicationDetail,
+    ) -> None:
+        self._nocobase_application_detail = result
+        self._nocobase_application_detail_error = ""
+        self.nocobaseApplicationDetailChanged.emit()
+
+    @Slot(str, str)
+    def _on_nocobase_application_detail_failed(
+        self,
+        summary: str,
+        details: str,
+    ) -> None:
+        self._nocobase_application_detail = None
+        self._nocobase_application_detail_error = (
+            details or summary or "请检查 NocoBase 账号和网络连接"
+        )
+        self.nocobaseApplicationDetailChanged.emit()
+
+    @Slot()
+    def _on_nocobase_application_detail_finished(self) -> None:
+        self._nocobase_application_detail_worker = None
+        self.nocobaseApplicationDetailChanged.emit()
 
     @Slot(str)
     def _on_erp_task_extraction_status(self, text: str) -> None:
@@ -2234,12 +2869,12 @@ class DesktopViewModel(QObject):
             rights_statement=rights_statement,
             rights_credentials=replace(
                 selected_settings.rights_credentials,
-                credit_code=self._preferences.rights_credit_code,
-                mobile=self._preferences.rights_mobile,
+                credit_code=self._rights_credit_code,
+                mobile=self._rights_mobile,
                 password=self._rights_credential_store.load_password(
                     self._rights_account_key(
-                        self._preferences.rights_credit_code,
-                        self._preferences.rights_mobile,
+                        self._rights_credit_code,
+                        self._rights_mobile,
                     )
                 )
                 or "",
@@ -2253,6 +2888,50 @@ class DesktopViewModel(QObject):
         if not normalized_credit or not normalized_mobile:
             return ""
         return f"{normalized_credit}|{normalized_mobile}"
+
+    @staticmethod
+    def _format_nocobase_date(value: datetime | None) -> str:
+        if value is None:
+            return "-"
+        localized = value.astimezone() if value.tzinfo is not None else value
+        return localized.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _format_nocobase_month(
+        value: datetime | None,
+        *,
+        compact: bool = False,
+    ) -> str:
+        if value is None:
+            return "" if compact else "-"
+        localized = value.astimezone() if value.tzinfo is not None else value
+        return localized.strftime("%Y%m" if compact else "%Y-%m")
+
+    @staticmethod
+    def _nocobase_status_label(status: str) -> str:
+        normalized = status.strip().upper()
+        return {"NEW": "新增"}.get(normalized, status.strip() or "-")
+
+    @staticmethod
+    def _nocobase_problem_type_label(problem_type: str) -> str:
+        normalized = problem_type.strip()
+        return {
+            "social_security_rights": "单位社保权益单",
+        }.get(normalized, normalized or "-")
+
+    @staticmethod
+    def _nocobase_insurance_label(insurance_type: str) -> str:
+        normalized = insurance_type.strip().lower()
+        return {
+            "elderly_care": "养老",
+            "pension": "养老",
+            "work_injury": "工伤",
+            "industrial_injury": "工伤",
+            "unemployment": "失业",
+            "养老": "养老",
+            "工伤": "工伤",
+            "失业": "失业",
+        }.get(normalized, insurance_type.strip() or "-")
 
     def _apply_automation_preferences(self) -> None:
         self._settings = self._settings_with_preferences(self._base_settings)

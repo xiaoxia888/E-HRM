@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from hashlib import sha256
 from threading import RLock
 from typing import Protocol
-from urllib.parse import urlsplit
 
-from ehrm.modules.erp.credential_store import SystemCredentialStore
+from pathlib import Path
+
+from ehrm.core.auth_repository import (
+    AuthenticationRepository,
+    LOCAL_OWNER_ID,
+    SystemAccount,
+    SystemType,
+)
 
 
 class AccessTokenStore(Protocol):
@@ -16,25 +21,6 @@ class AccessTokenStore(Protocol):
     def load_token(self, account_key: str) -> str | None: ...
 
     def delete_token(self, account_key: str) -> None: ...
-
-
-class SystemAccessTokenStore:
-    """Stores the upstream bearer token in the operating-system vault."""
-
-    def __init__(self) -> None:
-        self._credentials = SystemCredentialStore(
-            "NJNCC.EHRM.JSHRSS.ACCESS_TOKEN",
-            "江苏智慧人社 Access-Token",
-        )
-
-    def save_token(self, account_key: str, token: str) -> None:
-        self._credentials.save_password(account_key, token)
-
-    def load_token(self, account_key: str) -> str | None:
-        return self._credentials.load_password(account_key)
-
-    def delete_token(self, account_key: str) -> None:
-        self._credentials.delete_password(account_key)
 
 
 class MemoryAccessTokenStore:
@@ -53,6 +39,64 @@ class MemoryAccessTokenStore:
         self._tokens.pop(account_key, None)
 
 
+class RightsAccountSessionStore:
+    """Defers JSHRSS account creation until a login returns a real token."""
+
+    def __init__(
+        self,
+        repository: AuthenticationRepository,
+        credit_code: str,
+        mobile: str,
+        password: str,
+        owner_id: str,
+    ) -> None:
+        self.repository = repository
+        self.credit_code = credit_code
+        self.mobile = mobile
+        self.password = password
+        self.owner_id = owner_id
+
+    def _account(self) -> SystemAccount | None:
+        return self.repository.get_account(
+            SystemType.JSHRSS,
+            self.credit_code,
+            secondary_account=self.mobile,
+            owner_id=self.owner_id,
+        )
+
+    def save_token(self, account_key: str, token: str) -> None:
+        del account_key
+        account = self._account()
+        if account is None or (self.password and self.password != account.password):
+            account = self.repository.save_account(
+                SystemType.JSHRSS,
+                self.credit_code,
+                self.password,
+                secondary_account=self.mobile,
+                owner_id=self.owner_id,
+            )
+        self.repository.save_session(account.id, token)
+
+    def load_token(self, account_key: str) -> str | None:
+        del account_key
+        account = self._account()
+        if account is None:
+            return None
+        session = self.repository.get_session(account.id)
+        return session.session_data if session is not None else None
+
+    def delete_token(self, account_key: str) -> None:
+        del account_key
+        account = self._account()
+        if account is not None:
+            self.repository.delete_session(account.id)
+
+    def mark_verified(self) -> None:
+        account = self._account()
+        if account is not None:
+            self.repository.mark_session_verified(account.id)
+
+
 class AccessTokenManager:
     """Keeps one token in memory and optionally restores it from a vault."""
 
@@ -65,7 +109,9 @@ class AccessTokenManager:
         if not normalized_key:
             raise ValueError("Access-Token 账号标识不能为空")
         self.account_key = normalized_key
-        self._store = store or SystemAccessTokenStore()
+        if store is None:
+            raise ValueError("Access-Token 存储未配置")
+        self._store = store
         self._token: str | None = None
         self._loaded = False
         self._lock = RLock()
@@ -95,22 +141,33 @@ class AccessTokenManager:
             self._token = None
             self._loaded = True
 
+    def mark_verified(self) -> None:
+        marker = getattr(self._store, "mark_verified", None)
+        if callable(marker):
+            marker()
 
-def build_access_token_account_key(
-    login_url: str,
-    credit_code: str | None,
-    mobile: str | None,
-) -> str:
-    """Builds a stable non-PII key for one host and unit account."""
-    parsed = urlsplit(login_url)
-    host = parsed.netloc.casefold().strip()
-    if not host:
-        raise ValueError("登录地址缺少主机，无法生成 Access-Token 账号标识")
-    identity = "|".join(
-        (
-            (credit_code or "").strip().casefold(),
-            (mobile or "").strip().casefold(),
-        )
+
+def create_rights_access_token_manager(
+    database_path: Path,
+    credit_code: str,
+    mobile: str,
+    *,
+    password: str = "",
+    owner_id: str = LOCAL_OWNER_ID,
+) -> AccessTokenManager:
+    """Builds a JSHRSS token manager backed by the unified SQLite database."""
+    normalized_credit = credit_code.strip()
+    normalized_mobile = mobile.strip()
+    if not normalized_credit or not normalized_mobile:
+        raise ValueError("智慧人社账号信息不完整")
+    repository = AuthenticationRepository(database_path)
+    return AccessTokenManager(
+        f"{normalized_credit}|{normalized_mobile}",
+        RightsAccountSessionStore(
+            repository,
+            normalized_credit,
+            normalized_mobile,
+            password,
+            owner_id,
+        ),
     )
-    digest = sha256(identity.encode("utf-8")).hexdigest()[:24]
-    return f"{host}:{digest}"

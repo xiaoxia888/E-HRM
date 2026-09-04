@@ -13,6 +13,7 @@ from ehrm.modules.ai.models import AiModelProfile
 def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> None:
     config_path = Path("config/settings.toml")
     settings = load_settings(config_path, data_root=tmp_path)
+    assert settings.auth_database_path == tmp_path / "data" / "auth.sqlite3"
     with config_path.open("rb") as stream:
         configured = tomllib.load(stream)
 
@@ -52,6 +53,15 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
         "base_url"
     ]
     assert settings.nocobase.sign_in_path == "/api/auth:signIn"
+    assert (
+        settings.nocobase.rights_application_list_path
+        == "/api/NCC_HumProblem:list"
+    )
+    assert (
+        settings.nocobase.rights_application_detail_path
+        == "/api/NCC_HumProblem:get"
+    )
+    assert settings.nocobase.default_page_size == 20
     assert settings.nocobase.request_timeout_ms == 15_000
     assert settings.nocobase.account_env == "EHRM_NOCOBASE_ACCOUNT"
     assert settings.ai.model == "qwen3.5:9b"

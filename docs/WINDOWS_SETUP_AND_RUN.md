@@ -127,7 +127,18 @@ ehrm-gui
 4. 点击“保存账号”；
 5. 点击“测试连接”。
 
-ERP 密码保存在 Windows 凭据管理器中，不会写入配置文件。
+ERP 账号密码保存在应用目录的 `runtime/data/auth.sqlite3`，不会写入配置文件。
+
+### NocoBase 设置
+
+1. 打开“系统设置 → 账户与连接 → NocoBase”；
+2. 输入 NocoBase 登录账号和密码；
+3. 点击“保存账号”；
+4. 点击“测试连接”，确认登录与 Token 状态正常。
+
+测试成功后 JWT、过期时间和账号信息统一保存在
+`runtime/data/auth.sqlite3`。点击“清除 NocoBase 登录状态”只会删除 Token，
+不会删除账号密码。
 
 ### 权益单获取
 
@@ -136,8 +147,10 @@ ERP 密码保存在 Windows 凭据管理器中，不会写入配置文件。
 3. 导入 Excel；
 4. 选择导出方式和保存目录；
 5. 点击“获取权益单”；
-6. 在浏览器中人工完成智慧人社登录和安全验证；
-7. 登录完成后程序自动查询、下载，并按设置决定是否上传 ERP。
+6. 程序按系统配置完成智慧人社登录和安全验证；
+7. 登录完成后自动查询、下载，并按设置决定是否上传 ERP。
+
+NocoBase 中提交的权益申请可在“权益申请”页面分页查询、查看详情并打印。
 
 ## 9. 运行数据位置
 
@@ -153,9 +166,10 @@ E-HRM\
     └── output\
 ```
 
-子目录按实际功能启用时创建，其中包括日志、用户偏好、两个网站的浏览器资料、
-失败截图和验证码诊断图片。源码运行时使用项目根目录下相同结构的 `runtime`。
-ERP 密码不保存在该目录，而是由 Windows 凭据管理器保存。
+子目录按实际功能启用时创建，其中包括日志、用户偏好、浏览器资料、失败截图和
+验证码诊断图片。源码运行时使用项目根目录下相同结构的 `runtime`。
+ERP、智慧人社和 NocoBase 的账号、密码、Token 或浏览器认证状态保存在
+`runtime/data/auth.sqlite3`，请限制该文件的访问权限并做好备份。
 
 默认下载目录为：
 
@@ -185,6 +199,7 @@ python scripts\run_gui.py
 先安装构建依赖：
 
 ```powershell
+conda env update -n ehrm -f environment.yml
 conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
 ```
@@ -238,8 +253,8 @@ python -m playwright install chromium
 
 ### 软件能够启动但 ERP 无法登录
 
-进入“系统设置 → 账户与连接”，重新输入密码并测试连接。确认 Windows
-凭据管理器中没有旧的 `NJNCC.EHRM.ERP` 凭据，必要时在软件中重新保存。
+进入“系统设置 → 账户与连接”，重新输入密码并测试连接。必要时先清除 ERP
+登录状态，再保存账号并重新测试。
 
 ### 构建后被 SmartScreen 提示
 

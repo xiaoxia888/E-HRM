@@ -14,9 +14,6 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
         batch_size=25,
         upload_to_erp=True,
         open_output_folder=True,
-        erp_username="tester",
-        rights_credit_code="91320000TEST000001",
-        rights_mobile="13800000000",
         ai_model_profile="qwen3_5_9b",
         ai_reasoning_mode="max",
         execution_speed="stable",
@@ -30,6 +27,8 @@ def test_preferences_round_trip(tmp_path: Path) -> None:
     assert store.load() == preferences
     payload = json.loads(store.path.read_text(encoding="utf-8"))
     assert "password" not in payload
+    assert "erp_username" not in payload
+    assert "rights_credit_code" not in payload
 
 
 def test_invalid_preferences_fall_back_to_safe_values(tmp_path: Path) -> None:

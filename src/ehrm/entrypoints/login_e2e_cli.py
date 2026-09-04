@@ -12,8 +12,7 @@ from tempfile import TemporaryDirectory
 from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.browser.access_token import (
-    AccessTokenManager,
-    build_access_token_account_key,
+    create_rights_access_token_manager,
 )
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
@@ -166,12 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         with _isolated_settings(
             settings, reuse_profile=args.reuse_profile
         ) as runtime_settings:
-            access_tokens = AccessTokenManager(
-                build_access_token_account_key(
-                    runtime_settings.site.login_url,
-                    credit_code,
-                    mobile,
-                )
+            access_tokens = create_rights_access_token_manager(
+                runtime_settings.auth_database_path,
+                credit_code,
+                mobile,
+                password=password,
             )
             with BrowserManager(
                 runtime_settings.browser,

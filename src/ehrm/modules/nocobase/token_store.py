@@ -1,38 +1,51 @@
 from __future__ import annotations
 
-from hashlib import sha256
-from urllib.parse import urlsplit
+from pathlib import Path
 
-from ehrm.modules.erp.credential_store import SystemCredentialStore
+from ehrm.browser.access_token import AccessTokenManager
+from ehrm.core.auth_repository import (
+    AuthenticationRepository,
+    LOCAL_OWNER_ID,
+    RepositorySessionStore,
+    SystemType,
+)
+from ehrm.modules.nocobase.jwt_token import decode_jwt_claims
 
 
-class NocoBaseSystemTokenStore:
-    """Stores NocoBase JWTs in the operating-system credential vault."""
-
-    def __init__(self) -> None:
-        self._credentials = SystemCredentialStore(
-            "NJNCC.EHRM.NOCOBASE.ACCESS_TOKEN",
-            "NocoBase Authorization Token",
+def create_nocobase_token_manager(
+    database_path: Path,
+    account: str,
+    *,
+    password: str = "",
+    owner_id: str = LOCAL_OWNER_ID,
+) -> AccessTokenManager:
+    repository = AuthenticationRepository(database_path)
+    saved = repository.get_account(
+        SystemType.NOCOBASE,
+        account,
+        owner_id=owner_id,
+    )
+    if saved is None:
+        saved = repository.save_account(
+            SystemType.NOCOBASE,
+            account,
+            password,
+            owner_id=owner_id,
         )
-
-    def save_token(self, account_key: str, token: str) -> None:
-        self._credentials.save_password(account_key, token)
-
-    def load_token(self, account_key: str) -> str | None:
-        return self._credentials.load_password(account_key)
-
-    def delete_token(self, account_key: str) -> None:
-        self._credentials.delete_password(account_key)
-
-
-def build_nocobase_token_account_key(base_url: str, account: str) -> str:
-    """Builds a stable, non-plaintext key for one NocoBase account."""
-    parsed = urlsplit(base_url)
-    host = parsed.netloc.casefold().strip()
-    normalized_account = account.casefold().strip()
-    if not host:
-        raise ValueError("NocoBase 服务地址缺少主机")
-    if not normalized_account:
-        raise ValueError("NocoBase 登录账号不能为空")
-    digest = sha256(normalized_account.encode("utf-8")).hexdigest()[:24]
-    return f"{host}:{digest}"
+    elif password and password != saved.password:
+        saved = repository.save_account(
+            SystemType.NOCOBASE,
+            account,
+            password,
+            owner_id=owner_id,
+        )
+    return AccessTokenManager(
+        str(saved.id),
+        RepositorySessionStore(
+            repository,
+            saved.id,
+            expires_at_resolver=(
+                lambda token: decode_jwt_claims(token).expires_at
+            ),
+        ),
+    )

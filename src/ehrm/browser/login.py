@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 import logging
 from collections.abc import Callable
@@ -11,7 +12,7 @@ from playwright.sync_api import Page, Response
 
 from ehrm.browser.access_token import (
     AccessTokenManager,
-    build_access_token_account_key,
+    create_rights_access_token_manager,
 )
 from ehrm.browser.captcha_policy import (
     is_allowed_host_url,
@@ -23,6 +24,7 @@ from ehrm.core.exceptions import (
     EhrmError,
     TaskCancelledError,
 )
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.settings import AppSettings
 
 
@@ -134,17 +136,17 @@ class LoginService:
             return
         try:
             self._access_token_manager.save_token(token)
-        except (EhrmError, OSError, ValueError) as exc:
+        except (EhrmError, OSError, ValueError, sqlite3.Error) as exc:
             self._login_failure = AuthenticationFailedError(
-                "Access-Token 安全保存失败",
+                "Access-Token 保存失败",
                 details=str(exc),
             )
-            self._progress(f"登录失败：Access-Token 安全保存失败：{exc}")
+            self._progress(f"登录失败：Access-Token 保存失败：{exc}")
             return
-        _LOGGER.info("智慧人社 Access-Token 已保存到内存和安全存储")
+        _LOGGER.info("智慧人社 Access-Token 已保存到内存和 SQLite")
         self._login_succeeded = True
         self._progress(
-            "账号登录成功，Access-Token 已安全保存，正在确认登录状态……"
+            "账号登录成功，Access-Token 已保存到应用数据库，正在确认登录状态……"
         )
 
     def _is_unit_password_login_response(self, response: Response) -> bool:
@@ -217,28 +219,34 @@ class LoginService:
         self._login_failure = None
         self._login_succeeded = False
         credentials = self.settings.rights_credentials
+        saved_account = AuthenticationRepository(
+            self.settings.auth_database_path
+        ).get_default_account(SystemType.JSHRSS)
         credit_code = (
             username
             or credentials.credit_code
             or os.getenv(credentials.credit_code_env)
+            or (saved_account.account if saved_account else None)
         )
         mobile_number = (
             mobile
             or credentials.mobile
             or os.getenv(credentials.mobile_env)
+            or (saved_account.secondary_account if saved_account else None)
         )
         resolved_password = (
             password
             or credentials.password
             or os.getenv(credentials.password_env)
+            or (saved_account.password if saved_account else None)
         )
         if self._access_token_manager is None:
-            account_key = build_access_token_account_key(
-                self.settings.site.login_url,
-                credit_code,
-                mobile_number,
+            self._access_token_manager = create_rights_access_token_manager(
+                self.settings.auth_database_path,
+                credit_code or "",
+                mobile_number or "",
+                password=resolved_password or "",
             )
-            self._access_token_manager = AccessTokenManager(account_key)
 
         self._open_login_entry()
         if self.is_authenticated():

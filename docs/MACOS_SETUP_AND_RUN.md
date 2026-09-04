@@ -130,7 +130,16 @@ ehrm-gui
 4. 点击“保存账号”；
 5. 点击“测试连接”。
 
-ERP 密码保存在 macOS 钥匙串中，不会写入项目配置文件。
+ERP 账号密码保存在应用目录的 `runtime/data/auth.sqlite3`，不会写入项目配置文件。
+
+### NocoBase 设置
+
+1. 打开“系统设置 → 账户与连接 → NocoBase”；
+2. 输入账号和密码并保存；
+3. 点击“测试连接”，确认登录与 Token 正常。
+
+NocoBase 的账号、密码、JWT 及过期时间与其他系统统一保存在
+`runtime/data/auth.sqlite3`。
 
 ### 权益单获取
 
@@ -140,17 +149,17 @@ ERP 密码保存在 macOS 钥匙串中，不会写入项目配置文件。
 4. 导入 Excel；
 5. 选择单独下载或相同条件合并；
 6. 点击“获取权益单”；
-7. 在打开的浏览器中人工完成智慧人社登录和安全验证；
+7. 程序按系统配置完成智慧人社登录和安全验证；
 8. 登录完成后程序自动继续查询和下载。
 
-智慧人社安全验证不能绕过，每次网站会话失效后都需要人工登录。
+NocoBase 权益申请可在“权益申请”页面分页查询、查看详情并发起打印。
 
 ## 9. 用户数据位置
 
-运行数据默认位于：
+运行数据统一位于程序层级的 `runtime` 目录。源码运行时为项目根目录下：
 
 ```text
-~/Library/Application Support/NJNCC/信息化人力工作台/
+E-HRM/runtime/
 ```
 
 其中包括：
@@ -159,6 +168,7 @@ ERP 密码保存在 macOS 钥匙串中，不会写入项目配置文件。
 - `data/browser-profile/`：智慧人社浏览器资料；
 - `data/erp-browser-profile/`：ERP 浏览器资料；
 - `data/preferences.json`：非敏感用户设置。
+- `data/auth.sqlite3`：ERP、智慧人社和 NocoBase 的账号及登录会话。
 
 默认下载目录为：
 

@@ -30,6 +30,27 @@ def main() -> int:
         resource_root / "ehrm" / "gui" / "qml" / "PdfPreviewDialog.qml",
         resource_root / "ehrm" / "gui" / "qml" / "SystemSettingsPage.qml",
         resource_root
+        / "ehrm"
+        / "gui"
+        / "qml"
+        / "NocoBaseApplicationsPage.qml",
+        resource_root
+        / "ehrm"
+        / "gui"
+        / "qml"
+        / "NocoBaseApplicationDetailDialog.qml",
+        resource_root
+        / "ehrm"
+        / "gui"
+        / "qml"
+        / "NocoBasePrintProgressDialog.qml",
+        resource_root / "ehrm" / "gui" / "qml" / "PaginationBar.qml",
+        resource_root
+        / "playwright_stealth"
+        / "js"
+        / "evasions"
+        / "navigator.webdriver.js",
+        resource_root
         / "PySide6"
         / "Qt"
         / "qml"
@@ -59,10 +80,21 @@ def main() -> int:
     pdf_quick_plugin = list(resource_root.rglob("pdfquickplugin.dll"))
     if not pdf_quick_plugin:
         missing.append(resource_root / "<pdfquickplugin.dll>")
+    forbidden = [
+        bundle / "runtime",
+        resource_root / "runtime",
+        resource_root / "data" / "auth.sqlite3",
+    ]
+    included_private_data = [path for path in forbidden if path.exists()]
     if missing:
         print("Windows 打包结构校验失败：")
         for path in missing:
             print(f"- 缺少 {path}")
+        return 1
+    if included_private_data:
+        print("Windows 打包隐私校验失败：")
+        for path in included_private_data:
+            print(f"- 不应包含运行数据 {path}")
         return 1
     print(f"Windows 打包结构校验通过：{bundle}")
     print(f"已包含 Chromium：{browser_executables[0]}")
