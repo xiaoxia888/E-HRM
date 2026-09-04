@@ -144,6 +144,33 @@ class RightsStatementSelectors:
 
 
 @dataclass(frozen=True, slots=True)
+class EmploymentTerminationSettings:
+    """Site contract for preparing an employment-termination form."""
+
+    home_path: str
+    city_code: str
+    city_name: str
+    response_timeout_ms: int
+    loading_timeout_ms: int
+    stable_delay_ms: int
+    hall_home: str
+    region_switch: str
+    region_option_template: str
+    person_query_path: str
+    middle_frame: str
+    menu_text: str
+    outer_business_frame: str
+    business_frame: str
+    entry_notice_dialog: str
+    entry_notice_text: str
+    entry_notice_confirm: str
+    person_search: str
+    person_form: str
+    reason_combobox: str
+    loading_indicator: str
+
+
+@dataclass(frozen=True, slots=True)
 class ErpLoginSelectors:
     username: str
     password: str
@@ -224,6 +251,7 @@ class AppSettings:
     captcha: CaptchaSettings
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
+    employment_termination: EmploymentTerminationSettings
     nocobase: NocoBaseSettings
     erp: ErpSettings
     ai: OllamaSettings
@@ -552,6 +580,14 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_page = _required_section(
         rights_selectors, "page", parent="rights_statement.selectors"
     )
+    rights_termination = _required_section(
+        rights_root, "employment_termination", parent="rights_statement"
+    )
+    rights_termination_selectors = _required_section(
+        rights_selectors,
+        "employment_termination",
+        parent="rights_statement.selectors",
+    )
 
     erp_root = _required_section(data, "erp")
     erp_browser = _required_section(erp_root, "browser", parent="erp")
@@ -584,6 +620,10 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_captcha_name = "rights_statement.captcha"
     rights_navigation_name = "rights_statement.selectors.navigation"
     rights_page_name = "rights_statement.selectors.page"
+    rights_termination_name = "rights_statement.employment_termination"
+    rights_termination_selectors_name = (
+        "rights_statement.selectors.employment_termination"
+    )
     erp_browser_name = "erp.browser"
     erp_site_name = "erp.site"
     erp_upload_name = "erp.upload"
@@ -691,6 +731,47 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     if rights_api_request_timeout_ms < 1:
         raise ConfigurationError(
             "配置项 rights_statement.api.request_timeout_ms 必须大于 0"
+        )
+
+    termination_home_path = _text(
+        rights_termination, "home_path", rights_termination_name
+    )
+    if not termination_home_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.employment_termination.home_path 必须以 / 开头"
+        )
+    termination_city_code = _text(
+        rights_termination, "city_code", rights_termination_name
+    )
+    termination_city_name = _text(
+        rights_termination, "city_name", rights_termination_name
+    )
+    if not termination_city_code or not termination_city_name:
+        raise ConfigurationError("退保业务地区编码和名称不能为空")
+    termination_response_timeout_ms = _integer(
+        rights_termination, "response_timeout_ms", rights_termination_name
+    )
+    termination_loading_timeout_ms = _integer(
+        rights_termination, "loading_timeout_ms", rights_termination_name
+    )
+    termination_stable_delay_ms = _integer(
+        rights_termination, "stable_delay_ms", rights_termination_name
+    )
+    if min(
+        termination_response_timeout_ms,
+        termination_loading_timeout_ms,
+        termination_stable_delay_ms,
+    ) < 1:
+        raise ConfigurationError("退保业务等待时间必须大于 0")
+    termination_person_query_path = _text(
+        rights_termination,
+        "person_query_path",
+        rights_termination_name,
+    )
+    if not termination_person_query_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.employment_termination."
+            "person_query_path 必须以 / 开头"
         )
 
     nocobase_base_url = _text(
@@ -951,6 +1032,85 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             download_button=_text(rights_page, "download_button", rights_page_name),
             preview_dialog=_text(rights_page, "preview_dialog", rights_page_name),
             close_preview=_text(rights_page, "close_preview", rights_page_name),
+        ),
+        employment_termination=EmploymentTerminationSettings(
+            home_path=termination_home_path,
+            city_code=termination_city_code,
+            city_name=termination_city_name,
+            response_timeout_ms=termination_response_timeout_ms,
+            loading_timeout_ms=termination_loading_timeout_ms,
+            stable_delay_ms=termination_stable_delay_ms,
+            hall_home=_text(
+                rights_termination_selectors,
+                "hall_home",
+                rights_termination_selectors_name,
+            ),
+            region_switch=_text(
+                rights_termination_selectors,
+                "region_switch",
+                rights_termination_selectors_name,
+            ),
+            region_option_template=_text(
+                rights_termination_selectors,
+                "region_option_template",
+                rights_termination_selectors_name,
+            ),
+            person_query_path=termination_person_query_path,
+            middle_frame=_text(
+                rights_termination_selectors,
+                "middle_frame",
+                rights_termination_selectors_name,
+            ),
+            menu_text=_text(
+                rights_termination_selectors,
+                "menu_text",
+                rights_termination_selectors_name,
+            ),
+            outer_business_frame=_text(
+                rights_termination_selectors,
+                "outer_business_frame",
+                rights_termination_selectors_name,
+            ),
+            business_frame=_text(
+                rights_termination_selectors,
+                "business_frame",
+                rights_termination_selectors_name,
+            ),
+            entry_notice_dialog=_text(
+                rights_termination_selectors,
+                "entry_notice_dialog",
+                rights_termination_selectors_name,
+            ),
+            entry_notice_text=_text(
+                rights_termination_selectors,
+                "entry_notice_text",
+                rights_termination_selectors_name,
+            ),
+            entry_notice_confirm=_text(
+                rights_termination_selectors,
+                "entry_notice_confirm",
+                rights_termination_selectors_name,
+            ),
+            person_search=_text(
+                rights_termination_selectors,
+                "person_search",
+                rights_termination_selectors_name,
+            ),
+            person_form=_text(
+                rights_termination_selectors,
+                "person_form",
+                rights_termination_selectors_name,
+            ),
+            reason_combobox=_text(
+                rights_termination_selectors,
+                "reason_combobox",
+                rights_termination_selectors_name,
+            ),
+            loading_indicator=_text(
+                rights_termination_selectors,
+                "loading_indicator",
+                rights_termination_selectors_name,
+            ),
         ),
         nocobase=NocoBaseSettings(
             base_url=nocobase_base_url,

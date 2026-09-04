@@ -29,6 +29,21 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.rights_api.load_unit_rights_bill_path.startswith("/")
     assert settings.rights_api.page_size == 100
     assert settings.rights_api.request_timeout_ms > 0
+    assert settings.employment_termination.home_path.startswith("/")
+    assert settings.employment_termination.city_code == "320100"
+    assert settings.employment_termination.city_name == "南京"
+    assert settings.employment_termination.region_option_template == (
+        '[id="{city_code}_1"]'
+    )
+    assert settings.employment_termination.outer_business_frame == (
+        'iframe[name^="layui-layer-iframe"]'
+    )
+    assert settings.employment_termination.entry_notice_dialog == ".modal-content"
+    assert "modalOptions.ok" in settings.employment_termination.entry_notice_confirm
+    assert settings.employment_termination.response_timeout_ms > 0
+    assert settings.employment_termination.loading_timeout_ms > 0
+    assert settings.employment_termination.person_search
+    assert settings.employment_termination.person_query_path.startswith("/")
     assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
     assert settings.login.unit_login_tab == 'text="单位登录"'

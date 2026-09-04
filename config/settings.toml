@@ -31,9 +31,10 @@ channel = ""
 
 # true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
 # browser 后端需要人工观察或接管登录时，应设置为 false。
-headless = true
+headless = false
 silent_session_check = false
-slow_mo_ms = 100
+# 正式运行保持 0；仅在人工调试、观察每一步操作时临时调大。
+slow_mo_ms = 0
 navigation_timeout_ms = 60000
 manual_login_timeout_seconds = 300
 
@@ -59,6 +60,20 @@ load_unit_rights_bill_path = "/api/ggfw-business-center/insurance/loadUnitRights
 page_size = 100
 # 单次业务 API 请求超时，单位毫秒；正常接口应快速返回，此值仅作为异常保护上限。
 request_timeout_ms = 30000
+
+[rights_statement.employment_termination]
+# 退工停保业务从智慧人社大厅首页进入；这里只配置路径，主机继承 login_url。
+home_path = "/index/"
+# 执行前必须校验为南京地区，不能依赖模糊的页面文字判断。
+city_code = "320100"
+city_name = "南京"
+# 人员查询响应必须同时匹配此路径和当前身份证请求，不再兜底匹配其他接口。
+person_query_path = "/api/ehrss-si-enterprise-app/api/simis/persons/employees"
+# 人员查询接口和页面遮罩的异常保护上限。
+response_timeout_ms = 15000
+loading_timeout_ms = 30000
+# 遮罩消失后继续观察页面的稳定时间，避免退出动画期间操作表单。
+stable_delay_ms = 500
 
 [rights_statement.credentials]
 # 这里只保存环境变量名称，不保存真实账号密码。
@@ -147,6 +162,28 @@ download_ready = "text=缴费月数"
 download_button = 'role=button[name="图标: download 下载"]'
 preview_dialog = ".ant-modal:visible"
 close_preview = 'role=button[name="Close"]'
+
+[rights_statement.selectors.employment_termination]
+# 以下定位器来自 2026-09-04 的 Playwright 实际录制。
+hall_home = 'text="大厅首页"'
+region_switch = 'text="地区切换"'
+# 来自 Playwright 对办事地区弹窗的实际录制；南京对应 id="320100_1"。
+# 模板保留 city_code，切换其他地区时无需修改业务代码。
+region_option_template = '[id="{city_code}_1"]'
+middle_frame = "#middle"
+menu_text = "用人单位退工停保登记"
+# 录制结果中的外层名称类似 layui-layer-iframe100008，数字每次都会变化。
+outer_business_frame = 'iframe[name^="layui-layer-iframe"]'
+business_frame = "#busiIframe"
+# 可选提示使用页面真实 DOM 定位，避免无障碍 role 在不同渲染阶段无法识别。
+entry_notice_dialog = ".modal-content"
+entry_notice_text = "当前时间办理人员停保"
+entry_notice_confirm = 'button[data-ng-click="modalOptions.ok();"]'
+person_search = "sipub-person-quick-search"
+person_form = 'form[name="personinfoForm"]'
+reason_combobox = "role=combobox"
+# 只匹配真正的加载动画。layui-layer-shade 是普通弹窗的背景遮罩，不能用于判断加载状态。
+loading_indicator = ".loading-mask:visible, .ant-spin-spinning:visible, .el-loading-mask:visible"
 
 # -----------------------------------------------------------------------------
 # NocoBase 权益单申请模块
