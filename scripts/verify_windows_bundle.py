@@ -80,6 +80,9 @@ def main() -> int:
     pdf_quick_plugin = list(resource_root.rglob("pdfquickplugin.dll"))
     if not pdf_quick_plugin:
         missing.append(resource_root / "<pdfquickplugin.dll>")
+    pyodbc_runtime = list(resource_root.rglob("pyodbc*.pyd"))
+    if not pyodbc_runtime:
+        missing.append(resource_root / "<pyodbc*.pyd>")
     forbidden = [
         bundle / "runtime",
         resource_root / "runtime",
@@ -99,6 +102,7 @@ def main() -> int:
     print(f"Windows 打包结构校验通过：{bundle}")
     print(f"已包含 Chromium：{browser_executables[0]}")
     print(f"已包含 Qt PDF：{pdf_runtime[0]}")
+    print(f"已包含 pyodbc：{pyodbc_runtime[0]}")
     return 0
 
 

@@ -17,6 +17,7 @@ from ehrm.browser.captcha import (
 )
 from ehrm.browser.captcha_policy import url_without_sensitive_query
 from ehrm.browser.captcha_matcher import CaptchaMatch
+from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.browser.login import LoginService
 from ehrm.core.exceptions import AuthenticationFailedError
 from ehrm.core.settings import AppSettings, CaptchaSettings, load_settings
@@ -24,6 +25,14 @@ from ehrm.core.settings import AppSettings, CaptchaSettings, load_settings
 
 def _captcha_settings() -> CaptchaSettings:
     return load_settings(Path("config/settings.toml")).captcha
+
+
+def _disabled_pacer(page: object, settings: AppSettings) -> BrowserInteractionPacer:
+    pause = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+    return BrowserInteractionPacer(
+        replace(settings.browser.pacing, enabled=False),
+        pause,
+    )
 
 
 def _unused_port() -> int:
@@ -75,32 +84,6 @@ def test_image_point_is_scaled_to_page_coordinates() -> None:
     assert point == (270.0, 171.0)
 
 
-def test_every_paced_click_uses_configured_delay_range() -> None:
-    settings = load_settings(Path("config/settings.toml"))
-    delay = (
-        settings.captcha.click_delay_min_ms
-        + settings.captcha.click_delay_max_ms
-    ) // 2
-    page = SimpleNamespace(
-        url=_url_for_host(settings, settings.captcha.allowed_hosts[0]),
-        wait_for_timeout=Mock(),
-    )
-    sampler = Mock(return_value=delay)
-    solver = CaptchaSolver(  # type: ignore[arg-type]
-        page,
-        _captcha_settings(),
-        delay_sampler=sampler,
-    )
-
-    solver._random_pause()
-
-    sampler.assert_called_once_with(
-        settings.captcha.click_delay_min_ms,
-        settings.captcha.click_delay_max_ms,
-    )
-    page.wait_for_timeout.assert_called_once_with(delay)
-
-
 def test_click_offset_is_randomized_inside_matched_box() -> None:
     settings = load_settings(Path("config/settings.toml"))
     page = SimpleNamespace(
@@ -112,7 +95,7 @@ def test_click_offset_is_randomized_inside_matched_box() -> None:
     solver = CaptchaSolver(  # type: ignore[arg-type]
         page,
         settings.captcha,
-        delay_sampler=Mock(return_value=settings.captcha.click_delay_min_ms),
+        pacer=_disabled_pacer(page, settings),
         offset_sampler=offset_sampler,
     )
     background = SimpleNamespace(
@@ -172,7 +155,7 @@ def test_captcha_diagnostics_save_sources_and_actual_click_result(
     solver = CaptchaSolver(  # type: ignore[arg-type]
         page,
         settings,
-        delay_sampler=Mock(return_value=settings.click_delay_min_ms),
+        pacer=_disabled_pacer(page, app_settings),
         offset_sampler=Mock(side_effect=[2, -1]),
     )
     target_image = np.full((30, 90, 3), 220, dtype=np.uint8)
@@ -246,9 +229,11 @@ def test_captcha_diagnostics_do_not_write_when_disabled(tmp_path: Path) -> None:
         diagnostic_images_enabled=False,
         diagnostic_output_dir=output_dir,
     )
+    app_settings = load_settings(Path("config/settings.toml"))
     solver = CaptchaSolver(  # type: ignore[arg-type]
         SimpleNamespace(url="https://localhost"),
         settings,
+        pacer=_disabled_pacer(SimpleNamespace(), app_settings),
     )
     challenge = SimpleNamespace(
         target_image=np.zeros((10, 10, 3), dtype=np.uint8),
@@ -274,10 +259,12 @@ def test_login_service_uses_solver_on_allowed_page(tmp_path) -> None:
     with patch(
         "ehrm.browser.captcha.CaptchaSolver",
         return_value=solver,
-    ):
-        solved = LoginService(page, settings)._try_automated_captcha()  # type: ignore[arg-type]
+    ) as solver_class:
+        service = LoginService(page, settings)  # type: ignore[arg-type]
+        solved = service._try_automated_captcha()
 
     assert solved is True
+    assert solver_class.call_args.kwargs["pacer"] is service.pacer
     solver.solve.assert_called_once_with()
 
 
@@ -301,7 +288,11 @@ def test_solver_stops_immediately_when_verification_is_rate_limited() -> None:
     page = SimpleNamespace(
         url=_url_for_host(settings, settings.captcha.allowed_hosts[0])
     )
-    solver = CaptchaSolver(page, settings.captcha)  # type: ignore[arg-type]
+    solver = CaptchaSolver(  # type: ignore[arg-type]
+        page,
+        settings.captcha,
+        pacer=_disabled_pacer(page, settings),
+    )
     frame = object()
     challenge = SimpleNamespace(
         frame=frame,

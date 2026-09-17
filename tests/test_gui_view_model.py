@@ -1280,7 +1280,8 @@ def test_settings_are_persisted_and_applied_to_automation(
     assert view_model.uploadToErp
     assert view_model.openOutputFolderAfterRun
     assert view_model.executionSpeed == "stable"
-    assert view_model._settings.rights_statement.step_delay_ms == 1500
+    assert view_model._settings.browser.pacing.min_delay_ms == 1500
+    assert view_model._settings.browser.pacing.max_delay_ms == 2500
     assert view_model._settings.rights_statement.no_result_confirm_ms == 15_000
     assert view_model._settings.rights_statement.preview_download_delay_ms == 2000
     assert view_model._settings.rights_statement.download_timeout_ms == 60_000

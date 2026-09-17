@@ -42,6 +42,13 @@ manual_login_timeout_seconds = 300
 user_data_dir = "data/browser-profile"
 storage_state_path = "data/session-state.json"
 
+[rights_statement.browser.pacing]
+# 智慧人社页面的 DOM 交互节奏。仅作用于点击、填写、选择等浏览器动作；
+# 页面状态轮询和 HTTP API 请求不会使用这里的等待时间。
+enabled = true
+min_delay_ms = 1000
+max_delay_ms = 2000
+
 [rights_statement.site]
 login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
 page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
@@ -98,8 +105,6 @@ allowed_hosts = [
 ]
 verify_path = "/cap_union_new_verify"
 max_attempts = 3
-click_delay_min_ms = 1000
-click_delay_max_ms = 2000
 # 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
 click_offset_max_px = 3
 # 是否保存验证码识别诊断图片；正常运行建议关闭。
@@ -146,7 +151,6 @@ loading_indicator = ".ant-spin-spinning:visible"
 query_result_timeout_ms = 45000
 no_result_confirm_ms = 10000
 transfer_result_timeout_ms = 10000
-step_delay_ms = 1000
 preview_ready_timeout_ms = 30000
 preview_download_delay_ms = 1500
 download_timeout_ms = 20000
@@ -233,6 +237,17 @@ chunk_size_bytes = 2097152
 # 环境变量名称，不是账号密码本身。
 username_env = "EHRM_ERP_USERNAME"
 password_env = "EHRM_ERP_PASSWORD"
+
+[erp.database]
+# ERP/NCC 人员库 SQL Server 连接参数，用于按身份证或姓名补齐单位、部门信息。
+host = "192.168.30.12"
+port = 1433
+database = "New_PowerPMDB"
+username = "zhangxiao"
+password = "xxzx@3201"
+driver = "ODBC Driver 17 for SQL Server"
+connection_timeout_seconds = 10
+query_timeout_seconds = 30
 
 [erp.selectors.login]
 username = 'input[name="usercode"], #usercode'

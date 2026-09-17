@@ -100,8 +100,14 @@ onefile 每次启动都解压几百 MB 浏览器文件。
 ```powershell
 conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
+python -c "import pyodbc; print(pyodbc.drivers())"
 powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0
 ```
+
+构建机和最终运行电脑必须安装 64 位
+`Microsoft ODBC Driver 17 for SQL Server`；驱动列表中应出现同名条目。构建脚本
+会强制检查 ODBC 驱动，并在产物中检查 `pyodbc` 运行模块。需要额外验证数据库
+连接时，运行 `python scripts/check_windows_build_environment.py --check-database`。
 
 完整说明见 `packaging/windows/README.md`。
 

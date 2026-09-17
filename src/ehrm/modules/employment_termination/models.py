@@ -105,13 +105,36 @@ class EmploymentTerminationPreparation:
     """Describes a completed form-fill run. It never implies submission."""
 
     items: tuple[EmploymentTerminationItem, ...]
+    results: tuple["EmploymentTerminationItemResult", ...]
     city_code: str
     city_name: str
     submitted: bool = False
 
     @property
     def prepared_count(self) -> int:
-        return len(self.items)
+        return sum(result.success for result in self.results)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.results) - self.prepared_count
+
+    @property
+    def total_count(self) -> int:
+        return len(self.results)
+
+
+@dataclass(frozen=True, slots=True)
+class EmploymentTerminationItemResult:
+    """Row-level result returned by the reusable object-array service."""
+
+    item: EmploymentTerminationItem
+    success: bool
+    code: str
+    message: str = ""
+
+    @property
+    def source_index(self) -> int:
+        return self.item.source_index
 
 
 def normalize_termination_items(

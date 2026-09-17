@@ -66,9 +66,14 @@ if (-not $PythonVersion.StartsWith("3.11.")) {
     throw "Current Python version is $PythonVersion. This project requires Python 3.11.x."
 }
 
-python -c "import PySide6, PyInstaller, playwright, playwright_stealth; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}; Playwright and playwright-stealth installed')"
+python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}, pyodbc={pyodbc.version}; Playwright and playwright-stealth installed')"
 if ($LASTEXITCODE -ne 0) {
     throw "Required Windows build dependencies are missing."
+}
+
+python scripts/check_windows_build_environment.py
+if ($LASTEXITCODE -ne 0) {
+    throw "SQL Server ODBC driver check failed."
 }
 
 $QtPdfQmlDir = python -c "from pathlib import Path; from PySide6.QtCore import QLibraryInfo; path = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)) / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path.resolve())"

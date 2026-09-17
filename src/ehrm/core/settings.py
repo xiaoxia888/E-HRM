@@ -38,6 +38,15 @@ class RightsPrintBackend(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserInteractionPacingSettings:
+    """Random delay applied before Jiangsu HRSS DOM interactions only."""
+
+    enabled: bool
+    min_delay_ms: int
+    max_delay_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class BrowserSettings:
     engine: str
     channel: str
@@ -49,6 +58,7 @@ class BrowserSettings:
     manual_login_timeout_seconds: int
     user_data_dir: Path
     storage_state_path: Path
+    pacing: BrowserInteractionPacingSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +105,6 @@ class CaptchaSettings:
     allowed_hosts: tuple[str, ...]
     verify_path: str
     max_attempts: int
-    click_delay_min_ms: int
-    click_delay_max_ms: int
     click_offset_max_px: int
     diagnostic_images_enabled: bool
     diagnostic_output_dir: Path
@@ -127,7 +135,6 @@ class RightsStatementSelectors:
     query_result_timeout_ms: int
     no_result_confirm_ms: int
     transfer_result_timeout_ms: int
-    step_delay_ms: int
     preview_ready_timeout_ms: int
     preview_download_delay_ms: int
     download_timeout_ms: int
@@ -208,6 +215,18 @@ class ErpSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ErpDatabaseSettings:
+    host: str
+    port: int
+    database: str
+    username: str
+    password: str
+    driver: str
+    connection_timeout_seconds: int
+    query_timeout_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class AiSamplingSettings:
     temperature: float
     top_p: float
@@ -254,6 +273,7 @@ class AppSettings:
     employment_termination: EmploymentTerminationSettings
     nocobase: NocoBaseSettings
     erp: ErpSettings
+    erp_database: ErpDatabaseSettings
     ai: OllamaSettings
     ai_models: tuple[OllamaSettings, ...]
 
@@ -560,6 +580,11 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_browser = _required_section(
         rights_root, "browser", parent="rights_statement"
     )
+    rights_browser_pacing = _required_section(
+        rights_browser,
+        "pacing",
+        parent="rights_statement.browser",
+    )
     rights_site = _required_section(rights_root, "site", parent="rights_statement")
     rights_api = _required_section(rights_root, "api", parent="rights_statement")
     rights_credentials = _required_section(
@@ -594,6 +619,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     erp_site = _required_section(erp_root, "site", parent="erp")
     erp_upload = _required_section(erp_root, "upload", parent="erp")
     erp_credentials = _required_section(erp_root, "credentials", parent="erp")
+    erp_database = _required_section(erp_root, "database", parent="erp")
     erp_selectors = _required_section(erp_root, "selectors", parent="erp")
     erp_login = _required_section(
         erp_selectors, "login", parent="erp.selectors"
@@ -613,6 +639,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     common_name = "common"
     rights_execution_name = "rights_statement.execution"
     rights_browser_name = "rights_statement.browser"
+    rights_browser_pacing_name = "rights_statement.browser.pacing"
     rights_site_name = "rights_statement.site"
     rights_api_name = "rights_statement.api"
     rights_credentials_name = "rights_statement.credentials"
@@ -628,6 +655,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     erp_site_name = "erp.site"
     erp_upload_name = "erp.upload"
     erp_credentials_name = "erp.credentials"
+    erp_database_name = "erp.database"
     erp_login_name = "erp.selectors.login"
     nocobase_site_name = "nocobase.site"
     nocobase_credentials_name = "nocobase.credentials"
@@ -673,6 +701,32 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         raise ConfigurationError(
             "配置项 rights_statement.browser.channel 不受支持："
             f"{browser_channel}；可选值：{supported}"
+        )
+    browser_pacing = BrowserInteractionPacingSettings(
+        enabled=_boolean(
+            rights_browser_pacing,
+            "enabled",
+            rights_browser_pacing_name,
+        ),
+        min_delay_ms=_integer(
+            rights_browser_pacing,
+            "min_delay_ms",
+            rights_browser_pacing_name,
+        ),
+        max_delay_ms=_integer(
+            rights_browser_pacing,
+            "max_delay_ms",
+            rights_browser_pacing_name,
+        ),
+    )
+    if browser_pacing.min_delay_ms < 0:
+        raise ConfigurationError(
+            "配置项 rights_statement.browser.pacing.min_delay_ms 不能小于 0"
+        )
+    if browser_pacing.max_delay_ms < browser_pacing.min_delay_ms:
+        raise ConfigurationError(
+            "配置项 rights_statement.browser.pacing.max_delay_ms "
+            "不能小于 min_delay_ms"
         )
     login_url = _text(rights_site, "login_url", rights_site_name)
     page_url = _text(rights_site, "page_url", rights_site_name)
@@ -847,12 +901,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         max_attempts=_integer(
             rights_captcha, "max_attempts", rights_captcha_name
         ),
-        click_delay_min_ms=_integer(
-            rights_captcha, "click_delay_min_ms", rights_captcha_name
-        ),
-        click_delay_max_ms=_integer(
-            rights_captcha, "click_delay_max_ms", rights_captcha_name
-        ),
         click_offset_max_px=_integer(
             rights_captcha, "click_offset_max_px", rights_captcha_name
         ),
@@ -886,11 +934,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     if not captcha.verify_path.startswith("/"):
         raise ConfigurationError(
             "配置项 rights_statement.captcha.verify_path 必须以 / 开头"
-        )
-    if captcha.click_delay_max_ms < captcha.click_delay_min_ms:
-        raise ConfigurationError(
-            "配置项 rights_statement.captcha.click_delay_max_ms "
-            "不能小于 click_delay_min_ms"
         )
     if min(
         captcha.frame_timeout_ms,
@@ -929,6 +972,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
                 _text(rights_browser, "storage_state_path", rights_browser_name),
                 relative_root,
             ),
+            pacing=browser_pacing,
         ),
         site=SiteSettings(
             login_url=login_url,
@@ -1012,7 +1056,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             transfer_result_timeout_ms=_integer(
                 rights_page, "transfer_result_timeout_ms", rights_page_name
             ),
-            step_delay_ms=_integer(rights_page, "step_delay_ms", rights_page_name),
             preview_ready_timeout_ms=_integer(
                 rights_page, "preview_ready_timeout_ms", rights_page_name
             ),
@@ -1169,6 +1212,24 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
                 username=_text(erp_login, "username", erp_login_name),
                 password=_text(erp_login, "password", erp_login_name),
                 submit=_text(erp_login, "submit", erp_login_name),
+            ),
+        ),
+        erp_database=ErpDatabaseSettings(
+            host=_text(erp_database, "host", erp_database_name),
+            port=_integer(erp_database, "port", erp_database_name),
+            database=_text(erp_database, "database", erp_database_name),
+            username=_text(erp_database, "username", erp_database_name),
+            password=_text(erp_database, "password", erp_database_name),
+            driver=_text(erp_database, "driver", erp_database_name),
+            connection_timeout_seconds=_integer(
+                erp_database,
+                "connection_timeout_seconds",
+                erp_database_name,
+            ),
+            query_timeout_seconds=_integer(
+                erp_database,
+                "query_timeout_seconds",
+                erp_database_name,
             ),
         ),
         ai=active_ai,

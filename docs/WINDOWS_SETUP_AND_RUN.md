@@ -196,12 +196,28 @@ python scripts\run_gui.py
 
 只有需要制作安装包的 Windows 构建机才需要执行本节。
 
+构建机和安装软件的目标电脑必须预先安装 64 位
+`Microsoft ODBC Driver 17 for SQL Server`。可先在 PowerShell 中确认：
+
+```powershell
+python -c "import pyodbc; print(pyodbc.drivers())"
+```
+
+输出必须包含 `ODBC Driver 17 for SQL Server`。
+
 先安装构建依赖：
 
 ```powershell
 conda env update -n ehrm -f environment.yml
 conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
+```
+
+打包脚本会在构建前强制验证 `pyodbc` 和 ODBC 驱动。需要同时验证当前网络、
+数据库账号和连接参数时，可在打包前额外执行：
+
+```powershell
+python scripts/check_windows_build_environment.py --check-database
 ```
 
 如需生成最终安装程序，另外安装 Inno Setup 6。然后执行：
@@ -255,6 +271,12 @@ python -m playwright install chromium
 
 进入“系统设置 → 账户与连接”，重新输入密码并测试连接。必要时先清除 ERP
 登录状态，再保存账号并重新测试。
+
+### 人员单位或部门补齐失败
+
+确认当前电脑已安装 64 位 `Microsoft ODBC Driver 17 for SQL Server`，并且能够
+访问 `config/settings.toml` 中配置的 ERP/NCC SQL Server 地址。数据库账号、
+密码或网络不可用时，人员信息无法补齐。
 
 ### 构建后被 SmartScreen 提示
 

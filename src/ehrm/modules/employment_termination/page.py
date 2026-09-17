@@ -15,6 +15,7 @@ from playwright.sync_api import (
 )
 
 from ehrm.browser.smart_wait import SmartWait, SmartWaitTimeoutError, WaitCondition
+from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.core.exceptions import (
     EmployeeNotFoundError,
     QueryResultTimeoutError,
@@ -29,6 +30,13 @@ from ehrm.modules.employment_termination.models import (
 
 
 _LOGGER = logging.getLogger("ehrm")
+
+# These are observation ceilings, not fixed sleeps.  The probes return as soon
+# as the Angular modal changes state.  Keeping them short prevents one ignored
+# click from consuming the whole page action timeout before a fallback is used.
+_DIALOG_PRIMARY_CLICK_TIMEOUT_MS = 5_000
+_DIALOG_EFFECT_OBSERVE_TIMEOUT_MS = 2_000
+_DOM_PROBE_TIMEOUT_MS = 250
 
 
 class _ResponseMonitor:
@@ -119,6 +127,14 @@ class EmploymentTerminationPage:
         self.contract = settings.employment_termination
         self.progress_callback = progress_callback
         self.cancel_check = cancel_check
+        self.pacer = BrowserInteractionPacer(
+            settings.browser.pacing,
+            page.wait_for_timeout,
+            cancel_check=cancel_check,
+            cancelled_error=lambda: TaskCancelledError(
+                "用户在退保数据录入阶段停止任务"
+            ),
+        )
         self.waiter = SmartWait(
             page.wait_for_timeout,
             poll_interval_ms=100,
@@ -153,7 +169,7 @@ class EmploymentTerminationPage:
                 state="visible",
                 timeout=self.settings.browser.action_timeout_ms,
             )
-            menu.click()
+            self.pacer.perform(menu.click)
         except PlaywrightError as exc:
             raise WebsiteStructureChangedError(
                 "无法打开用人单位退工停保登记",
@@ -173,12 +189,12 @@ class EmploymentTerminationPage:
                 state="visible",
                 timeout=self.settings.browser.action_timeout_ms,
             )
-            search.fill(item.identity_number)
+            self.pacer.perform(lambda: search.fill(item.identity_number))
             if search.input_value().strip().upper() != item.identity_number:
                 raise WebsiteStructureChangedError("身份证号没有正确写入人员查询框")
 
             marker = self.responses.mark()
-            query_button.click()
+            self.pacer.perform(query_button.click)
             response = self.responses.wait_for_action_response(
                 marker,
                 preferred_value=item.identity_number,
@@ -256,7 +272,7 @@ class EmploymentTerminationPage:
             return
         if state.condition == "可操作的地区切换入口":
             try:
-                state.value.click()
+                self.pacer.perform(state.value.click)
             except PlaywrightError as exc:
                 raise WebsiteStructureChangedError(
                     "无法打开办事地区选择窗口",
@@ -286,7 +302,7 @@ class EmploymentTerminationPage:
             f"退保：检测到办事地区选择窗口，正在选择{self.contract.city_name}"
         )
         try:
-            option.click()
+            self.pacer.perform(option.click)
         except PlaywrightError as exc:
             raise WebsiteStructureChangedError(
                 f"无法在办事地区选择窗口中选择{self.contract.city_name}",
@@ -403,46 +419,66 @@ class EmploymentTerminationPage:
 
     def _dismiss_entry_notice(self, frame: Frame) -> None:
         search = frame.locator(self.contract.person_search).get_by_role("textbox").first
-        confirm = frame.get_by_role("button", name="确定", exact=True)
-        notice_confirmed = False
-        entry_confirmed = False
         deadline = (
             time.monotonic() + self.settings.browser.action_timeout_ms / 1000
         )
 
-        def ready_search() -> Locator | None:
-            return search if self._actionable(search) else None
+        def topmost_dialog_confirm() -> tuple[Locator, Locator, str, str] | None:
+            """Returns only the topmost visible Angular modal confirmation.
 
-        def visible_notice_dialog() -> Locator | None:
-            # Use the actual Angular UI Bootstrap DOM supplied by the site.
-            # Its inferred dialog role is not consistently available while
-            # Angular is attaching the modal to the document.
-            dialogs = frame.locator(self.contract.entry_notice_dialog).filter(
-                has_text=self.contract.entry_notice_text
-            )
-            return self._first_visible(dialogs)
-
-        def actionable_notice_button() -> Locator | None:
-            if notice_confirmed:
-                return None
-            dialog = visible_notice_dialog()
-            if dialog is None:
-                return None
-            return self._last_visible(
-                dialog.locator(self.contract.entry_notice_confirm)
-            )
-
-        def actionable_confirm() -> Locator | None:
-            if entry_confirmed:
-                return None
+            The site can render two modal layers at the same time. Selecting
+            the first global "确定" resolves the lower button, while the newer
+            modal intercepts pointer events. DOM order follows modal stacking,
+            so scan visible modal-content nodes from newest to oldest and keep
+            the action scoped to that one dialog.
+            """
             try:
-                for index in range(confirm.count()):
-                    candidate = confirm.nth(index)
-                    if self._actionable(candidate):
-                        return candidate
+                dialogs = frame.locator(self.contract.entry_notice_dialog)
+                for index in range(dialogs.count() - 1, -1, -1):
+                    dialog = dialogs.nth(index)
+                    if not self._visible(dialog):
+                        continue
+                    buttons = dialog.locator(
+                        self.contract.entry_notice_confirm
+                    )
+                    for button_index in range(
+                        buttons.count() - 1,
+                        -1,
+                        -1,
+                    ):
+                        button = buttons.nth(button_index)
+                        if not self._actionable(button):
+                            continue
+                        text = re.sub(
+                            r"\s+",
+                            "",
+                            dialog.inner_text(timeout=_DOM_PROBE_TIMEOUT_MS),
+                        )
+                        notice_text = re.sub(
+                            r"\s+",
+                            "",
+                            self.contract.entry_notice_text,
+                        )
+                        if _is_employee_not_found_message(text):
+                            dialog_kind = "employee-not-found"
+                        elif notice_text in text:
+                            dialog_kind = "termination-time"
+                        else:
+                            dialog_kind = "business-entry"
+                        return dialog, button, dialog_kind, text
             except PlaywrightError:
                 return None
             return None
+
+        def ready_search() -> Locator | None:
+            # The search field exists underneath the prompt modal.  It is only
+            # a valid completion signal after no active confirmation remains.
+            # Once the modal is gone, visible + enabled is sufficient; the
+            # page's custom search component can make a centre-point hit test
+            # fail even though the nested textbox is ready for fill().
+            if topmost_dialog_confirm() is not None:
+                return None
+            return search if self._enabled_visible(search) else None
 
         while True:
             remaining_ms = round((deadline - time.monotonic()) * 1000)
@@ -455,13 +491,9 @@ class EmploymentTerminationPage:
                 state = self.waiter.first(
                     [
                         WaitCondition(
-                            "停保时间提示确定按钮",
-                            actionable_notice_button,
+                            "当前最上层业务提示",
+                            topmost_dialog_confirm,
                         ),
-                        WaitCondition("业务入口确认", actionable_confirm),
-                        # Check both recorded confirmations before the search
-                        # field. Controls underneath an iframe modal can exist
-                        # in the DOM before the modal has actually disappeared.
                         WaitCondition(
                             "人员查询框稳定可操作",
                             ready_search,
@@ -478,67 +510,155 @@ class EmploymentTerminationPage:
                 ) from exc
 
             if state.condition == "人员查询框稳定可操作":
+                _LOGGER.info("退保：人员查询表单已就绪")
                 return
-            if state.condition == "停保时间提示确定按钮":
+            dialog, button, dialog_kind, dialog_text = state.value
+            if dialog_kind == "termination-time":
                 self._progress("退保：检测到停保时间提示，正在确认")
-                click_started_at = time.monotonic()
+                error_message = "无法关闭停保时间提示"
+            elif dialog_kind == "employee-not-found":
+                self._progress("退保：检测到未查询到人员提示，正在关闭")
+                error_message = "无法关闭未查询到人员提示"
+            else:
+                # Only a button inside the topmost Angular modal is eligible.
+                # The page's final action is named “确认提交”, lives outside
+                # this modal, and can never be selected by this rule.
+                self._progress("退保：检测到业务入口确认，正在进入人员查询表单")
+                error_message = "无法确认进入退工停保查询表单"
+
+            click_started_at = time.monotonic()
+            try:
+                clicked_dialog_handle = dialog.element_handle(
+                    timeout=_DOM_PROBE_TIMEOUT_MS
+                )
+                clicked_button_handle = button.element_handle(
+                    timeout=_DOM_PROBE_TIMEOUT_MS
+                )
+            except PlaywrightError:
+                # The live Angular locator can detach during its exit
+                # animation. Re-run the state race instead of waiting on it.
+                continue
+
+            def dialog_state_changed() -> bool | None:
+                # Keep checking the exact pre-click DOM node. A Locator is a
+                # live query and can retarget the next Angular modal after the
+                # current one closes, which previously caused duplicate clicks.
                 try:
-                    # The locator is already constrained to the visible modal,
-                    # its exact text and Angular OK handler.  A forced click
-                    # avoids Playwright waiting on the page's long-lived modal
-                    # animation/overlay while retaining a narrow, safe target.
-                    state.value.click(force=True, timeout=remaining_ms)
-                except PlaywrightError as exc:
-                    raise WebsiteStructureChangedError(
-                        "无法关闭停保时间提示",
-                        details=str(exc),
-                    ) from exc
-                notice_confirmed = True
-                remaining_ms = round((deadline - time.monotonic()) * 1000)
+                    if not clicked_dialog_handle.is_visible():
+                        return True
+                    current_text = re.sub(
+                        r"\s+", "", clicked_dialog_handle.inner_text()
+                    )
+                    if current_text != dialog_text:
+                        return True
+                except PlaywrightError:
+                    return True
+                return None
+
+            def wait_for_dialog_effect(timeout_ms: int) -> bool:
+                if timeout_ms < 1:
+                    return False
                 try:
                     self.waiter.first(
                         [
                             WaitCondition(
-                                "停保时间提示已关闭",
-                                lambda: (
-                                    True
-                                    if visible_notice_dialog() is None
-                                    else None
-                                ),
+                                "当前业务提示状态已变化",
+                                dialog_state_changed,
                                 transient_exceptions=(PlaywrightError,),
                             )
                         ],
-                        timeout_ms=max(1, remaining_ms),
-                        description="确认停保时间提示关闭状态",
+                        timeout_ms=timeout_ms,
+                        description="确认当前业务提示处理结果",
                     )
-                except SmartWaitTimeoutError as exc:
-                    raise WebsiteStructureChangedError(
-                        "点击确定后停保时间提示仍未关闭",
-                        details=str(exc),
-                    ) from exc
-                _LOGGER.info(
-                    "退保：停保时间提示已确认 click_elapsed=%.3fs",
-                    time.monotonic() - click_started_at,
-                )
-                continue
+                except SmartWaitTimeoutError:
+                    return False
+                return True
 
-            # This exact entry confirmation is only considered while the
-            # person-search field is not actionable. The final submission is
-            # therefore never reached or clicked by this preparation flow.
-            self._progress("退保：检测到业务入口确认，正在进入人员查询表单")
-            click_started_at = time.monotonic()
-            try:
-                state.value.click(timeout=remaining_ms)
-            except PlaywrightError as exc:
+            # Bind all retries to this exact button node. This prevents a retry
+            # from accidentally clicking the next prompt when Angular replaces
+            # one modal with another. Attempts are state-driven and bounded:
+            # normal pointer click, native DOM click, then one pointer retry.
+            strategies = ("playwright", "dom", "playwright-retry")
+            completed_strategy: str | None = None
+            attempt_errors: list[str] = []
+            for attempt, strategy in enumerate(strategies, start=1):
+                if dialog_state_changed() is not None:
+                    completed_strategy = f"{strategy}-prechecked"
+                    break
+                remaining_ms = round((deadline - time.monotonic()) * 1000)
+                if remaining_ms < 1:
+                    break
+                try:
+                    if strategy == "dom":
+                        self.pacer.perform(
+                            lambda: clicked_button_handle.evaluate(
+                                "element => { element.focus(); element.click(); }"
+                            )
+                        )
+                    else:
+                        click_timeout_ms = min(
+                            remaining_ms,
+                            _DIALOG_PRIMARY_CLICK_TIMEOUT_MS,
+                        )
+                        self.pacer.perform(
+                            lambda: clicked_button_handle.click(
+                                timeout=max(1, click_timeout_ms)
+                            )
+                        )
+                except PlaywrightError as exc:
+                    attempt_errors.append(
+                        f"第{attempt}次({strategy})：{exc}"
+                    )
+                    if dialog_state_changed() is not None:
+                        completed_strategy = strategy
+                        break
+                    _LOGGER.warning(
+                        "退保：业务提示第 %s/%s 次点击未完成 "
+                        "strategy=%s error=%s",
+                        attempt,
+                        len(strategies),
+                        strategy,
+                        exc,
+                    )
+                    continue
+
+                remaining_ms = round((deadline - time.monotonic()) * 1000)
+                effect_timeout_ms = min(
+                    max(1, remaining_ms),
+                    _DIALOG_EFFECT_OBSERVE_TIMEOUT_MS,
+                )
+                if wait_for_dialog_effect(effect_timeout_ms):
+                    completed_strategy = strategy
+                    break
+                _LOGGER.warning(
+                    "退保：业务提示第 %s/%s 次点击后状态未变化 "
+                    "strategy=%s kind=%s text=%s",
+                    attempt,
+                    len(strategies),
+                    strategy,
+                    dialog_kind,
+                    dialog_text[:120],
+                )
+
+            if completed_strategy is None:
+                details = "；".join(attempt_errors) or "三次点击后原弹窗仍然可见"
                 raise WebsiteStructureChangedError(
-                    "无法确认进入退工停保查询表单",
-                    details=str(exc),
-                ) from exc
-            entry_confirmed = True
+                    f"{error_message}；点击后页面状态没有变化",
+                    details=details,
+                )
             _LOGGER.info(
-                "退保：业务入口确认已完成 click_elapsed=%.3fs",
+                "退保：当前最上层业务提示已确认 strategy=%s "
+                "kind=%s click_elapsed=%.3fs",
+                completed_strategy,
+                dialog_kind,
                 time.monotonic() - click_started_at,
             )
+
+    def dismiss_query_feedback(self, frame: Frame) -> None:
+        """Closes row-level query feedback before processing the next item."""
+
+        self._wait_for_loading_to_finish()
+        self._dismiss_entry_notice(frame)
 
     def _select_reason(
         self,
@@ -564,7 +684,9 @@ class EmploymentTerminationPage:
                     _normalized_reason(label),
                 }:
                     continue
-                combobox.select_option(value=value)
+                self.pacer.perform(
+                    lambda: combobox.select_option(value=value)
+                )
                 actual = str(combobox.input_value() or "").strip()
                 if _normalized_reason(actual) != _normalized_reason(value):
                     raise WebsiteStructureChangedError(
@@ -580,10 +702,10 @@ class EmploymentTerminationPage:
         # Defensive support for a future custom combobox implementation.
         for combobox in visible_boxes:
             try:
-                combobox.click()
+                self.pacer.perform(combobox.click)
                 option = frame.get_by_role("option", name=requested, exact=True).last
                 if self._visible(option):
-                    option.click()
+                    self.pacer.perform(option.click)
                     return
             except PlaywrightError:
                 continue
@@ -814,9 +936,19 @@ class EmploymentTerminationPage:
                         const y = rect.top + rect.height / 2;
                         const hit = document.elementFromPoint(x, y);
                         return hit === element || element.contains(hit);
-                    }"""
+                    }""",
+                    timeout=_DOM_PROBE_TIMEOUT_MS,
                 )
             )
+        except PlaywrightError:
+            return False
+
+    @classmethod
+    def _enabled_visible(cls, locator: Locator) -> bool:
+        if not cls._visible(locator):
+            return False
+        try:
+            return locator.is_enabled(timeout=_DOM_PROBE_TIMEOUT_MS)
         except PlaywrightError:
             return False
 

@@ -13,6 +13,11 @@ Qt、QML、Playwright 和 Chromium 的运行目录，启动速度和稳定性更
 
 必须在 64 位 Windows 上构建，不能在 macOS 上直接生成 Windows EXE。
 
+构建机和最终运行软件的 Windows 电脑都必须安装 64 位
+`Microsoft ODBC Driver 17 for SQL Server`。该驱动是 SQL Server 的系统级
+运行组件，不能由 PyInstaller 中的 `pyodbc` 模块替代。安装驱动前请同时确认
+系统已有对应架构的 Microsoft Visual C++ Redistributable。
+
 ```powershell
 conda env create -f environment.backend.yml
 conda env update -n ehrm -f environment.frontend.yml
@@ -27,8 +32,20 @@ conda activate ehrm
 conda env update -n ehrm -f environment.yml
 conda env update -n ehrm -f environment.windows-build.yml
 conda activate ehrm
-python -c "import PySide6, PyInstaller, playwright, playwright_stealth; print('打包依赖正常')"
+python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc; print('打包依赖正常'); print(pyodbc.drivers())"
 ```
+
+上述输出必须包含 `ODBC Driver 17 for SQL Server`。正式构建脚本会强制检查
+`pyodbc` 和该 ODBC 驱动；缺少任何一项都会在生成安装包前停止。
+
+如需在打包前额外验证当前网络和数据库连接参数，可手动执行：
+
+```powershell
+python scripts/check_windows_build_environment.py --check-database
+```
+
+数据库连通性不是默认打包条件，避免 VPN 未连接、数据库临时维护等运行环境状态
+阻止生成安装包。
 
 如需生成安装程序，请安装 Inno Setup 6。没有安装时，脚本仍会生成可运行目录
 和 ZIP 便携版。
@@ -67,12 +84,12 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.
 
 构建脚本会自动完成：
 
-1. 校验 Python 和构建依赖；
+1. 校验 Python、`pyodbc` 和 SQL Server ODBC 驱动；
 2. 执行测试；
 3. 下载并内置当前 Playwright 版本对应的 Chromium；
 4. 生成 Windows 图标和版本信息；
 5. 生成 onedir 冻结包；
-6. 校验配置、NocoBase 页面、Qt PDF、Playwright Driver、stealth 脚本和 Chromium 是否完整；
+6. 校验配置、NocoBase 页面、`pyodbc`、Qt PDF、Playwright Driver、stealth 脚本和 Chromium 是否完整；
 7. 生成 ZIP，并在可用时生成安装程序 EXE。
 
 ## 发布前验证
@@ -85,6 +102,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.
 4. ERP、智慧人社和 NocoBase 账号能够写入 `runtime/data/auth.sqlite3`；
 5. ERP 可以静默登录并上传附件；
 6. NocoBase 能够测试连接、查询权益申请、查看详情并发起打印；
-7. 正常关闭软件时没有崩溃提示。
+7. 人员信息能够通过 ERP/NCC SQL Server 数据库补齐单位和部门；
+8. 正常关闭软件时没有崩溃提示。
 
-个人账号、密码、浏览器资料、日志和下载结果不会进入安装包。
+智慧人社、ERP 网站及 NocoBase 的个人登录密码、浏览器资料、日志和下载结果
+不会进入安装包。内部部署使用的 ERP/NCC 数据库连接参数会随
+`config/settings.toml` 一同进入安装包。

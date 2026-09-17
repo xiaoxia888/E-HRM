@@ -16,6 +16,7 @@ from playwright.sync_api import (
 )
 
 from ehrm.browser.download import DownloadManager
+from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.core.exceptions import (
     DownloadTimeoutError,
     EmployeeNotFoundError,
@@ -67,6 +68,12 @@ class RightsStatementPage:
         self.selectors = settings.rights_statement
         self.downloads = downloads
         self.cancel_check = cancel_check
+        self.pacer = BrowserInteractionPacer(
+            settings.browser.pacing,
+            getattr(page, "wait_for_timeout", lambda _milliseconds: None),
+            cancel_check=cancel_check,
+            cancelled_error=lambda: TaskCancelledError("用户提前停止任务"),
+        )
         self._current_insurance: str | None = None
         self._current_start_month: str | None = None
         self._current_end_month: str | None = None
@@ -97,7 +104,7 @@ class RightsStatementPage:
             menu = self._required(
                 navigation.rights_statement_menu, "rights_statement_menu"
             )
-            self.page.locator(menu).last.click()
+            self.pacer.perform(self.page.locator(menu).last.click)
 
         self.page.locator(
             self._required(self.selectors.start_month, "start_month")
@@ -219,8 +226,7 @@ class RightsStatementPage:
             else:
                 _LOGGER.info("复用已优先填写的人员查询条件 row=%s", record.row_number)
             self._prepared_person_key = None
-            self._pause()
-            self.page.locator(query_button).click()
+            self.pacer.perform(self.page.locator(query_button).click)
             # A query can briefly expose an old result table below the loading
             # mask. Never inspect rows until every visible mask has disappeared
             # and the page has remained stable for consecutive samples.
@@ -229,11 +235,11 @@ class RightsStatementPage:
             )
             row = self._wait_for_employee_row(record)
             self._check_row(row)
-            self._pause()
             self._raise_if_cancelled()
-            self.page.locator(
+            transfer = self.page.locator(
                 self._required(self.selectors.transfer_left, "transfer_left")
-            ).click()
+            )
+            self.pacer.perform(transfer.click)
             self._wait_until_transferred(record)
             self._raise_if_cancelled()
         except (
@@ -263,15 +269,16 @@ class RightsStatementPage:
                 "social_security_number",
             )
             social = self.page.locator(social_selector)
-            social.fill(record.identity_number)
-            employee.fill("")
+            self.pacer.perform(lambda: social.fill(record.identity_number))
+            self.pacer.perform(lambda: employee.fill(""))
             return
 
         # Excel imports reject blank identity numbers. This fallback supports
         # future callers without weakening the Excel validation contract.
         if self.selectors.social_security_number:
-            self.page.locator(self.selectors.social_security_number).fill("")
-        employee.fill(record.name)
+            social = self.page.locator(self.selectors.social_security_number)
+            self.pacer.perform(lambda: social.fill(""))
+        self.pacer.perform(lambda: employee.fill(record.name))
 
     @staticmethod
     def _person_query_key(record: EmployeeRecord) -> tuple[str, str]:
@@ -288,10 +295,10 @@ class RightsStatementPage:
         try:
             self._raise_if_cancelled()
             self._select_current_group(records)
-            self._pause()
-            self.page.locator(
+            generate = self.page.locator(
                 self._required(self.selectors.generate_button, "generate_button")
-            ).click()
+            )
+            self.pacer.perform(generate.click)
 
             dialog = self.page.locator(
                 self._required(self.selectors.preview_dialog, "preview_dialog")
@@ -377,11 +384,15 @@ class RightsStatementPage:
             try:
                 # Do not let Playwright wait indefinitely for a navigation
                 # that this site's custom download handler never completes.
-                button.click(timeout=5_000, no_wait_after=True)
+                self.pacer.perform(
+                    lambda: button.click(timeout=5_000, no_wait_after=True)
+                )
             except PlaywrightTimeoutError:
                 if not captured_downloads:
                     _LOGGER.info("下载按钮常规点击被阻塞，改用 DOM 点击")
-                    button.evaluate("element => element.click()")
+                    self.pacer.perform(
+                        lambda: button.evaluate("element => element.click()")
+                    )
             while time.monotonic() < deadline:
                 if captured_downloads:
                     _LOGGER.info("下载捕获方式=playwright_download_event")
@@ -407,7 +418,9 @@ class RightsStatementPage:
                     self.page.wait_for_timeout(
                         max(1_000, self.selectors.preview_download_delay_ms)
                     )
-                    button.evaluate("element => element.click()")
+                    self.pacer.perform(
+                        lambda: button.evaluate("element => element.click()")
+                    )
                     retried = True
                 self.page.wait_for_timeout(200)
         finally:
@@ -519,9 +532,8 @@ class RightsStatementPage:
             return
 
         self._select_all_chosen_people()
-        self._pause()
         back = self._reverse_transfer_arrow()
-        back.click(timeout=3_000)
+        self.pacer.perform(lambda: back.click(timeout=3_000))
         self._wait_for_loading_to_finish(
             self.selectors.transfer_result_timeout_ms
         )
@@ -537,7 +549,6 @@ class RightsStatementPage:
                 self.page.wait_for_timeout(200)
                 continue
             if self._selected_table_is_empty(table):
-                self._pause()
                 return
             self.page.wait_for_timeout(200)
         raise QueryResultTimeoutError("清空右侧已选人员列表超时")
@@ -590,7 +601,7 @@ class RightsStatementPage:
         year_text, month_text = value.split("-", maxsplit=1)
         month_name = _MONTH_NAMES[int(month_text)]
         field = self.page.locator(self._required(input_selector, "month input"))
-        field.click()
+        self.pacer.perform(field.click)
         popup_selector = self._required(self.selectors.calendar_popup, "calendar_popup")
         popup = self.page.locator(popup_selector).last
         popup.wait_for(state="visible")
@@ -598,15 +609,16 @@ class RightsStatementPage:
         year_button = popup.get_by_role(
             "button", name=re.compile(r"^\d{4}$")
         ).first
-        year_button.click()
-        popup.get_by_text(year_text, exact=True).last.click()
-        self._pause()
+        self.pacer.perform(year_button.click)
+        year_option = popup.get_by_text(year_text, exact=True).last
+        self.pacer.perform(year_option.click)
 
         month_cell = popup.get_by_role("gridcell", name=month_name, exact=True)
         if month_cell.count() > 0:
-            month_cell.last.click()
+            self.pacer.perform(month_cell.last.click)
         else:
-            popup.get_by_text(month_name, exact=True).last.click()
+            month_option = popup.get_by_text(month_name, exact=True).last
+            self.pacer.perform(month_option.click)
         try:
             popup.wait_for(state="hidden", timeout=5_000)
         except PlaywrightTimeoutError:
@@ -616,7 +628,6 @@ class RightsStatementPage:
         self._wait_for_loading_to_finish(
             self.selectors.query_result_timeout_ms
         )
-        self._pause()
 
     def _select_insurance(self, insurance_type: str) -> None:
         selector = self._required(self.selectors.insurance_type, "insurance_type")
@@ -625,19 +636,18 @@ class RightsStatementPage:
         try:
             tag_name = locator.evaluate("element => element.tagName")
             if str(tag_name).upper() == "SELECT":
-                locator.select_option(label=value)
+                self.pacer.perform(lambda: locator.select_option(label=value))
                 self._wait_for_loading_to_finish(
                     self.selectors.query_result_timeout_ms
                 )
-                self._pause()
                 return
-            locator.click()
+            self.pacer.perform(locator.click)
             option_selector = self._required(
                 self.selectors.insurance_option_template,
                 "insurance_option_template",
             ).replace("{value}", value)
             option = self.page.locator(option_selector).last
-            option.click()
+            self.pacer.perform(option.click)
             try:
                 option.wait_for(state="hidden", timeout=5_000)
             except PlaywrightTimeoutError:
@@ -645,7 +655,6 @@ class RightsStatementPage:
             self._wait_for_loading_to_finish(
                 self.selectors.query_result_timeout_ms
             )
-            self._pause()
         except PlaywrightError as exc:
             raise WebsiteStructureChangedError(
                 f"无法选择险种：{value}", details=str(exc)
@@ -761,7 +770,6 @@ class RightsStatementPage:
             ):
                 # Let Ant Design finish checkbox/selection state updates.
                 self.page.wait_for_timeout(300 if spinner_seen else 600)
-                self._pause()
                 return
             self.page.wait_for_timeout(200)
         raise QueryResultTimeoutError(
@@ -804,9 +812,12 @@ class RightsStatementPage:
             ".ant-table-thead input[type=checkbox]"
         ).first
         if native_checkbox.count() > 0:
-            native_checkbox.check(force=True)
+            self.pacer.perform(lambda: native_checkbox.check(force=True))
             return
-        table.locator(".ant-table-thead .ant-checkbox-wrapper").first.click()
+        checkbox = table.locator(
+            ".ant-table-thead .ant-checkbox-wrapper"
+        ).first
+        self.pacer.perform(checkbox.click)
 
     def _select_current_group(
         self,
@@ -822,7 +833,7 @@ class RightsStatementPage:
         for index in range(row_checkboxes.count()):
             checkbox = row_checkboxes.nth(index)
             if checkbox.is_checked():
-                checkbox.uncheck(force=True)
+                self.pacer.perform(lambda: checkbox.uncheck(force=True))
                 changed = True
         if changed:
             self.page.wait_for_timeout(300)
@@ -881,12 +892,16 @@ class RightsStatementPage:
         if not self._visible(close):
             return
         try:
-            close.click(timeout=2_000, no_wait_after=True)
+            self.pacer.perform(
+                lambda: close.click(timeout=2_000, no_wait_after=True)
+            )
         except PlaywrightError:
             # During Ant Design's closing animation the node can be reported as
             # visible but never become stable. A DOM click avoids a 30s stall.
             try:
-                close.evaluate("element => element.click()")
+                self.pacer.perform(
+                    lambda: close.evaluate("element => element.click()")
+                )
             except PlaywrightError:
                 pass
         try:
@@ -903,15 +918,14 @@ class RightsStatementPage:
         self._current_end_month = None
         self._prepared_person_key = None
 
-    @staticmethod
-    def _check_row(row: Locator) -> None:
+    def _check_row(self, row: Locator) -> None:
         checkbox = row.get_by_role("checkbox").first
         if checkbox.count() > 0:
-            checkbox.check()
+            self.pacer.perform(checkbox.check)
             return
         label = row.locator("label").first
         if label.count() > 0:
-            label.click()
+            self.pacer.perform(label.click)
             return
         raise WebsiteStructureChangedError("人员结果行中没有找到复选框")
 
@@ -920,16 +934,7 @@ class RightsStatementPage:
             return
         locator = self.page.locator(selector).last
         if locator.count() > 0 and locator.is_visible():
-            locator.click()
-            self._pause()
-
-    def _pause(self, minimum_ms: int | None = None) -> None:
-        delay = self.selectors.step_delay_ms
-        if minimum_ms is not None:
-            delay = max(delay, minimum_ms)
-        if delay > 0:
-            self.page.wait_for_timeout(delay)
-        self._raise_if_cancelled()
+            self.pacer.perform(locator.click)
 
     def _raise_if_cancelled(self) -> None:
         if self.cancel_check is not None and self.cancel_check():

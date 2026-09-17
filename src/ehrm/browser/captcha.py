@@ -15,6 +15,7 @@ import numpy as np
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Frame, Locator, Page, Response
 
+from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.browser.captcha_matcher import (
     CaptchaMatch,
     captcha_debug_images,
@@ -88,14 +89,14 @@ class CaptchaSolver:
         page: Page,
         settings: CaptchaSettings,
         *,
-        delay_sampler: Callable[[int, int], int] | None = None,
+        pacer: BrowserInteractionPacer,
         offset_sampler: Callable[[int, int], int] | None = None,
         progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.page = page
         self.settings = settings
+        self.pacer = pacer
         generator = random.SystemRandom()
-        self._delay_sampler = delay_sampler or generator.randint
         self._offset_sampler = offset_sampler or generator.randint
         self._progress_callback = progress_callback
         self._diagnostic_run_dir: Path | None = None
@@ -376,8 +377,7 @@ class CaptchaSolver:
                     image_y=max(0, min(image_height - 1, image_y)),
                 )
             )
-            self.page.mouse.click(page_x, page_y)
-            self._random_pause()
+            self.pacer.perform(lambda: self.page.mouse.click(page_x, page_y))
         return click_points
 
     def _save_diagnostic_sources(
@@ -495,8 +495,7 @@ class CaptchaSolver:
                 self._is_allowed_verify_response,
                 timeout=self.settings.verify_timeout_ms,
             ) as response_info:
-                confirm.click()
-                self._random_pause()
+                self.pacer.perform(confirm.click)
             response = response_info.value
         except PlaywrightError as exc:
             raise CaptchaAutomationError("等待验证码校验响应超时") from exc
@@ -544,17 +543,9 @@ class CaptchaSolver:
         refresh = frame.locator("#reload").first
         if refresh.count() == 0 or not refresh.is_visible():
             raise CaptchaAutomationError("验证码失败后图片没有刷新")
-        refresh.click()
-        self._random_pause()
+        self.pacer.perform(refresh.click)
         if not changed_within(self.settings.image_change_timeout_ms):
             raise CaptchaAutomationError("刷新后验证码图片仍未更新")
-
-    def _random_pause(self) -> None:
-        delay = self._delay_sampler(
-            self.settings.click_delay_min_ms,
-            self.settings.click_delay_max_ms,
-        )
-        self.page.wait_for_timeout(delay)
 
     def _progress(self, message: str) -> None:
         if self._progress_callback is not None:

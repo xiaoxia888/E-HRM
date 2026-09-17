@@ -2824,14 +2824,27 @@ class DesktopViewModel(QObject):
         return True
 
     def _settings_with_preferences(self, settings: AppSettings) -> AppSettings:
-        step_delays = {
-            "fast": 500,
-            "standard": 1000,
-            "stable": 1500,
+        pacing_ranges = {
+            "fast": (500, 1000),
+            "standard": (
+                settings.browser.pacing.min_delay_ms,
+                settings.browser.pacing.max_delay_ms,
+            ),
+            "stable": (1500, 2500),
         }
+        pacing_min_ms, pacing_max_ms = pacing_ranges[
+            self._preferences.execution_speed
+        ]
+        browser = replace(
+            settings.browser,
+            pacing=replace(
+                settings.browser.pacing,
+                min_delay_ms=pacing_min_ms,
+                max_delay_ms=pacing_max_ms,
+            ),
+        )
         rights_statement = replace(
             settings.rights_statement,
-            step_delay_ms=step_delays[self._preferences.execution_speed],
             no_result_confirm_ms=(
                 self._preferences.no_result_confirm_seconds * 1000
             ),
@@ -2866,6 +2879,7 @@ class DesktopViewModel(QObject):
         )
         return replace(
             selected_settings,
+            browser=browser,
             rights_statement=rights_statement,
             rights_credentials=replace(
                 selected_settings.rights_credentials,

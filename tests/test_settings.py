@@ -22,6 +22,9 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     if settings.browser.engine != "chromium":
         assert settings.browser.channel == ""
     assert settings.browser.action_timeout_ms == 30_000
+    assert settings.browser.pacing.enabled is True
+    assert settings.browser.pacing.min_delay_ms == 1000
+    assert settings.browser.pacing.max_delay_ms == 2000
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
     assert settings.site.unit_password_login_path.startswith("/")
     assert settings.rights_api.query_common_path.startswith("/")
@@ -53,8 +56,6 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.captcha.allowed_hosts
     assert settings.captcha.verify_path.startswith("/")
     assert settings.captcha.max_attempts == 3
-    assert settings.captcha.click_delay_min_ms == 1000
-    assert settings.captcha.click_delay_max_ms == 2000
     assert settings.captcha.click_offset_max_px >= 0
     assert settings.captcha.diagnostic_images_enabled is configured[
         "rights_statement"
@@ -64,6 +65,22 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     )
     assert settings.erp.base_url
     assert settings.erp.headless is True
+    assert settings.erp_database.host == configured["erp"]["database"]["host"]
+    assert settings.erp_database.port == configured["erp"]["database"]["port"]
+    assert settings.erp_database.database == configured["erp"]["database"]["database"]
+    assert settings.erp_database.username == configured["erp"]["database"][
+        "username"
+    ]
+    assert settings.erp_database.password == configured["erp"]["database"][
+        "password"
+    ]
+    assert settings.erp_database.driver == configured["erp"]["database"]["driver"]
+    assert settings.erp_database.connection_timeout_seconds == configured["erp"][
+        "database"
+    ]["connection_timeout_seconds"]
+    assert settings.erp_database.query_timeout_seconds == configured["erp"][
+        "database"
+    ]["query_timeout_seconds"]
     assert settings.nocobase.base_url == configured["nocobase"]["site"][
         "base_url"
     ]

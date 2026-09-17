@@ -19,6 +19,9 @@ from ehrm.modules.employment_termination.excel_loader import (
 from ehrm.modules.employment_termination.service import (
     EmploymentTerminationService,
 )
+from ehrm.modules.employment_termination.result_workbook import (
+    EmploymentTerminationResultWorkbookWriter,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +38,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="包含“身份证号、退工原因”两列的 .xlsx/.xlsm 文件",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("output/employment-termination-e2e"),
+        help="逐行处理结果 Excel 的输出目录",
     )
     parser.add_argument(
         "--ignore-https-errors",
@@ -66,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime_root = application_runtime_root(args.config)
         settings = load_settings(args.config, data_root=runtime_root)
         input_path = args.input.expanduser().resolve()
+        output_dir = resolve_runtime_path(args.output, runtime_root)
         diagnostic = resolve_runtime_path(args.diagnostic, runtime_root)
         items = EmploymentTerminationExcelLoader().load(input_path)
         account = AuthenticationRepository(
@@ -120,11 +130,20 @@ def main(argv: list[str] | None = None) -> int:
                     logger,
                     progress_callback=print,
                 ).prepare_with_page(page, items)
+                result_workbook = EmploymentTerminationResultWorkbookWriter().write(
+                    input_path,
+                    output_dir,
+                    result.results,
+                )
                 _save_screenshot(page, diagnostic)
                 print(
-                    f"退保数据录入测试完成：{result.prepared_count} 条，"
+                    "退保数据录入测试完成："
+                    f"总计 {result.total_count} 条，"
+                    f"录入成功 {result.prepared_count} 条，"
+                    f"未查询到 {result.failed_count} 条，"
                     f"地区={result.city_name}，submitted={str(result.submitted).lower()}"
                 )
+                print(f"结果 Excel：{result_workbook.resolve()}")
                 if args.pause_after_fill:
                     input("页面已停在提交前，检查完毕后按回车关闭浏览器：")
                 return 0

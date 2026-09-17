@@ -1463,48 +1463,21 @@ def test_identity_lookup_rejects_person_name_mismatch(
 
 def test_person_lookup_progress_counts_identity_and_name_requests(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     progress: list[str] = []
 
-    class FakeSession:
-        page = object()
-        request = object()
-
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args) -> None:
-            pass
-
-        def ensure_authenticated(self, credentials) -> None:
-            pass
-
-    class FakePersonClient:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
+    class FakeDatabaseClient:
         def query_by_identity_number(self, identity):
             return ()
 
         def query_by_name(self, name):
             return ()
 
-    monkeypatch.setattr(
-        "ehrm.modules.erp.person_service.ErpSession",
-        FakeSession,
-    )
-    monkeypatch.setattr(
-        "ehrm.modules.erp.person_service.ErpPersonClient",
-        FakePersonClient,
-    )
     service = ErpPersonLookupService(
         load_settings(Path("config/settings.toml"), data_root=tmp_path),
         logging.getLogger("test.erp.person.progress"),
         progress_callback=progress.append,
+        database_client_factory=FakeDatabaseClient,
     )
 
     service.lookup_people(

@@ -73,6 +73,7 @@ datas = pw_datas + stealth_datas + [
 ]
 
 hiddenimports = pw_hiddenimports + stealth_hiddenimports + [
+    "pyodbc",
     "PySide6.QtPdf",
     "PySide6.QtQml",
     "PySide6.QtQuick",

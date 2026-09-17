@@ -18,6 +18,7 @@ from ehrm.browser.captcha_policy import (
     is_allowed_host_url,
     url_without_sensitive_query,
 )
+from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.core.exceptions import (
     AuthenticationFailedError,
     CaptchaRateLimitedAuthenticationError,
@@ -52,6 +53,14 @@ class LoginService:
         self._login_succeeded = False
         self._response_listener_page_ids: set[int] = set()
         self._context = getattr(page, "context", None)
+        self.pacer = BrowserInteractionPacer(
+            settings.browser.pacing,
+            self._wait_for_timeout,
+            cancel_check=cancel_check,
+            cancelled_error=lambda: TaskCancelledError(
+                "用户在智慧人社登录阶段停止任务"
+            ),
+        )
         self._listen_for_login_response(page)
         if self._context is not None:
             # Some login gateways replace the original tab with a newly opened
@@ -345,10 +354,10 @@ class LoginService:
                 mobile_field.wait_for(state="visible", timeout=timeout)
                 password_field.wait_for(state="visible", timeout=timeout)
                 submit.wait_for(state="visible", timeout=timeout)
-                credit_field.fill(credit_code)
-                mobile_field.fill(mobile)
-                password_field.fill(password)
-                submit.click()
+                self.pacer.perform(lambda: credit_field.fill(credit_code))
+                self.pacer.perform(lambda: mobile_field.fill(mobile))
+                self.pacer.perform(lambda: password_field.fill(password))
+                self.pacer.perform(submit.click)
                 self._progress("登录信息已自动填写，正在检查安全验证……")
                 return True
             except PlaywrightError as exc:
@@ -397,6 +406,7 @@ class LoginService:
         solver = CaptchaSolver(
             page,
             self.settings.captcha,
+            pacer=self.pacer,
             progress_callback=self._progress,
         )
         try:
@@ -515,7 +525,7 @@ class LoginService:
                     details=f"当前可见匹配数量：{count}；定位器：{selector}",
                 )
             if not self._tab_is_active(tab):
-                tab.click()
+                self.pacer.perform(tab.click)
 
             deadline = time.monotonic() + timeout / 1000.0
             while time.monotonic() < deadline:

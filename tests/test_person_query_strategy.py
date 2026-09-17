@@ -21,6 +21,9 @@ class FakePage:
     def locator(self, selector: str) -> FakeLocator:
         return FakeLocator(self.values, selector)
 
+    def wait_for_timeout(self, _milliseconds: int) -> None:
+        return None
+
 
 def record(identity: str) -> EmployeeRecord:
     return EmployeeRecord(
