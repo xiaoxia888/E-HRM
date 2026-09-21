@@ -179,6 +179,10 @@ class EmploymentTerminationPage:
         self._dismiss_entry_notice(frame)
         return frame
 
+    def ensure_nanjing(self) -> None:
+        """Shared, verified hall-region guard for Jiangsu business automations."""
+        self._ensure_nanjing()
+
     def fill_item(self, frame: Frame, item: EmploymentTerminationItem) -> None:
         self._raise_if_cancelled()
         search = frame.locator(self.contract.person_search).get_by_role("textbox").first

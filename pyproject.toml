@@ -32,6 +32,8 @@ ehrm-rights-api-e2e = "ehrm.entrypoints.rights_api_e2e_cli:main"
 ehrm-captcha-match-test = "ehrm.entrypoints.captcha_match_cli:main"
 ehrm-nocobase-login-test = "ehrm.entrypoints.nocobase_login_cli:main"
 ehrm-employment-termination-e2e = "ehrm.entrypoints.employment_termination_e2e_cli:main"
+ehrm-person-information-collection-e2e = "ehrm.entrypoints.person_information_collection_e2e_cli:main"
+ehrm-employment-enrollment-e2e = "ehrm.entrypoints.employment_enrollment_e2e_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
