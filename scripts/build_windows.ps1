@@ -61,29 +61,45 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     throw "Windows EXE must be built on a Windows system."
 }
 
-$PythonVersion = python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
+if (-not (Get-Command conda -ErrorAction SilentlyContinue)) {
+    throw "Conda was not found. Install Miniconda/Miniforge and initialize PowerShell first."
+}
+
+$CondaEnvs = (conda env list --json | ConvertFrom-Json).envs
+$EhrmMatches = @($CondaEnvs | Where-Object { (Split-Path $_ -Leaf) -eq "ehrm" })
+if ($EhrmMatches.Count -ne 1) {
+    throw "Unable to uniquely resolve the ehrm Conda environment: $($EhrmMatches -join ', ')"
+}
+$EhrmPrefix = $EhrmMatches[0]
+$Python = Join-Path $EhrmPrefix "python.exe"
+if (-not (Test-Path $Python)) {
+    throw "The ehrm Python executable does not exist: $Python"
+}
+Write-Host "Build Python: $Python"
+
+$PythonVersion = & $Python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
 if (-not $PythonVersion.StartsWith("3.11.")) {
     throw "Current Python version is $PythonVersion. This project requires Python 3.11.x."
 }
 
-python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc, fastapi, uvicorn, websockets; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}, pyodbc={pyodbc.version}, FastAPI={fastapi.__version__}, Uvicorn={uvicorn.__version__}, WebSockets={websockets.__version__}; Playwright and playwright-stealth installed')"
+& $Python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc, fastapi, uvicorn, websockets; print(f'Build dependency check passed. PySide6={PySide6.__version__}, PyInstaller={PyInstaller.__version__}, pyodbc={pyodbc.version}, FastAPI={fastapi.__version__}, Uvicorn={uvicorn.__version__}, WebSockets={websockets.__version__}; Playwright and playwright-stealth installed')"
 if ($LASTEXITCODE -ne 0) {
     throw "Required Windows build dependencies are missing."
 }
 
-python scripts/check_windows_build_environment.py
+& $Python scripts/check_windows_build_environment.py
 if ($LASTEXITCODE -ne 0) {
     throw "SQL Server ODBC driver check failed."
 }
 
-$QtPdfQmlDir = python -c "from pathlib import Path; from PySide6.QtCore import QLibraryInfo; path = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)) / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path.resolve())"
+$QtPdfQmlDir = & $Python -c "from pathlib import Path; from PySide6.QtCore import QLibraryInfo; path = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)) / 'QtQuick' / 'Pdf'; assert (path / 'qmldir').is_file(), f'Missing QtQuick.Pdf QML module: {path}'; print(path.resolve())"
 if ($LASTEXITCODE -ne 0) {
     throw "PySide6 QtQuick.Pdf QML module is missing. Check that PySide6-Addons and PySide6 are both installed at version 6.10.1."
 }
 Write-Host "QtQuick.Pdf source module: $($QtPdfQmlDir.Trim())"
 
 if (-not $SkipTests) {
-    python -m pytest -q
+    & $Python -m pytest -q
     if ($LASTEXITCODE -ne 0) {
         throw "Tests failed. Packaging has been stopped."
     }
@@ -92,7 +108,7 @@ if (-not $SkipTests) {
 $env:PLAYWRIGHT_BROWSERS_PATH = "0"
 $env:PLAYWRIGHT_SKIP_BROWSER_GC = "1"
 
-python -m playwright install chromium
+& $Python -m playwright install chromium
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to download Chromium."
 }
@@ -102,7 +118,7 @@ if ($Version) {
     $PrepareArgs += @("--version", $Version)
 }
 
-$PreparedVersion = python @PrepareArgs
+$PreparedVersion = & $Python @PrepareArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to generate Windows icon or version information."
 }
@@ -117,7 +133,7 @@ if ($Console) {
     Remove-Item Env:EHRM_BUILD_CONSOLE -ErrorAction SilentlyContinue
 }
 
-python -m PyInstaller `
+& $Python -m PyInstaller `
     --noconfirm `
     --clean `
     --distpath build/windows-dist `
@@ -130,7 +146,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $BundleDir = Join-Path $ProjectRoot "build/windows-dist/E-HRM"
 
-python scripts/verify_windows_bundle.py $BundleDir
+& $Python scripts/verify_windows_bundle.py $BundleDir
 if ($LASTEXITCODE -ne 0) {
     throw "Frozen bundle structure validation failed."
 }

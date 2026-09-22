@@ -22,7 +22,6 @@ Qt、QML、Playwright 和 Chromium 的运行目录，启动速度和稳定性更
 conda env create -f environment.backend.yml
 conda env update -n ehrm -f environment.frontend.yml
 conda env update -n ehrm -f environment.windows-build.yml
-conda activate ehrm
 ```
 
 已有 `ehrm` 环境在打包前也应同步运行依赖，避免沿用缺少
@@ -31,9 +30,15 @@ conda activate ehrm
 ```powershell
 conda env update -n ehrm -f environment.yml
 conda env update -n ehrm -f environment.windows-build.yml
-conda activate ehrm
-python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc; print('打包依赖正常'); print(pyodbc.drivers())"
+$envs = (conda env list --json | ConvertFrom-Json).envs
+$EhrmPrefix = $envs | Where-Object { (Split-Path $_ -Leaf) -eq "ehrm" } | Select-Object -First 1
+if (-not $EhrmPrefix) { throw "未找到 ehrm Conda 环境" }
+$EhrmPython = Join-Path $EhrmPrefix "python.exe"
+& $EhrmPython -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc; print('打包依赖正常'); print(pyodbc.drivers())"
 ```
+
+不要把上面的绝对路径调用改成裸 `python`。`scripts\build_windows.ps1` 也会自行
+解析同一个 `ehrm` 环境，不依赖当前 PowerShell 是否执行过 `conda activate`。
 
 上述输出必须包含 `ODBC Driver 17 for SQL Server`。正式构建脚本会强制检查
 `pyodbc` 和该 ODBC 驱动；缺少任何一项都会在生成安装包前停止。
@@ -41,7 +46,7 @@ python -c "import PySide6, PyInstaller, playwright, playwright_stealth, pyodbc; 
 如需在打包前额外验证当前网络和数据库连接参数，可手动执行：
 
 ```powershell
-python scripts/check_windows_build_environment.py --check-database
+& $EhrmPython scripts\check_windows_build_environment.py --check-database
 ```
 
 数据库连通性不是默认打包条件，避免 VPN 未连接、数据库临时维护等运行环境状态

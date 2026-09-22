@@ -2,8 +2,8 @@
 
 环境初始化与运行文档：
 
-- [macOS 服务器迁移、初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
-- [Windows 环境初始化、迁移与运行](docs/WINDOWS_SETUP_AND_RUN.md)
+- [macOS Web 服务器初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
+- [Windows Web 服务器初始化、运行与打包](docs/WINDOWS_SETUP_AND_RUN.md)
 - [Web 端开发与单服务器运行](docs/WEB_SETUP_AND_RUN.md)
 
 当前版本实现了单位权益单自动化的通用骨架：
@@ -44,18 +44,19 @@ playwright install chromium
 - `environment.windows-build.yml`：仅在 Windows 打包机安装；
 - `requirements/*.lock.txt`：各层精确的 Python 包版本。
 
-只部署 Web 工作台时使用服务器环境，并按平台迁移文档完成数据备份、前端构建和
-单实例启动：
+只部署 Web 工作台时，不要手工组合 Conda、pip、Playwright 和 npm 命令。按目标
+平台执行统一初始化脚本：
 
 ```bash
-conda env create -f environment.server.yml
-conda activate ehrm
-python -m playwright install chromium
-cd frontend
-npm ci
-npm run build
-cd ..
+# macOS
+./scripts/setup_server_macos.sh
+./scripts/run_server_macos.sh
 ```
+
+Windows 使用 `scripts\setup_server_windows.ps1` 和
+`scripts\run_server_windows.ps1`。脚本会直接解析 `ehrm` 环境的绝对路径，并将
+Playwright 浏览器固定在项目的 `runtime/playwright-browsers/`，避免 pyenv、系统
+Python 或其他项目的 Playwright 干扰。
 
 开发机也可以使用包含后端、前端和测试依赖的组合环境：
 
@@ -113,16 +114,16 @@ onefile 每次启动都解压几百 MB 浏览器文件。
 请在 Windows 构建机运行：
 
 ```powershell
+conda env create -f environment.yml
 conda env update -n ehrm -f environment.windows-build.yml
-conda activate ehrm
-python -c "import pyodbc; print(pyodbc.drivers())"
 powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.0
 ```
 
 构建机和最终运行电脑必须安装 64 位
 `Microsoft ODBC Driver 17 for SQL Server`；驱动列表中应出现同名条目。构建脚本
-会强制检查 ODBC 驱动，并在产物中检查 `pyodbc` 运行模块。需要额外验证数据库
-连接时，运行 `python scripts/check_windows_build_environment.py --check-database`。
+会自动解析 `ehrm` 环境的绝对 Python，强制检查 ODBC 驱动，并在产物中检查
+`pyodbc` 运行模块。需要额外验证数据库连接时，按 Windows 文档中的打包环境检查
+步骤执行。
 
 完整说明见 `packaging/windows/README.md`。
 
