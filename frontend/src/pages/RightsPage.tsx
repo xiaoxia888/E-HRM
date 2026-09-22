@@ -19,7 +19,7 @@ import {
 import {
   Alert, Button, Card, DatePicker, Empty, Form, Input, Modal,
   Progress, Radio, Select, Space, Statistic, Switch, Table, Tabs, Tag,
-  Typography, Upload, message,
+  Tooltip, Typography, Upload, message,
 } from 'antd'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -227,14 +227,23 @@ export function RightsPage() {
                 <Statistic title="涉及人员" value={preview.unique_person_count ?? preview.record_count} suffix="人" prefix={<UserOutlined />} />
                 <Statistic title={mode === 'batch' ? '打印组' : '单独权益单'} value={displayedPrintGroups.length} suffix="组" prefix={<FileExcelOutlined />} />
                 <Statistic title="需处理问题" value={issues.filter((item) => item.level !== 'info').length} suffix="项" prefix={<IssuesCloseOutlined />} valueStyle={blockingIssueCount ? { color: '#cf1322' } : undefined} />
+                <button
+                  type="button"
+                  className={`rights-validation-summary ${blockingIssueCount ? 'is-blocked' : 'is-ready'}`}
+                  onClick={() => blockingIssueCount && setActivePreviewTab('issues')}
+                  disabled={!blockingIssueCount}
+                >
+                  {blockingIssueCount ? <IssuesCloseOutlined /> : <CheckCircleOutlined />}
+                  <span>
+                    <strong>{blockingIssueCount ? `${blockingIssueCount} 项阻塞问题` : '数据校验通过'}</strong>
+                    <small>{blockingIssueCount ? '点击查看并处理' : '可以开始获取权益单'}</small>
+                  </span>
+                </button>
                 <div className="rights-source-name">
                   <Typography.Text type="secondary">数据来源</Typography.Text>
                   <Typography.Text strong>{preview.source === 'erp' ? 'ERP 申请解析' : preview.filename}</Typography.Text>
                 </div>
               </div>
-              {blockingIssueCount > 0 && (
-                <Alert type="warning" showIcon message={`有 ${blockingIssueCount} 项问题会阻止执行`} description="请在“问题信息”中查看具体申请、人员和原因。处理后重新获取申请信息或修正 Excel。" className="rights-inline-alert" />
-              )}
               <Tabs
                 activeKey={activePreviewTab} onChange={setActivePreviewTab}
                 items={[
@@ -846,13 +855,36 @@ function RightsTaskProgressModal({
   }
   const percent = Math.round(((task?.progress_current ?? 0) / Math.max(task?.progress_total ?? 1, 1)) * 100)
   const title = running ? '正在获取权益单' : succeeded ? '权益单获取完成' : failed ? '权益单获取失败' : '任务已停止'
+  const hasPdfPreview = succeeded && pdfs.length > 0
+  const selectedPdfPreviewUrl = selectedPdfUrl
+    ? `${selectedPdfUrl}${selectedPdfUrl.includes('?') ? '&' : '?'}preview=true&task=${encodeURIComponent(task?.task_id ?? '')}#page=1&view=FitH`
+    : ''
   return (
     <Modal
       open={open}
-      centered
-      className={`rights-result-modal ${succeeded && pdfs.length ? 'rights-result-modal--preview' : ''}`}
+      centered={!hasPdfPreview}
+      className={`rights-result-modal ${hasPdfPreview ? 'rights-result-modal--preview' : ''}`}
       wrapClassName="rights-result-modal-wrap"
-      width={succeeded && pdfs.length ? 'min(1100px, 94vw)' : 680}
+      width={hasPdfPreview ? 'min(1320px, calc(100vw - 40px))' : 680}
+      style={hasPdfPreview ? { top: 16, paddingBottom: 0 } : undefined}
+      styles={hasPdfPreview ? {
+        wrapper: { overflow: 'hidden' },
+        container: {
+          height: 'calc(100dvh - 32px)',
+          maxHeight: 'calc(100dvh - 32px)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        },
+        body: {
+          display: 'flex',
+          minHeight: 0,
+          flex: 1,
+          flexDirection: 'column',
+          overflow: 'hidden',
+        },
+        footer: { flex: '0 0 auto' },
+      } : undefined}
       title={null}
       closable={!running}
       maskClosable={false}
@@ -938,7 +970,7 @@ function RightsTaskProgressModal({
                   </div>
                   <Button icon={<DownloadOutlined />} href={selectedPdfUrl}>下载当前 PDF</Button>
                 </div>
-                {selectedPdfUrl && <iframe title="权益单 PDF 预览" src={`${selectedPdfUrl}?preview=true#view=FitH`} />}
+                {selectedPdfUrl && <iframe key={selectedPdfPreviewUrl} title="权益单 PDF 预览" src={selectedPdfPreviewUrl} />}
               </div>
             </div>
           ) : artifacts.length > 0 ? (
@@ -1077,10 +1109,15 @@ function PeopleTable({ preview, onShowIssues, onEditPerson }: { preview: RightsI
 
 function IssuesTable({ issues, onResolve }: { issues: RightsIssue[]; onResolve: (issue: RightsIssue) => void }) {
   if (!issues.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有发现问题" />
-  return <Table className="rights-issues-table" rowKey="issue_id" size="small" dataSource={issues} scroll={{ x: 1040, y: 'max(240px, calc(100vh - 700px))' }} pagination={{ defaultPageSize: 10, pageSizeOptions: [10, 15, 30, 50], showSizeChanger: true, showQuickJumper: true, showTotal: (total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 项` }} columns={[
+  const compactText = (value?: string) => (
+    <Tooltip title={value} placement="topLeft">
+      <Typography.Text className="rights-issue-cell">{value || '-'}</Typography.Text>
+    </Tooltip>
+  )
+  return <Table className="rights-issues-table" rowKey="issue_id" size="small" dataSource={issues} scroll={{ x: 1140, y: 'clamp(260px, calc(100dvh - 470px), 620px)' }} pagination={{ defaultPageSize: 10, pageSizeOptions: [10, 15, 30, 50], showSizeChanger: true, showQuickJumper: true, showTotal: (total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 项` }} columns={[
     { title: '级别', dataIndex: 'level_label', width: 90, render: (value, record) => <Tag color={issueColor(record.level)}>{value}</Tag> },
     { title: '申请编号', dataIndex: 'task_number', width: 190 }, { title: '人员', dataIndex: 'person_name', width: 100 },
-    { title: '问题', dataIndex: 'message', width: 190 }, { title: '详细说明', dataIndex: 'details' },
+    { title: '问题', dataIndex: 'message', width: 190, render: compactText }, { title: '详细说明', dataIndex: 'details', width: 460, render: compactText },
     {
       title: '操作', width: 110, fixed: 'right',
       render: (_, record) => {

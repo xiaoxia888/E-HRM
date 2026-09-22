@@ -7,6 +7,7 @@ channels:
 # 部署完整 Web 服务请优先使用 environment.server.yml。
 dependencies:
   - python=3.11.15
+  - pyodbc=5.3.0
   - pip
   - pip:
       - -r requirements/backend.lock.txt

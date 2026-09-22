@@ -8,6 +8,8 @@ channels:
 dependencies:
   - python=3.11.15
   - nodejs>=22.12,<23
+  # 显式交给 Conda 安装，避免 pip 阶段中断后环境缺少 SQL Server 连接模块。
+  - pyodbc=5.3.0
   - pip
   - pip:
       - -r requirements/backend.lock.txt

@@ -86,6 +86,7 @@ Node.js，不安装 PySide6 桌面组件和 Windows 打包工具。
 ```powershell
 conda env create -f environment.server.yml
 conda activate ehrm
+(Get-Command python).Source
 python --version
 node --version
 python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
@@ -96,7 +97,30 @@ python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通�
 ```powershell
 conda env update -n ehrm -f environment.server.yml --prune
 conda activate ehrm
+(Get-Command python).Source
+python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
 ```
+
+Python 路径应位于当前 Conda 安装目录的 `envs\ehrm` 下。如果出现
+`ModuleNotFoundError: No module named 'pyodbc'`，先在项目根目录修复旧环境：
+
+```powershell
+conda activate ehrm
+conda env update -n ehrm -f environment.server.yml --prune
+python -m pip show pyodbc
+python -c "import pyodbc; print('pyodbc 模块可用')"
+```
+
+仍未安装时执行：
+
+```powershell
+python -m pip install --only-binary=:all: pyodbc==5.3.0
+python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
+```
+
+成功导入 `pyodbc` 只代表 Python 模块可用；第 3 节中的
+`python -c "import pyodbc; print(pyodbc.drivers())"` 还必须列出 SQL Server ODBC
+驱动，实际 ERP 人员库连接才具备运行条件。
 
 安装浏览器并构建页面：
 
@@ -136,6 +160,9 @@ Compress-Archive -Path .\runtime -DestinationPath "$env:USERPROFILE\Desktop\ehrm
 SQLite 可能同时使用 `-wal`、`-shm` 文件，不能在程序运行时只复制
 `auth.sqlite3`。备份文件包含敏感数据，应通过受控方式传输。
 
+如果旧电脑改过 `config\settings.toml`、`config\models\` 或 `config\prompts\`，
+应另外保存副本。恢复时按配置项逐项合并到新版本，不要直接用旧文件覆盖新版。
+
 ### 7.2 新电脑恢复
 
 确认新电脑尚未运行 E-HRM，在新项目根目录执行：
@@ -156,6 +183,7 @@ Expand-Archive -Path C:\安全路径\ehrm-runtime-backup.zip -DestinationPath .
 
 任务调度状态在内存中，迁移后不会续跑未完成任务。浏览器会话也可能因设备变化
 失效，首次启动后应测试各账号连接并按需重新登录。
+旧电脑偏好中的下载目录可能在新电脑上不存在，恢复后应在系统设置中重新确认。
 
 如果只迁移账号和偏好，至少在程序停止状态下复制整个 `runtime\data\`，不要只
 复制 SQLite 主文件。

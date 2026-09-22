@@ -110,6 +110,7 @@ git log -1 --oneline
 ```bash
 conda env create -f environment.server.yml
 conda activate ehrm
+which python
 python --version
 node --version
 python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
@@ -120,7 +121,32 @@ python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通�
 ```bash
 conda env update -n ehrm -f environment.server.yml --prune
 conda activate ehrm
+which python
+python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
 ```
+
+`which python` 应指向当前 Conda 安装目录下的 `envs/ehrm/bin/python`。如果出现
+`ModuleNotFoundError: No module named 'pyodbc'`，说明当前激活的旧环境尚未完成依赖
+更新。先在项目根目录执行：
+
+```bash
+conda activate ehrm
+conda env update -n ehrm -f environment.server.yml --prune
+python -m pip show pyodbc
+python -c "import pyodbc; print('pyodbc 模块可用')"
+```
+
+仍未安装时，可单独补装后再次执行环境更新；使用 `python -m pip` 可以确保依赖
+进入当前 `ehrm` 环境，而不是系统 Python：
+
+```bash
+python -m pip install --only-binary=:all: pyodbc==5.3.0
+python -c "import fastapi, playwright, pyodbc; print('服务器环境检查通过')"
+```
+
+这里有两个独立检查：成功 `import pyodbc` 只代表 Python 模块已安装；第 3 节的
+`odbcinst -q -d` 还必须能看到 `ODBC Driver 17 for SQL Server`，实际 ERP 人员库
+连接才具备运行条件。
 
 安装 Playwright Chromium：
 
@@ -182,6 +208,10 @@ tar -czf ~/Desktop/ehrm-runtime-backup.tar.gz runtime
 将压缩包通过受控方式传到新服务器。压缩包包含账号和业务数据，不要上传到公共
 网盘或 Git。
 
+如果旧机器改过 `config/settings.toml`、`config/models/` 或 `config/prompts/`，应
+另外保存一份副本。恢复时按配置项逐项合并到新版本，不要直接用旧文件覆盖新版，
+否则可能丢失新增配置。
+
 ### 8.2 恢复到新服务器
 
 在新服务器项目根目录确认还没有运行 E-HRM，然后执行：
@@ -203,6 +233,8 @@ chmod -R go-rwx runtime
 
 任务调度状态保存在内存中，迁移后不会自动继续旧机器上未完成的任务。浏览器会话
 也可能因设备变化或网站策略失效，首次启动后应逐个测试账号连接并按需重新登录。
+旧机器偏好中的下载目录可能在新服务器上不存在，恢复后应在系统设置中重新确认
+保存位置。
 
 如果只迁移账号和偏好，至少在服务停止状态下复制整个 `runtime/data/`，不要只复制
 单个 SQLite 主文件。
