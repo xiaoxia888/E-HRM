@@ -58,6 +58,9 @@ class RightsStatementExcelLoader:
             if missing:
                 raise ExcelValidationError("Excel 缺少必要列：" + "、".join(missing))
             indexes = {header: headers.index(header) for header in REQUIRED_HEADERS}
+            for optional_header in ("打印组", "打印方式"):
+                if optional_header in headers:
+                    indexes[optional_header] = headers.index(optional_header)
 
             records: list[EmployeeRecord] = []
             errors: list[str] = []
@@ -289,6 +292,17 @@ class RightsStatementExcelLoader:
             raise ValueError("任务编号只能包含字母、数字、下划线和短横线")
         if start > end:
             raise ValueError("开始时间不能晚于结束时间")
+        print_group = (
+            self._optional_text(value("打印组"))
+            if "打印组" in indexes
+            else ""
+        )
+        print_mode = (
+            self._optional_text(value("打印方式"))
+            if "打印方式" in indexes
+            else ""
+        )
+        group_sequence_match = re.search(r"(\d+)", print_group)
         return EmployeeRecord(
             row_number=row_number,
             unit=unit,
@@ -299,6 +313,17 @@ class RightsStatementExcelLoader:
             start_month=start,
             end_month=end,
             task_number=task_number,
+            print_group_id=(f"{task_number}:{print_group}" if print_group else ""),
+            print_group_sequence=(
+                int(group_sequence_match.group(1))
+                if group_sequence_match
+                else 0
+            ),
+            resolved_print_mode={
+                "合并打印": "combined",
+                "每人单独一份": "individual",
+                "每人单独打印": "individual",
+            }.get(print_mode, ""),
         )
 
     @staticmethod
@@ -307,6 +332,10 @@ class RightsStatementExcelLoader:
         if not text:
             raise ValueError(f"{field}不能为空")
         return text
+
+    @staticmethod
+    def _optional_text(value: Any) -> str:
+        return "" if value is None else str(value).strip()
 
     @staticmethod
     def _identity(value: Any) -> str:

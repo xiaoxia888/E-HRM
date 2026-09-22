@@ -31,7 +31,7 @@ channel = ""
 
 # true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
 # browser 后端需要人工观察或接管登录时，应设置为 false。
-headless = false
+headless = true
 silent_session_check = false
 # 正式运行保持 0；仅在人工调试、观察每一步操作时临时调大。
 slow_mo_ms = 0

@@ -15,6 +15,10 @@ dependencies = [
   "playwright==1.61.0",
   "playwright-stealth==2.0.3",
   "pyodbc==5.3.0",
+  "fastapi==0.141.1",
+  "uvicorn==0.53.0",
+  "websockets==15.0.1",
+  "python-multipart==0.0.32",
 ]
 
 [project.optional-dependencies]
@@ -34,12 +38,14 @@ ehrm-nocobase-login-test = "ehrm.entrypoints.nocobase_login_cli:main"
 ehrm-employment-termination-e2e = "ehrm.entrypoints.employment_termination_e2e_cli:main"
 ehrm-person-information-collection-e2e = "ehrm.entrypoints.person_information_collection_e2e_cli:main"
 ehrm-employment-enrollment-e2e = "ehrm.entrypoints.employment_enrollment_e2e_cli:main"
+ehrm-web = "ehrm.entrypoints.web_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "ehrm.gui" = ["qml/*.qml", "assets/*.svg"]
+"ehrm.web" = ["static/**/*"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

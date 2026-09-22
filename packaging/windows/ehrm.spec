@@ -41,12 +41,15 @@ pw_datas, pw_binaries, pw_hiddenimports = collect_all("playwright")
 stealth_datas, stealth_binaries, stealth_hiddenimports = collect_all(
     "playwright_stealth"
 )
+websocket_datas, websocket_binaries, websocket_hiddenimports = collect_all(
+    "websockets"
+)
 # Add the browser explicitly so hidden directories are handled consistently.
 pw_datas = [
     item for item in pw_datas if ".local-browsers" not in Path(item[0]).parts
 ]
 
-datas = pw_datas + stealth_datas + [
+datas = pw_datas + stealth_datas + websocket_datas + [
     (str(PROJECT_ROOT / "config" / "settings.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "error_messages.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "models"), "config/models"),
@@ -72,7 +75,7 @@ datas = pw_datas + stealth_datas + [
     ),
 ]
 
-hiddenimports = pw_hiddenimports + stealth_hiddenimports + [
+hiddenimports = pw_hiddenimports + stealth_hiddenimports + websocket_hiddenimports + [
     "pyodbc",
     "PySide6.QtPdf",
     "PySide6.QtQml",
@@ -88,7 +91,7 @@ console_enabled = os.environ.get("EHRM_BUILD_CONSOLE") == "1"
 a = Analysis(
     [str(PROJECT_ROOT / "scripts" / "run_gui.py")],
     pathex=[str(SOURCE_ROOT)],
-    binaries=pw_binaries + stealth_binaries,
+    binaries=pw_binaries + stealth_binaries + websocket_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

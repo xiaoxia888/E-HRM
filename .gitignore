@@ -7,6 +7,8 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+frontend/node_modules/
+frontend/coverage/
 
 # Browser/network captures may contain credentials, tokens and business data.
 *.har

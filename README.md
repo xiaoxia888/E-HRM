@@ -4,6 +4,7 @@
 
 - [macOS 环境初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
 - [Windows 环境初始化与运行](docs/WINDOWS_SETUP_AND_RUN.md)
+- [Web 端开发与单服务器运行](docs/WEB_SETUP_AND_RUN.md)
 
 当前版本实现了单位权益单自动化的通用骨架：
 

@@ -4,6 +4,7 @@ from openpyxl import load_workbook
 
 from ehrm.gui.template_service import RightsStatementTemplateService
 from ehrm.modules.rights_statement.excel_models import EmployeeRecord
+from ehrm.modules.rights_statement.excel_loader import RightsStatementExcelLoader
 
 
 def test_template_contains_required_columns_and_insurance_dropdown(
@@ -86,6 +87,11 @@ def test_erp_records_can_be_written_as_execution_source(tmp_path: Path) -> None:
         ]
     finally:
         workbook.close()
+
+    reloaded = RightsStatementExcelLoader().load(destination)
+    assert reloaded[0].print_group_id == "RLSQ20260818-0004:组1"
+    assert reloaded[0].print_group_sequence == 1
+    assert reloaded[0].resolved_print_mode == "combined"
 
 
 def test_edited_excel_records_use_the_original_eight_column_structure(
