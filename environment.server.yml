@@ -1,0 +1,14 @@
+name: ehrm
+
+channels:
+  - conda-forge
+
+# Web 服务器环境：Python 后端、自动化依赖和前端构建所需的 Node.js。
+# 不安装 PySide6 桌面 GUI，也不安装测试或 Windows 打包依赖。
+dependencies:
+  - python=3.11.15
+  - nodejs>=22.12,<23
+  - pip
+  - pip:
+      - -r requirements/backend.lock.txt
+      - -e .

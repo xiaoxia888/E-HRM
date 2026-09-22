@@ -4,6 +4,7 @@ import {
   CloudDownloadOutlined,
   CloseCircleOutlined,
   DownloadOutlined,
+  EditOutlined,
   FileExcelOutlined,
   FilePdfOutlined,
   FileSearchOutlined,
@@ -16,17 +17,19 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import {
-  Alert, Button, Card, DatePicker, Empty, Form, Input, InputNumber, Modal,
+  Alert, Button, Card, DatePicker, Empty, Form, Input, Modal,
   Progress, Radio, Select, Space, Statistic, Switch, Table, Tabs, Tag,
   Typography, Upload, message,
 } from 'antd'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
-import type { ErpApplicationPreview, RightsImportPreview, RightsIssue, RightsPrintGroup, TaskRecord } from '../types'
+import type { ErpApplicationPreview, RightsImportPreview, RightsIssue, RightsPrintGroup, RightsRecordDetail, TaskRecord } from '../types'
+import { projectPrintGroups } from '../utils/rights'
 
 const TRANSACTION_TYPES = ['社保咨询', '工资咨询', '证实咨询', '福利咨询', '合同咨询', '档案咨询', '项目社保申请挂靠', '其他咨询']
 const STATUS_OPTIONS = [
@@ -57,6 +60,9 @@ export function RightsPage() {
   const [rightsTaskId, setRightsTaskId] = useState<string | null>(null)
   const [rightsProgressOpen, setRightsProgressOpen] = useState(false)
   const [activePreviewTab, setActivePreviewTab] = useState('people')
+  const [resolutionIssue, setResolutionIssue] = useState<RightsIssue | null>(null)
+  const [editingGroup, setEditingGroup] = useState<RightsPrintGroup | null>(null)
+  const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null)
   const handledTask = useRef<string | null>(null)
 
   const accounts = useQuery({ queryKey: ['accounts'], queryFn: api.accounts })
@@ -127,8 +133,9 @@ export function RightsPage() {
     mutationFn: api.importRights,
     onSuccess: (result) => {
       setPreview(result)
-      setActivePreviewTab('people')
-      message.success(`已读取 ${result.record_count} 人，预计生成 ${result.group_count} 个打印批次`)
+      setUploadToErp(false)
+      setActivePreviewTab(result.print_groups?.length ? 'groups' : 'people')
+      message.success(`已读取 ${result.record_count} 人，共 ${result.group_count} 个打印组`)
     },
     onError: (error) => message.error(errorMessage(error)),
   })
@@ -164,6 +171,15 @@ export function RightsPage() {
   const issues = preview?.issues ?? []
   const blockingIssueCount = issues.filter((item) => ['error', 'pending'].includes(item.level)).length
   const canExecute = Boolean(preview && preview.record_count > 0 && preview.executable !== false && blockingIssueCount === 0)
+  const estimatedPdfCount = useMemo(() => {
+    if (!preview) return 0
+    if (mode === 'individual') return preview.record_count
+    if (preview.print_groups?.length) return preview.print_groups.length
+    return preview.estimated_pdf_count ?? preview.group_count
+  }, [preview, mode])
+  const displayedPrintGroups = useMemo(() => {
+    return projectPrintGroups(preview?.print_groups ?? [], mode)
+  }, [preview, mode])
 
   const startExtraction = (values: ErpQueryValues) => {
     extractor.mutate({
@@ -209,7 +225,7 @@ export function RightsPage() {
             <>
               <div className="rights-summary-row">
                 <Statistic title="涉及人员" value={preview.unique_person_count ?? preview.record_count} suffix="人" prefix={<UserOutlined />} />
-                <Statistic title="打印组" value={preview.group_count} suffix="组" prefix={<FileExcelOutlined />} />
+                <Statistic title={mode === 'batch' ? '打印组' : '单独权益单'} value={displayedPrintGroups.length} suffix="组" prefix={<FileExcelOutlined />} />
                 <Statistic title="需处理问题" value={issues.filter((item) => item.level !== 'info').length} suffix="项" prefix={<IssuesCloseOutlined />} valueStyle={blockingIssueCount ? { color: '#cf1322' } : undefined} />
                 <div className="rights-source-name">
                   <Typography.Text type="secondary">数据来源</Typography.Text>
@@ -222,9 +238,9 @@ export function RightsPage() {
               <Tabs
                 activeKey={activePreviewTab} onChange={setActivePreviewTab}
                 items={[
-                  ...(preview.print_groups?.length ? [{ key: 'groups', label: `打印组（${preview.print_groups.length}）`, children: <PrintGroupsTable groups={preview.print_groups} onShowIssues={() => setActivePreviewTab('issues')} /> }] : []),
-                  { key: 'people', label: `人员明细（${preview.record_count}）`, children: <PeopleTable preview={preview} onShowIssues={() => setActivePreviewTab('issues')} /> },
-                  { key: 'issues', label: `问题信息（${issues.length}）`, children: <IssuesTable issues={issues} /> },
+                  ...(preview.print_groups?.length ? [{ key: 'groups', label: `${mode === 'batch' ? '打印组' : '单独权益单'}（${displayedPrintGroups.length}）`, children: <PrintGroupsTable groups={displayedPrintGroups} source={preview.source} individualView={mode === 'individual'} onShowIssues={() => setActivePreviewTab('issues')} onEditGroup={setEditingGroup} onEditPerson={setEditingRowNumber} /> }] : []),
+                  { key: 'people', label: `人员明细（${preview.record_count}）`, children: <PeopleTable preview={preview} onShowIssues={() => setActivePreviewTab('issues')} onEditPerson={setEditingRowNumber} /> },
+                  { key: 'issues', label: `问题信息（${issues.length}）`, children: <IssuesTable issues={issues} onResolve={setResolutionIssue} /> },
                   ...(preview.applications?.length ? [{ key: 'applications', label: `ERP 申请（${preview.applications.length}）`, children: <ApplicationsTable applications={preview.applications} /> }] : []),
                 ]}
               />
@@ -239,17 +255,20 @@ export function RightsPage() {
             </Form.Item>
             <Form.Item label="导出方式">
               <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)} className="rights-export-modes">
-                <Radio.Button value="batch">相同条件合并</Radio.Button>
+                <Radio.Button value="batch">按打印组</Radio.Button>
                 <Radio.Button value="individual">每人单独一份</Radio.Button>
               </Radio.Group>
-            </Form.Item>
-            <Form.Item label="单批最多人数">
-              <InputNumber min={1} value={batchSize} onChange={(value) => setBatchSize(value ?? 1)} style={{ width: '100%' }} />
+              {preview && (
+                <div className="rights-pdf-estimate">
+                  预计生成 <strong>{estimatedPdfCount}</strong> 份权益单
+                  {mode === 'batch' && `（${preview.group_count} 个打印组）`}
+                </div>
+              )}
             </Form.Item>
             <Form.Item label="下载完成后上传 ERP">
               <Space align="start">
-                <Switch checked={uploadToErp} onChange={setUploadToErp} />
-                <Typography.Text type="secondary">{uploadToErp ? '下载成功后按任务编号匹配申请并上传 PDF' : '仅生成并保留权益单文件'}</Typography.Text>
+                <Switch checked={uploadToErp} disabled={preview?.erp_upload_available === false} onChange={setUploadToErp} />
+                <Typography.Text type="secondary">{preview?.erp_upload_available === false ? '存在未填写 ERP申请编号的打印组，不能自动上传 ERP' : uploadToErp ? '下载成功后按 ERP申请编号匹配并上传 PDF' : '仅生成并保留权益单文件'}</Typography.Text>
               </Space>
             </Form.Item>
             {!rightsAccounts.length && <Alert type="warning" showIcon message="尚未配置可用的智慧人社账号" />}
@@ -272,6 +291,38 @@ export function RightsPage() {
           </div>
         </Form>
       </Modal>
+
+      <IssueResolutionModal
+        open={resolutionIssue !== null}
+        issue={resolutionIssue}
+        importId={preview?.import_id ?? ''}
+        onClose={() => setResolutionIssue(null)}
+        onResolved={(updated) => {
+          setPreview(updated)
+          setResolutionIssue(null)
+          setActivePreviewTab(updated.issues?.length ? 'issues' : updated.print_groups?.length ? 'groups' : 'people')
+        }}
+      />
+      <PrintGroupEditModal
+        open={editingGroup !== null}
+        group={editingGroup}
+        importId={preview?.import_id ?? ''}
+        onClose={() => setEditingGroup(null)}
+        onSaved={(updated) => {
+          setPreview(updated)
+          setEditingGroup(null)
+        }}
+      />
+      <RecordEditModal
+        open={editingRowNumber !== null}
+        rowNumber={editingRowNumber}
+        importId={preview?.import_id ?? ''}
+        onClose={() => setEditingRowNumber(null)}
+        onSaved={(updated) => {
+          setPreview(updated)
+          setEditingRowNumber(null)
+        }}
+      />
 
       <ExtractionProgressModal
         open={progressModalOpen}
@@ -300,6 +351,372 @@ export function RightsPage() {
         }}
       />
     </div>
+  )
+}
+
+type ManualRecordValues = Omit<RightsRecordDetail, 'row_number' | 'start_month' | 'end_month'> & {
+  start_month?: Dayjs
+  end_month?: Dayjs
+}
+
+function monthText(value?: Dayjs | string | null): string {
+  if (!value) return ''
+  return typeof value === 'string' ? value : value.format('YYYY-MM')
+}
+
+function recordToFormValues(record: RightsRecordDetail): ManualRecordValues {
+  return {
+    ...record,
+    start_month: record.start_month ? dayjs(record.start_month, 'YYYY-MM') : undefined,
+    end_month: record.end_month ? dayjs(record.end_month, 'YYYY-MM') : undefined,
+  }
+}
+
+function IssueResolutionModal({
+  open,
+  issue,
+  importId,
+  onClose,
+  onResolved,
+}: {
+  open: boolean
+  issue: RightsIssue | null
+  importId: string
+  onClose: () => void
+  onResolved: (preview: RightsImportPreview) => void
+}) {
+  const [form] = Form.useForm<ManualRecordValues>()
+  const candidates = issue?.candidates ?? []
+  const hasCandidates = issue?.code === 'ERP_PERSON_AMBIGUOUS' && candidates.length > 0
+  const isPrintGroupIssue = issue?.code === 'AI_PRINT_MODE_REQUIRED'
+  const isGroupConditionMissing = ['PRINT_GROUP_CONDITION_MISSING', 'AI_DATE_MISSING'].includes(issue?.code ?? '') && Boolean(issue?.group_id)
+  const isGroupConditionConflict = issue?.code === 'PRINT_GROUP_CONDITION_CONFLICT' && Boolean(issue.group_id)
+  const isGroupConditionIssue = isGroupConditionMissing || isGroupConditionConflict
+  const [mode, setMode] = useState<'candidate' | 'manual'>('manual')
+  const [groupMode, setGroupMode] = useState<'batch' | 'individual'>('batch')
+  const [candidateId, setCandidateId] = useState('')
+  const detail = useQuery({
+    queryKey: ['rights-record', importId, issue?.row_number],
+    queryFn: () => api.rightsRecord(importId, issue?.row_number as number),
+    enabled: open && !isPrintGroupIssue && Boolean(importId) && Boolean(issue && issue.row_number > 0),
+    retry: false,
+  })
+  useEffect(() => {
+    if (!open || !issue) return
+    setMode(hasCandidates ? 'candidate' : 'manual')
+    setGroupMode('batch')
+    setCandidateId(candidates[0]?.candidate_id ?? '')
+    form.resetFields()
+    form.setFieldsValue({
+      task_number: issue.task_number === '-' ? '' : issue.task_number,
+      insurance_type: '养老',
+    } as Partial<ManualRecordValues>)
+  }, [open, issue?.issue_id])
+  useEffect(() => {
+    if (detail.data) form.setFieldsValue(recordToFormValues(detail.data))
+  }, [detail.data, form])
+
+  const resolver = useMutation({
+    mutationFn: async (values?: ManualRecordValues) => {
+      if (!issue) throw new Error('需要处理的问题已经失效')
+      if (isPrintGroupIssue) {
+        return api.resolveRightsPrintGroup(importId, issue.task_number, issue.group_id, groupMode)
+      }
+      if (isGroupConditionIssue) {
+        if (!values) throw new Error('请填写完整的打印组条件')
+        return api.resolveRightsPrintGroupConditions(importId, {
+          task_number: issue.task_number,
+          group_id: issue.group_id,
+          insurance_type: values.insurance_type,
+          start_month: monthText(values.start_month),
+          end_month: monthText(values.end_month),
+          overwrite: isGroupConditionConflict,
+        })
+      }
+      if (mode === 'candidate') {
+        if (!candidateId) throw new Error('请选择一名 ERP 候选人员')
+        return api.selectRightsCandidate(importId, issue.row_number, candidateId)
+      }
+      if (!values) throw new Error('请填写完整的人员信息')
+      const payload = {
+        ...values,
+        start_month: monthText(values.start_month),
+        end_month: monthText(values.end_month),
+        task_number: issue.task_number === '-' ? values.task_number : issue.task_number,
+      }
+      return issue.row_number > 0
+        ? api.updateRightsRecord(importId, issue.row_number, payload)
+        : api.addRightsRecord(importId, payload)
+    },
+    onSuccess: (updated) => {
+      message.success(
+        isPrintGroupIssue
+          ? '打印组已确认并重新校验'
+          : isGroupConditionConflict
+            ? '已将险种和起止月份统一应用到整个打印组'
+            : isGroupConditionMissing
+              ? '已补充组内空缺条件并重新校验'
+            : mode === 'candidate'
+              ? '已选择 ERP 人员并重新校验'
+              : '人工录入已保存并重新校验',
+      )
+      onResolved(updated)
+    },
+    onError: (error) => message.error(errorMessage(error)),
+  })
+
+  const canHandle = Boolean(
+    issue
+      && (issue.row_number > 0 || issue.code === 'AI_NO_PERSON_EXTRACTED'),
+  )
+  return (
+    <Modal
+      title={isPrintGroupIssue ? '确认打印组方式' : isGroupConditionConflict ? '统一打印组条件' : isGroupConditionMissing ? '补充打印组条件' : hasCandidates && mode === 'candidate' ? '选择正确的 ERP 人员' : issue?.row_number ? '人工处理人员信息' : '人工新增申请人员'}
+      open={open}
+      width={760}
+      destroyOnHidden
+      maskClosable={false}
+      onCancel={onClose}
+      okText={isPrintGroupIssue ? '确认打印组' : isGroupConditionConflict ? '统一整组条件' : mode === 'candidate' ? '使用选中人员' : '保存人工处理'}
+      cancelText="取消"
+      confirmLoading={resolver.isPending}
+      okButtonProps={{ disabled: !canHandle || (!isPrintGroupIssue && detail.isLoading) || (mode === 'candidate' && !candidateId) }}
+      onOk={() => isPrintGroupIssue ? resolver.mutate(undefined) : mode === 'candidate' ? resolver.mutate(undefined) : form.submit()}
+    >
+      {issue && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`${issue.task_number} · ${issue.person_name}`}
+          description={issue.details}
+          className="rights-resolution-alert"
+        />
+      )}
+      {!canHandle ? (
+        <Alert
+          type="info"
+          showIcon
+          message="该问题不能通过修改人员资料解决"
+          description="请根据错误信息修复系统服务后重新获取申请，或将不支持的业务转为线下办理。"
+        />
+      ) : isPrintGroupIssue ? (
+        <div className="rights-group-resolution">
+          <Typography.Paragraph>当前已将申请中的人员暂时放在同一个打印组，请确认最终人员分组：</Typography.Paragraph>
+          <Radio.Group value={groupMode} onChange={(event) => setGroupMode(event.target.value)} optionType="button" buttonStyle="solid">
+            <Radio.Button value="batch">确认按当前打印组</Radio.Button>
+            <Radio.Button value="individual">每人单独一份</Radio.Button>
+          </Radio.Group>
+        </div>
+      ) : hasCandidates && mode === 'candidate' ? (
+        <>
+          <Typography.Paragraph type="secondary">ERP 查询到多名同名人员，请根据员工编号、身份证尾号、单位和部门选择正确人员。</Typography.Paragraph>
+          <Radio.Group value={candidateId} onChange={(event) => setCandidateId(event.target.value)} className="rights-candidate-list">
+            {candidates.map((candidate) => (
+              <Radio key={candidate.candidate_id} value={candidate.candidate_id} className="rights-candidate-option">
+                <div className="rights-candidate-option__title">
+                  <Typography.Text strong>{candidate.name || issue?.person_name}</Typography.Text>
+                  {candidate.status && <Tag color={candidate.status.includes('在职') ? 'success' : 'default'}>{candidate.status}</Tag>}
+                </div>
+                <Typography.Text type="secondary">
+                  员工编号：{candidate.employee_code || '未维护'}　身份证：{candidate.masked_identity}
+                </Typography.Text>
+                <Typography.Text type="secondary">
+                  {candidate.company || '单位未维护'} · {candidate.department || '部门未维护'}
+                </Typography.Text>
+              </Radio>
+            ))}
+          </Radio.Group>
+          <Button type="link" className="rights-manual-switch" onClick={() => setMode('manual')}>候选人员均不正确，改为人工录入</Button>
+        </>
+      ) : isGroupConditionIssue ? (
+        <Form form={form} layout="vertical" onFinish={(values) => resolver.mutate(values)} className="rights-manual-form">
+          {(['task_number', 'name', 'identity_number', 'unit', 'department'] as const).map((field) => (
+            <Form.Item key={field} name={field} hidden><Input /></Form.Item>
+          ))}
+          <Alert
+            type={isGroupConditionConflict ? 'warning' : 'info'}
+            showIcon
+            message={isGroupConditionConflict ? '本次保存会统一修改整个打印组' : '本次只补充组内空缺字段'}
+            description={isGroupConditionConflict ? '险种、开始月份和结束月份将覆盖该申请编号与打印组下的全部人员。' : '组内已有值不会被覆盖；如果补充值与已有值不同，系统会报告打印组条件不一致，再由你确认是否统一整组。'}
+            style={{ marginBottom: 16 }}
+          />
+          <div className="rights-manual-form__grid">
+            <Form.Item name="insurance_type" label="险种" rules={[{ required: true, message: '请选择险种' }]}>
+              <Select options={['养老', '工伤', '失业'].map((value) => ({ value, label: value }))} />
+            </Form.Item>
+            <div />
+            <Form.Item name="start_month" label="开始月份" rules={[{ required: true, message: '请选择开始月份' }]}><DatePicker picker="month" format="YYYY-MM" placeholder="选择开始月份" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="end_month" label="结束月份" rules={[{ required: true, message: '请选择结束月份' }]}><DatePicker picker="month" format="YYYY-MM" placeholder="选择结束月份" style={{ width: '100%' }} /></Form.Item>
+          </div>
+          {detail.isLoading && <Typography.Text type="secondary">正在读取打印组条件…</Typography.Text>}
+        </Form>
+      ) : (
+        <Form form={form} layout="vertical" onFinish={(values) => resolver.mutate(values)} className="rights-manual-form">
+          <Form.Item name="task_number" hidden><Input /></Form.Item>
+          <div className="rights-manual-form__grid">
+            <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}><Input placeholder="请输入人员姓名" /></Form.Item>
+            <Form.Item name="identity_number" label="身份证号" rules={[{ required: true, message: '请输入身份证号' }]}><Input maxLength={18} placeholder="请输入15位或18位身份证号" /></Form.Item>
+            <Form.Item name="unit" label="单位" rules={[{ required: true, message: '请输入单位' }]}><Input placeholder="请输入参保单位" /></Form.Item>
+            <Form.Item name="department" label="部门" rules={[{ required: true, message: '请输入部门' }]}><Input placeholder="请输入所属部门" /></Form.Item>
+            <Form.Item name="insurance_type" label="险种" rules={[{ required: true, message: '请选择险种' }]}>
+              <Select options={['养老', '工伤', '失业'].map((value) => ({ value, label: value }))} />
+            </Form.Item>
+            <div />
+            <Form.Item name="start_month" label="开始月份" rules={[{ required: true, message: '请选择开始月份' }]}><DatePicker picker="month" format="YYYY-MM" placeholder="选择开始月份" style={{ width: '100%' }} /></Form.Item>
+            <Form.Item name="end_month" label="结束月份" rules={[{ required: true, message: '请选择结束月份' }]}><DatePicker picker="month" format="YYYY-MM" placeholder="选择结束月份" style={{ width: '100%' }} /></Form.Item>
+          </div>
+          {hasCandidates && <Button type="link" className="rights-manual-switch" onClick={() => setMode('candidate')}>返回候选人员选择</Button>}
+          {detail.isLoading && <Typography.Text type="secondary">正在读取原始人员信息…</Typography.Text>}
+        </Form>
+      )}
+    </Modal>
+  )
+}
+
+interface GroupConditionFormValues {
+  insurance_type: string
+  start_month?: Dayjs
+  end_month?: Dayjs
+}
+
+function PrintGroupEditModal({
+  open,
+  group,
+  importId,
+  onClose,
+  onSaved,
+}: {
+  open: boolean
+  group: RightsPrintGroup | null
+  importId: string
+  onClose: () => void
+  onSaved: (preview: RightsImportPreview) => void
+}) {
+  const [form] = Form.useForm<GroupConditionFormValues>()
+  useEffect(() => {
+    if (!open || !group) return
+    form.setFieldsValue({
+      insurance_type: group.insurance_type,
+      start_month: group.start_month ? dayjs(group.start_month, 'YYYY-MM') : undefined,
+      end_month: group.end_month ? dayjs(group.end_month, 'YYYY-MM') : undefined,
+    })
+  }, [open, group, form])
+  const saver = useMutation({
+    mutationFn: (values: GroupConditionFormValues) => {
+      if (!group) throw new Error('打印组已经失效')
+      return api.resolveRightsPrintGroupConditions(importId, {
+        task_number: group.task_number,
+        group_id: group.group_id,
+        insurance_type: values.insurance_type,
+        start_month: monthText(values.start_month),
+        end_month: monthText(values.end_month),
+        overwrite: true,
+      })
+    },
+    onSuccess: (updated) => {
+      message.success('打印组险种和月份已更新')
+      onSaved(updated)
+    },
+    onError: (error) => message.error(errorMessage(error)),
+  })
+  return (
+    <Modal
+      title="编辑打印组条件"
+      open={open}
+      width={680}
+      maskClosable={false}
+      destroyOnHidden
+      onCancel={onClose}
+      onOk={() => form.submit()}
+      okText="保存整组信息"
+      cancelText="取消"
+      confirmLoading={saver.isPending}
+    >
+      {group && <Alert type="info" showIcon message={`${group.task_number} · ${group.group_label}`} description={`保存后会同步修改该打印组内 ${group.people_count} 名人员的险种和月份。`} style={{ marginBottom: 18 }} />}
+      <Form form={form} layout="vertical" onFinish={(values) => saver.mutate(values)}>
+        <Form.Item name="insurance_type" label="险种" rules={[{ required: true, message: '请选择险种' }]}>
+          <Select options={['养老', '工伤', '失业'].map((value) => ({ value, label: value }))} />
+        </Form.Item>
+        <div className="rights-manual-form__grid">
+          <Form.Item name="start_month" label="开始月份" rules={[{ required: true, message: '请选择开始月份' }]}><DatePicker picker="month" format="YYYY-MM" style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="end_month" label="结束月份" rules={[{ required: true, message: '请选择结束月份' }]}><DatePicker picker="month" format="YYYY-MM" style={{ width: '100%' }} /></Form.Item>
+        </div>
+      </Form>
+    </Modal>
+  )
+}
+
+function RecordEditModal({
+  open,
+  rowNumber,
+  importId,
+  onClose,
+  onSaved,
+}: {
+  open: boolean
+  rowNumber: number | null
+  importId: string
+  onClose: () => void
+  onSaved: (preview: RightsImportPreview) => void
+}) {
+  const [form] = Form.useForm<ManualRecordValues>()
+  const detail = useQuery({
+    queryKey: ['rights-record-edit', importId, rowNumber],
+    queryFn: () => api.rightsRecord(importId, rowNumber as number),
+    enabled: open && rowNumber !== null,
+    retry: false,
+  })
+  useEffect(() => {
+    if (!open) return
+    form.resetFields()
+  }, [open, rowNumber, form])
+  useEffect(() => {
+    if (detail.data) form.setFieldsValue(recordToFormValues(detail.data))
+  }, [detail.data, form])
+  const saver = useMutation({
+    mutationFn: (values: ManualRecordValues) => {
+      if (rowNumber === null) throw new Error('人员记录已经失效')
+      return api.updateRightsRecord(importId, rowNumber, {
+        ...values,
+        start_month: monthText(values.start_month),
+        end_month: monthText(values.end_month),
+      })
+    },
+    onSuccess: (updated) => {
+      message.success('人员信息已更新并重新校验打印组')
+      onSaved(updated)
+    },
+    onError: (error) => message.error(errorMessage(error)),
+  })
+  return (
+    <Modal
+      title="编辑人员信息"
+      open={open}
+      width={820}
+      maskClosable={false}
+      destroyOnHidden
+      onCancel={onClose}
+      onOk={() => form.submit()}
+      okText="保存并校验"
+      cancelText="取消"
+      confirmLoading={saver.isPending}
+      okButtonProps={{ disabled: detail.isLoading || detail.isError }}
+    >
+      <Alert type="info" showIcon message="修改后会重新计算打印组" description="人员移入已有打印组时，系统会校验险种和起止月份是否一致；不一致会出现在问题信息中。" style={{ marginBottom: 18 }} />
+      <Form form={form} layout="vertical" onFinish={(values) => saver.mutate(values)} className="rights-manual-form">
+        <Form.Item name="task_number" hidden><Input /></Form.Item>
+        <div className="rights-manual-form__grid">
+          <Form.Item name="print_group" label="打印组" rules={[{ required: true, message: '请输入打印组' }]}><Input placeholder="例如：组1" /></Form.Item>
+          <Form.Item name="insurance_type" label="险种" rules={[{ required: true, message: '请选择险种' }]}><Select options={['养老', '工伤', '失业'].map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="unit" label="单位" rules={[{ required: true, message: '请输入单位' }]}><Input /></Form.Item>
+          <Form.Item name="department" label="部门" rules={[{ required: true, message: '请输入部门' }]}><Input /></Form.Item>
+          <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}><Input /></Form.Item>
+          <Form.Item name="identity_number" label="身份证号" rules={[{ required: true, message: '请输入身份证号' }]}><Input maxLength={18} /></Form.Item>
+          <Form.Item name="start_month" label="开始月份" rules={[{ required: true, message: '请选择开始月份' }]}><DatePicker picker="month" format="YYYY-MM" style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="end_month" label="结束月份" rules={[{ required: true, message: '请选择结束月份' }]}><DatePicker picker="month" format="YYYY-MM" style={{ width: '100%' }} /></Form.Item>
+        </div>
+      </Form>
+    </Modal>
   )
 }
 
@@ -415,6 +832,7 @@ function RightsTaskProgressModal({
   const failed = status === 'failed'
   const result = taskResult(task?.result)
   const artifacts = resultArtifacts(task?.result)
+  const archive = resultArchive(task?.result)
   const pdfs = artifacts.filter((item) => item.name.toLowerCase().endsWith('.pdf'))
   const [selectedPdfUrl, setSelectedPdfUrl] = useState('')
   useEffect(() => {
@@ -431,6 +849,9 @@ function RightsTaskProgressModal({
   return (
     <Modal
       open={open}
+      centered
+      className={`rights-result-modal ${succeeded && pdfs.length ? 'rights-result-modal--preview' : ''}`}
+      wrapClassName="rights-result-modal-wrap"
       width={succeeded && pdfs.length ? 'min(1100px, 94vw)' : 680}
       title={null}
       closable={!running}
@@ -471,8 +892,13 @@ function RightsTaskProgressModal({
             <CheckCircleOutlined />
             <div>
               <Typography.Text strong>成功 {result.succeeded} 项，失败 {result.failed} 项</Typography.Text>
-              <Typography.Text type="secondary">{result.erp_message || result.erp_warning || (pdfs.length ? '可直接预览或下载生成的权益单' : '本次任务没有生成可预览的 PDF')}</Typography.Text>
+              <Typography.Text type="secondary">{result.erp_message || result.erp_warning || (pdfs.length ? '可预览单份 PDF，完整结果请下载压缩包' : '本次任务没有生成可预览的 PDF')}</Typography.Text>
             </div>
+            {archive && (
+              <Button type="primary" icon={<DownloadOutlined />} href={archive.url}>
+                下载全部结果（ZIP）
+              </Button>
+            )}
           </div>
           {pdfs.length > 0 ? (
             <div className="rights-pdf-preview">
@@ -510,9 +936,9 @@ function RightsTaskProgressModal({
                       suffixIcon={<FilePdfOutlined />}
                     />
                   </div>
-                  <Button icon={<DownloadOutlined />} href={selectedPdfUrl}>下载</Button>
+                  <Button icon={<DownloadOutlined />} href={selectedPdfUrl}>下载当前 PDF</Button>
                 </div>
-                {selectedPdfUrl && <iframe title="权益单 PDF 预览" src={`${selectedPdfUrl}?preview=true#toolbar=0&navpanes=0&view=FitH`} />}
+                {selectedPdfUrl && <iframe title="权益单 PDF 预览" src={`${selectedPdfUrl}?preview=true#view=FitH`} />}
               </div>
             </div>
           ) : artifacts.length > 0 ? (
@@ -538,6 +964,15 @@ function resultArtifacts(value: unknown): ResultArtifact[] {
   )
 }
 
+function resultArchive(value: unknown): ResultArtifact | null {
+  if (!value || typeof value !== 'object' || !('archive' in value)) return null
+  const archive = (value as { archive?: unknown }).archive
+  if (!archive || typeof archive !== 'object') return null
+  if (typeof (archive as { name?: unknown }).name !== 'string') return null
+  if (typeof (archive as { url?: unknown }).url !== 'string') return null
+  return archive as ResultArtifact
+}
+
 function taskResult(value: unknown): { succeeded: number; failed: number; erp_message?: string; erp_warning?: string } {
   if (!value || typeof value !== 'object') return { succeeded: 0, failed: 0 }
   const result = value as Record<string, unknown>
@@ -549,10 +984,24 @@ function taskResult(value: unknown): { succeeded: number; failed: number; erp_me
   }
 }
 
-function PrintGroupsTable({ groups, onShowIssues }: { groups: RightsPrintGroup[]; onShowIssues: () => void }) {
+function PrintGroupsTable({
+  groups,
+  source,
+  individualView,
+  onShowIssues,
+  onEditGroup,
+  onEditPerson,
+}: {
+  groups: Array<RightsPrintGroup & { view_key?: string }>
+  source?: 'excel' | 'erp'
+  individualView: boolean
+  onShowIssues: () => void
+  onEditGroup: (group: RightsPrintGroup) => void
+  onEditPerson: (rowNumber: number) => void
+}) {
   return (
     <Table
-      rowKey={(record) => `${record.task_number}:${record.group_id}`}
+      rowKey={(record) => record.view_key ?? `${record.task_number}:${record.group_id}`}
       size="small"
       dataSource={groups}
       scroll={{ x: 1050, y: 440 }}
@@ -569,6 +1018,7 @@ function PrintGroupsTable({ groups, onShowIssues }: { groups: RightsPrintGroup[]
               { title: '身份证号', dataIndex: 'identity_number', width: 210 },
               { title: '单位', dataIndex: 'unit', ellipsis: true },
               { title: '部门', dataIndex: 'department', width: 180, ellipsis: true },
+              ...(source === 'erp' ? [{ title: '操作', width: 88, render: (_: unknown, person: RightsPrintGroup['people'][number]) => <Button type="link" size="small" icon={<EditOutlined />} onClick={() => onEditPerson(person.row_number)}>编辑</Button> }] : []),
             ]}
           />
         ),
@@ -582,7 +1032,9 @@ function PrintGroupsTable({ groups, onShowIssues }: { groups: RightsPrintGroup[]
               ? <Tag color="warning" onClick={onShowIssues}>待复核 {record.issue_count || ''}</Tag>
               : <Tag color="success">正常</Tag>,
         },
-        { title: '申请编号', dataIndex: 'task_number', width: 190 },
+        ...(source === 'erp' || groups.some((group) => group.task_number)
+          ? [{ title: 'ERP申请编号', dataIndex: 'task_number', width: 190 }]
+          : []),
         { title: '打印组', dataIndex: 'group_label', width: 110 },
         {
           title: '组内人员', width: 230,
@@ -596,28 +1048,50 @@ function PrintGroupsTable({ groups, onShowIssues }: { groups: RightsPrintGroup[]
         { title: '险种', dataIndex: 'insurance_type', width: 80 },
         { title: '开始月份', dataIndex: 'start_month', width: 110 },
         { title: '结束月份', dataIndex: 'end_month', width: 110 },
-        { title: '打印方式', dataIndex: 'print_mode_label', width: 110 },
+        ...(source === 'erp' ? [{
+          title: '操作', width: 110, fixed: 'right' as const,
+          render: (_: unknown, record: RightsPrintGroup) => (
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => individualView ? onEditPerson(record.people[0].row_number) : onEditGroup(record)}>
+              {individualView ? '编辑人员' : '编辑整组'}
+            </Button>
+          ),
+        }] : []),
       ]}
     />
   )
 }
 
-function PeopleTable({ preview, onShowIssues }: { preview: RightsImportPreview; onShowIssues: () => void }) {
+function PeopleTable({ preview, onShowIssues, onEditPerson }: { preview: RightsImportPreview; onShowIssues: () => void; onEditPerson: (rowNumber: number) => void }) {
   return <Table rowKey="row_number" size="small" dataSource={preview.records} scroll={{ x: 1180, y: 480 }} pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 人` }} columns={[
     { title: '状态', width: 92, fixed: 'left', render: (_, record) => record.status === 'error' ? <Tag color="error" onClick={onShowIssues}>有问题 {record.issue_count || ''}</Tag> : record.status === 'warning' ? <Tag color="warning" onClick={onShowIssues}>待复核 {record.issue_count || ''}</Tag> : <Tag color="success">正常</Tag> },
-    { title: '打印组', dataIndex: 'print_group', width: 90 }, { title: '任务编号', dataIndex: 'task_number', width: 190 },
+    { title: '打印组', dataIndex: 'print_group', width: 100 },
+    ...(preview.source === 'erp' || preview.records.some((record) => record.task_number)
+      ? [{ title: 'ERP申请编号', dataIndex: 'task_number', width: 190 }]
+      : []),
     { title: '单位', dataIndex: 'unit', width: 210, ellipsis: true }, { title: '部门', dataIndex: 'department', width: 160, ellipsis: true },
     { title: '姓名', dataIndex: 'name', width: 100 }, { title: '身份证号', dataIndex: 'identity_number', width: 200 },
     { title: '险种', dataIndex: 'insurance_type', width: 80 }, { title: '开始月份', dataIndex: 'start_month', width: 110 }, { title: '结束月份', dataIndex: 'end_month', width: 110 },
+    ...(preview.source === 'erp' ? [{ title: '操作', width: 88, fixed: 'right' as const, render: (_: unknown, record: RightsImportPreview['records'][number]) => <Button type="link" size="small" icon={<EditOutlined />} onClick={() => onEditPerson(record.row_number)}>编辑</Button> }] : []),
   ]} />
 }
 
-function IssuesTable({ issues }: { issues: RightsIssue[] }) {
+function IssuesTable({ issues, onResolve }: { issues: RightsIssue[]; onResolve: (issue: RightsIssue) => void }) {
   if (!issues.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有发现问题" />
-  return <Table rowKey="issue_id" size="small" dataSource={issues} scroll={{ x: 900, y: 480 }} pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 项` }} columns={[
+  return <Table className="rights-issues-table" rowKey="issue_id" size="small" dataSource={issues} scroll={{ x: 1040, y: 'max(240px, calc(100vh - 700px))' }} pagination={{ defaultPageSize: 10, pageSizeOptions: [10, 15, 30, 50], showSizeChanger: true, showQuickJumper: true, showTotal: (total, range) => `第 ${range[0]}-${range[1]} 项，共 ${total} 项` }} columns={[
     { title: '级别', dataIndex: 'level_label', width: 90, render: (value, record) => <Tag color={issueColor(record.level)}>{value}</Tag> },
     { title: '申请编号', dataIndex: 'task_number', width: 190 }, { title: '人员', dataIndex: 'person_name', width: 100 },
-    { title: '问题', dataIndex: 'message', width: 180 }, { title: '详细说明', dataIndex: 'details' },
+    { title: '问题', dataIndex: 'message', width: 190 }, { title: '详细说明', dataIndex: 'details' },
+    {
+      title: '操作', width: 110, fixed: 'right',
+      render: (_, record) => {
+        const actionable = record.row_number > 0 || record.code === 'AI_NO_PERSON_EXTRACTED'
+        if (!actionable) return <Typography.Text type="secondary">重新获取</Typography.Text>
+        const label = record.code === 'ERP_PERSON_AMBIGUOUS' && record.candidates?.length
+          ? '选择人员'
+          : record.row_number > 0 ? '人工处理' : '人工新增'
+        return <Button type="link" onClick={() => onResolve(record)}>{label}</Button>
+      },
+    },
   ]} />
 }
 

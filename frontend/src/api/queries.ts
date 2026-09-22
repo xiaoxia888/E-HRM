@@ -7,6 +7,7 @@ import type {
   TaskListResponse,
   TaskRecord,
   RightsImportPreview,
+  RightsRecordDetail,
   WebPreferences,
 } from '../types'
 import { apiRequest } from './client'
@@ -72,6 +73,76 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(values),
   }),
+  rightsRecord: (importId: string, rowNumber: number) =>
+    apiRequest<RightsRecordDetail>(
+      `/api/v1/rights/imports/${importId}/records/${rowNumber}`,
+    ),
+  updateRightsRecord: (
+    importId: string,
+    rowNumber: number,
+    values: Omit<RightsRecordDetail, 'row_number'>,
+  ) => apiRequest<RightsImportPreview>(
+    `/api/v1/rights/imports/${importId}/records/${rowNumber}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    },
+  ),
+  addRightsRecord: (
+    importId: string,
+    values: Omit<RightsRecordDetail, 'row_number'>,
+  ) => apiRequest<RightsImportPreview>(
+    `/api/v1/rights/imports/${importId}/records`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    },
+  ),
+  selectRightsCandidate: (
+    importId: string,
+    rowNumber: number,
+    candidateId: string,
+  ) => apiRequest<RightsImportPreview>(
+    `/api/v1/rights/imports/${importId}/records/${rowNumber}/candidate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_id: candidateId }),
+    },
+  ),
+  resolveRightsPrintGroup: (
+    importId: string,
+    taskNumber: string,
+    groupId: string,
+    mode: 'batch' | 'individual',
+  ) => apiRequest<RightsImportPreview>(
+    `/api/v1/rights/imports/${importId}/print-group`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_number: taskNumber, group_id: groupId, mode }),
+    },
+  ),
+  resolveRightsPrintGroupConditions: (
+    importId: string,
+    values: {
+      task_number: string
+      group_id: string
+      insurance_type: string
+      start_month: string
+      end_month: string
+      overwrite: boolean
+    },
+  ) => apiRequest<RightsImportPreview>(
+    `/api/v1/rights/imports/${importId}/print-group/conditions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    },
+  ),
   startRightsTask: (values: {
     import_id: string
     account_id: number

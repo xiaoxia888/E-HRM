@@ -325,12 +325,8 @@ class DesktopViewModel(QObject):
             mode = first.resolved_print_mode
             pdf_count = (
                 len(records)
-                if mode == "individual"
-                else (
-                    (len(records) + self._batch_size - 1) // self._batch_size
-                    if mode == "combined"
-                    else 0
-                )
+                if self._mode is ExportMode.INDIVIDUAL
+                else 1
             )
             summaries.append(
                 {
@@ -363,7 +359,11 @@ class DesktopViewModel(QObject):
         if not self._records:
             return 0
         return len(
-            self._loader.plan(self._records, ExportMode.BATCH, self._batch_size)
+            self._loader.plan(
+                self._records,
+                ExportMode.BATCH,
+                self._batch_size,
+            )
         )
 
     @Property(str, notify=fileChanged)
@@ -1018,7 +1018,12 @@ class DesktopViewModel(QObject):
             return self.printGroups
         counts = Counter(record.group_key for record in self._records)
         summaries: list[dict[str, object]] = []
-        for (task_number, insurance, start, end), count in counts.items():
+        for key, count in counts.items():
+            if len(key) == 5:
+                task_number, print_group, insurance, start, end = key
+            else:
+                task_number, insurance, start, end = key
+                print_group = ""
             pdf_count = (
                 count
                 if self._mode is ExportMode.INDIVIDUAL
@@ -1027,6 +1032,9 @@ class DesktopViewModel(QObject):
             summaries.append(
                 {
                     "taskNumber": task_number,
+                    "printGroup": (
+                        "默认组" if print_group == "__DEFAULT__" else print_group
+                    ),
                     "insurance": insurance,
                     "startMonth": start,
                     "endMonth": end,
@@ -1036,21 +1044,79 @@ class DesktopViewModel(QObject):
             )
         return summaries
 
-    @Slot(str, str)
-    def setPrintGroupMode(self, group_id: str, value: str) -> None:
+    @Slot(str, str, str)
+    def setPrintGroupMode(
+        self,
+        task_number: str,
+        group_id: str,
+        value: str,
+    ) -> None:
+        normalized_task = task_number.strip()
         normalized_group = group_id.strip()
         normalized_mode = value.strip()
         if normalized_mode not in {"combined", "individual"}:
             return
         if not normalized_group:
             return
-        changed = False
+        matched_records = [
+            record
+            for record in self._records
+            if record.task_number == normalized_task
+            and record.print_group_id == normalized_group
+        ]
+        if not matched_records:
+            return
+        split_groups: dict[int, tuple[str, int, str]] = {}
+        if normalized_mode == "individual" and len(matched_records) > 1:
+            next_sequence = max(
+                (
+                    record.print_group_sequence
+                    for record in self._records
+                    if record.task_number == normalized_task
+                ),
+                default=0,
+            )
+            first_sequence = (
+                matched_records[0].print_group_sequence
+                or next_sequence + 1
+            )
+            for index, record in enumerate(matched_records):
+                if index == 0:
+                    sequence = first_sequence
+                    new_group_id = normalized_group
+                else:
+                    next_sequence += 1
+                    sequence = next_sequence
+                    new_group_id = f"{normalized_task}-G{sequence:02d}"
+                split_groups[record.row_number] = (
+                    new_group_id,
+                    sequence,
+                    f"组{sequence}",
+                )
+        changed = bool(split_groups)
         updated: list[EmployeeRecord] = []
         for record in self._records:
-            if record.print_group_id == normalized_group:
+            if (
+                record.task_number == normalized_task
+                and record.print_group_id == normalized_group
+            ):
                 changed = changed or record.resolved_print_mode != normalized_mode
+                group_id, group_sequence, group_label = split_groups.get(
+                    record.row_number,
+                    (
+                        record.print_group_id,
+                        record.print_group_sequence,
+                        record.print_group_label,
+                    ),
+                )
                 updated.append(
-                    replace(record, resolved_print_mode=normalized_mode)
+                    replace(
+                        record,
+                        print_group_id=group_id,
+                        print_group_sequence=group_sequence,
+                        print_group_label=group_label,
+                        resolved_print_mode=normalized_mode,
+                    )
                 )
             else:
                 updated.append(record)
@@ -1060,17 +1126,46 @@ class DesktopViewModel(QObject):
         if self._erp_task_result is not None:
             requests = self._erp_task_result.get("rights_statement_requests")
             if isinstance(requests, list):
+                matched_items = [
+                    item
+                    for item in requests
+                    if isinstance(item, dict)
+                    and str(item.get("task_number") or "").strip()
+                    == normalized_task
+                    and str(item.get("group_id") or "") == normalized_group
+                ]
+                for index, item in enumerate(matched_items):
+                    if normalized_mode == "individual" and len(matched_items) > 1:
+                        record = matched_records[index]
+                        group_id, sequence, label = split_groups[record.row_number]
+                        item["group_id"] = group_id
+                        item["group_sequence"] = sequence
+                        item["group_label"] = label
+                        item["group_people_count"] = 1
+                        item["person_sequence"] = 1
+                    item["resolved_print_mode"] = normalized_mode
                 for item in requests:
                     if (
                         isinstance(item, dict)
+                        and str(item.get("task_number") or "").strip()
+                        == normalized_task
                         and str(item.get("group_id") or "") == normalized_group
                     ):
-                        item["resolved_print_mode"] = normalized_mode
+                        item["group_people_count"] = sum(
+                            isinstance(candidate, dict)
+                            and str(candidate.get("task_number") or "").strip()
+                            == normalized_task
+                            and str(candidate.get("group_id") or "")
+                            == normalized_group
+                            for candidate in requests
+                        )
         self._record_issues = [
             issue
             for issue in self._record_issues
             if not (
                 issue.get("code") == ErrorCode.AI_PRINT_MODE_REQUIRED.value
+                and str(issue.get("taskNumber") or "-").strip()
+                == (normalized_task or "-")
                 and issue.get("groupId") == normalized_group
             )
         ]
@@ -1097,6 +1192,7 @@ class DesktopViewModel(QObject):
         ):
             return
         group_id = str(target.get("groupId") or "").strip()
+        task_number = str(target.get("taskNumber") or "-").strip()
         row_number = int(target.get("rowNumber") or 0)
         if self._erp_task_result is not None:
             requests = self._erp_task_result.get("rights_statement_requests")
@@ -1106,6 +1202,8 @@ class DesktopViewModel(QObject):
                         continue
                     same_target = (
                         bool(group_id)
+                        and str(item.get("task_number") or "-").strip()
+                        == task_number
                         and str(item.get("group_id") or "").strip() == group_id
                     ) or (not group_id and request_row == row_number)
                     if not same_target:
@@ -1121,6 +1219,8 @@ class DesktopViewModel(QObject):
                 and (
                     (
                         bool(group_id)
+                        and str(issue.get("taskNumber") or "-").strip()
+                        == task_number
                         and str(issue.get("groupId") or "").strip() == group_id
                     )
                     or str(issue.get("issueId") or "") == normalized_id
@@ -1191,7 +1291,11 @@ class DesktopViewModel(QObject):
 
         self._records = updated
         self._records_edited = True
-        self._sync_edited_records_to_erp_result(row_number, target.print_group_id)
+        self._sync_edited_records_to_erp_result(
+            row_number,
+            target.task_number,
+            target.print_group_id,
+        )
         if self._erp_task_result is not None:
             self._record_issues = self._build_erp_record_issues(
                 self._erp_task_result
@@ -1866,6 +1970,15 @@ class DesktopViewModel(QObject):
         if self._record_source == "excel" and self._source_excel is None:
             self.notification.emit("源文件不可用", "请重新导入 Excel 文件")
             return
+        if self._upload_to_erp and any(
+            not record.task_number.strip() for record in self._records
+        ):
+            self.validationFailed.emit(
+                "无法自动上传 ERP",
+                "存在未填写 ERP申请编号的打印组。请补全编号后重新导入，"
+                "或关闭“下载完成后上传 ERP”。",
+            )
+            return
         self._pending_output_dir = self._output_path / (
             f"权益单下载_{datetime.now():%Y%m%d_%H%M%S}"
         )
@@ -2064,6 +2177,7 @@ class DesktopViewModel(QObject):
     def _sync_edited_records_to_erp_result(
         self,
         edited_row_number: int,
+        edited_task_number: str,
         edited_group_id: str,
     ) -> None:
         if self._erp_task_result is None:
@@ -2079,7 +2193,8 @@ class DesktopViewModel(QObject):
             if record is None:
                 continue
             same_group = bool(edited_group_id) and (
-                record.print_group_id == edited_group_id
+                record.task_number == edited_task_number
+                and record.print_group_id == edited_group_id
             )
             if same_group:
                 raw_item["insurance_type"] = record.insurance_type
@@ -2675,8 +2790,10 @@ class DesktopViewModel(QObject):
                     "申请标题和问题描述中未识别到可处理人员",
                 )
 
-        unresolved_groups: set[str] = set()
-        seen_group_reviews: set[tuple[str, tuple[str, ...]]] = set()
+        unresolved_groups: set[tuple[str, str]] = set()
+        seen_group_reviews: set[
+            tuple[str, str, tuple[str, ...]]
+        ] = set()
         for row_number, item in enumerate(requests, start=2):
             if not isinstance(item, dict):
                 continue
@@ -2688,13 +2805,14 @@ class DesktopViewModel(QObject):
                 item.get("resolved_print_mode") or ""
             ).strip()
             group_people_count = int(item.get("group_people_count") or 0)
+            composite_group = (task_number, group_id)
             if (
                 group_id
                 and group_people_count > 1
                 and not resolved_print_mode
-                and group_id not in unresolved_groups
+                and composite_group not in unresolved_groups
             ):
-                unresolved_groups.add(group_id)
+                unresolved_groups.add(composite_group)
                 add_issue(
                     "warning",
                     task_number,
@@ -2731,7 +2849,7 @@ class DesktopViewModel(QObject):
                         if str(reason).strip()
                     )
                 )
-                review_key = (group_id, normalized_reasons)
+                review_key = (task_number, group_id, normalized_reasons)
                 if not group_id or review_key not in seen_group_reviews:
                     if group_id:
                         seen_group_reviews.add(review_key)

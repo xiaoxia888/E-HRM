@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 from ehrm.core.runtime import (
@@ -56,6 +58,41 @@ def test_absolute_runtime_path_remains_explicit(tmp_path: Path) -> None:
     explicit = tmp_path / "external" / "result.json"
 
     assert resolve_runtime_path(explicit, tmp_path / "runtime") == explicit
+
+
+def test_web_runtime_does_not_require_desktop_qt() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class RejectPySide(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'PySide6' or fullname.startswith('PySide6.'):
+            raise ImportError('PySide6 must not be imported by Web runtime helpers')
+        return None
+
+sys.meta_path.insert(0, RejectPySide())
+from ehrm.web.app import create_app
+assert create_app
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                filter(
+                    None,
+                    [str(Path("src").resolve()), os.environ.get("PYTHONPATH")],
+                )
+            ),
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_legacy_preferences_are_migrated_once(tmp_path: Path) -> None:

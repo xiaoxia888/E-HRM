@@ -3,6 +3,8 @@ name: ehrm
 channels:
   - conda-forge
 
+# 仅安装 Python 后端运行依赖；不包含桌面 GUI、测试工具或 Node.js。
+# 部署完整 Web 服务请优先使用 environment.server.yml。
 dependencies:
   - python=3.11.15
   - pip

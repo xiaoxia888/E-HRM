@@ -16,7 +16,8 @@ def test_template_contains_required_columns_and_insurance_dropdown(
     try:
         sheet = workbook["人员导入"]
         assert tuple(cell.value for cell in sheet[1]) == (
-            "任务编号",
+            "ERP申请编号",
+            "打印组",
             "单位",
             "部门",
             "姓名",
@@ -26,11 +27,12 @@ def test_template_contains_required_columns_and_insurance_dropdown(
             "结束时间",
         )
         assert sheet["A2"].number_format == "@"
-        assert sheet["E2"].number_format == "@"
+        assert sheet["B2"].number_format == "@"
+        assert sheet["F2"].number_format == "@"
         validations = list(sheet.data_validations.dataValidation)
         assert len(validations) == 1
         assert validations[0].formula1 == '"养老,工伤,失业"'
-        assert "F2:F1001" in str(validations[0].sqref)
+        assert "G2:G1001" in str(validations[0].sqref)
         assert "填写说明" in workbook.sheetnames
     finally:
         workbook.close()
@@ -62,9 +64,8 @@ def test_erp_records_can_be_written_as_execution_source(tmp_path: Path) -> None:
         sheet = workbook["ERP申请解析数据"]
         assert sheet.max_row == 2
         assert [cell.value for cell in sheet[1]] == [
-            "任务编号",
+            "ERP申请编号",
             "打印组",
-            "打印方式",
             "单位",
             "部门",
             "姓名",
@@ -76,7 +77,6 @@ def test_erp_records_can_be_written_as_execution_source(tmp_path: Path) -> None:
         assert [cell.value for cell in sheet[2]] == [
             "RLSQ20260818-0004",
             "组1",
-            "合并打印",
             "南京南化建设有限公司",
             "技术中心",
             "张三",
@@ -89,12 +89,12 @@ def test_erp_records_can_be_written_as_execution_source(tmp_path: Path) -> None:
         workbook.close()
 
     reloaded = RightsStatementExcelLoader().load(destination)
-    assert reloaded[0].print_group_id == "RLSQ20260818-0004:组1"
+    assert reloaded[0].print_group_id == "组1"
     assert reloaded[0].print_group_sequence == 1
-    assert reloaded[0].resolved_print_mode == "combined"
+    assert reloaded[0].resolved_print_mode == ""
 
 
-def test_edited_excel_records_use_the_original_eight_column_structure(
+def test_edited_excel_records_include_optional_erp_application_number(
     tmp_path: Path,
 ) -> None:
     destination = RightsStatementTemplateService().write_records(
@@ -121,6 +121,7 @@ def test_edited_excel_records_use_the_original_eight_column_structure(
         assert [cell.value for cell in sheet[1]] == list(
             RightsStatementTemplateService.HEADERS
         )
-        assert sheet.max_column == 8
+        assert sheet.max_column == 9
+        assert sheet.cell(2, 1).value == "RLSQ-001"
     finally:
         workbook.close()

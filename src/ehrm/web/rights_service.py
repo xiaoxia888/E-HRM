@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from dataclasses import replace
+import json
 import logging
 from pathlib import Path
 import re
 from threading import RLock
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from ehrm.core.auth_repository import SystemAccount, SystemType
 from ehrm.core.error_catalog import ErrorCode, display_message
@@ -89,13 +91,42 @@ class RightsWebService:
             raise
         preferences = self.settings_service.preferences()
         mode = ExportMode(preferences.export_mode)
-        groups = self.loader.plan(records, mode, preferences.batch_size)
+        planning_records = records
+        groups = self.loader.plan(planning_records, mode, preferences.batch_size)
+        preview_records = [
+            {
+                **self._preview_record(record),
+                "print_group": record.print_group_label or "默认组",
+                "print_group_id": record.print_group_id,
+                "status": "success",
+                "issue_count": 0,
+            }
+            for record in records
+        ]
+        print_groups = self._erp_print_groups(
+            planning_records,
+            preview_records,
+            [],
+        )
+        erp_upload_available = bool(records) and all(
+            bool(record.task_number.strip()) for record in records
+        )
         return {
             "import_id": import_id,
             "filename": Path(filename).name,
+            "source": "excel",
             "record_count": len(records),
-            "group_count": len(groups),
-            "records": [self._preview_record(item) for item in records],
+            "unique_person_count": len(
+                {record.identity_number for record in records}
+            ),
+            "group_count": len(print_groups),
+            "estimated_pdf_count": len(groups),
+            "erp_upload_available": erp_upload_available,
+            "executable": True,
+            "records": preview_records,
+            "issues": [],
+            "applications": [],
+            "print_groups": print_groups,
         }
 
     def submit_import(
@@ -108,13 +139,17 @@ class RightsWebService:
         upload_to_erp: bool,
     ) -> TaskSnapshot:
         source = self._import_path(import_id)
+        is_erp_source = (self.import_root / f"{import_id}.json").is_file()
         records = self.loader.load(source)
-        records = [
-            replace(record, resolved_print_mode=mode.value)
-            if record.print_group_id and not record.resolved_print_mode
-            else record
-            for record in records
-        ]
+        erp_upload_available = is_erp_source or (
+            bool(records)
+            and all(bool(record.task_number.strip()) for record in records)
+        )
+        if upload_to_erp and not erp_upload_available:
+            raise ValueError(
+                "Excel 中存在未填写 ERP申请编号的打印组，无法自动上传 ERP。"
+                "请补全编号后重新导入，或关闭自动上传。"
+            )
         groups = self.loader.plan(records, mode, batch_size)
         account = self.settings_service.account(account_id, SystemType.JSHRSS)
         request = self._request(
@@ -230,7 +265,12 @@ class RightsWebService:
             "query": result.get("query", {}),
         }
 
-    def _erp_preview(self, result: dict[str, object]) -> dict[str, object]:
+    def _erp_preview(
+        self,
+        result: dict[str, object],
+        *,
+        import_id: str | None = None,
+    ) -> dict[str, object]:
         request_items = result.get("rights_statement_requests")
         requests = request_items if isinstance(request_items, list) else []
         records: list[EmployeeRecord] = []
@@ -248,13 +288,19 @@ class RightsWebService:
                     identity_number=str(
                         item.get("social_security_number") or ""
                     ).strip(),
-                    insurance_type=str(
-                        item.get("insurance_type") or "养老"
-                    ).strip(),
+                    insurance_type=str(item.get("insurance_type") or "").strip(),
                     start_month=str(item.get("start_month") or "").strip(),
                     end_month=str(item.get("end_month") or "").strip(),
                     task_number=str(item.get("task_number") or "").strip(),
                     print_group_id=str(item.get("group_id") or "").strip(),
+                    print_group_label=(
+                        str(item.get("group_label") or "").strip()
+                        or (
+                            f"组{int(item.get('group_sequence') or 0)}"
+                            if int(item.get("group_sequence") or 0)
+                            else "默认组"
+                        )
+                    ),
                     print_group_sequence=int(item.get("group_sequence") or 0),
                     source_print_mode=str(
                         item.get("source_print_mode") or ""
@@ -280,9 +326,7 @@ class RightsWebService:
                 {
                     **self._preview_record(record),
                     "print_group": (
-                        f"组{record.print_group_sequence}"
-                        if record.print_group_sequence
-                        else ""
+                        record.print_group_label or "默认组"
                     ),
                     "print_group_id": record.print_group_id,
                     "status": "error" if blocking else "warning" if warning else "success",
@@ -300,28 +344,21 @@ class RightsWebService:
             if record.identity_number.strip() or record.name.strip()
         }
 
-        import_id = uuid4().hex
+        import_id = import_id or uuid4().hex
         self.import_root.mkdir(parents=True, exist_ok=True)
+        self._write_erp_state(import_id, result)
         source = self.import_root / f"{import_id}.xlsx"
         self.template.write_records(source, records, include_print_groups=True)
         preferences = self.settings_service.preferences()
-        group_count = len(print_groups)
+        estimated_pdf_count = len(print_groups)
         executable = bool(records) and not any(
             item.get("level") in {"error", "pending"} for item in issues
         )
         if executable:
             try:
-                planning_records = [
-                    replace(
-                        record,
-                        resolved_print_mode=preferences.export_mode,
-                    )
-                    if record.print_group_id and not record.resolved_print_mode
-                    else record
-                    for record in records
-                ]
+                planning_records = records
                 validated = self.loader.validate_records(planning_records)
-                group_count = len(
+                estimated_pdf_count = len(
                     self.loader.plan(
                         validated,
                         ExportMode(preferences.export_mode),
@@ -372,13 +409,488 @@ class RightsWebService:
             "source": "erp",
             "record_count": len(records),
             "unique_person_count": len(unique_people),
-            "group_count": group_count,
+            "group_count": len(print_groups),
+            "estimated_pdf_count": estimated_pdf_count,
+            "erp_upload_available": True,
             "executable": executable,
             "records": preview_records,
             "issues": issues,
             "applications": applications,
             "print_groups": print_groups,
         }
+
+    def erp_record_detail(
+        self,
+        import_id: str,
+        row_number: int,
+    ) -> dict[str, object]:
+        result = self._read_erp_state(import_id)
+        item = self._erp_request_row(result, row_number)
+        match = item.get("identity_match")
+        match = match if isinstance(match, dict) else {}
+        return {
+            "row_number": row_number,
+            "task_number": str(item.get("task_number") or "").strip(),
+            "print_group": self._erp_group_label(item),
+            "unit": str(match.get("company") or "").strip(),
+            "department": str(match.get("department") or "").strip(),
+            "name": str(item.get("name") or "").strip(),
+            "identity_number": str(
+                item.get("social_security_number") or ""
+            ).strip(),
+            "insurance_type": str(item.get("insurance_type") or "").strip(),
+            "start_month": str(item.get("start_month") or "").strip(),
+            "end_month": str(item.get("end_month") or "").strip(),
+        }
+
+    def update_erp_record(
+        self,
+        import_id: str,
+        row_number: int,
+        values: dict[str, object],
+    ) -> dict[str, object]:
+        result = self._read_erp_state(import_id)
+        item = self._erp_request_row(result, row_number)
+        task_number = str(item.get("task_number") or "").strip()
+        normalized = self._normalize_manual_record(
+            values,
+            row_number=row_number,
+            task_number=task_number,
+            item=item,
+        )
+        self._apply_manual_record(result, item, normalized)
+        self._move_erp_record_to_group(
+            result,
+            item,
+            str(values.get("print_group") or "").strip(),
+        )
+        return self._erp_preview(result, import_id=import_id)
+
+    def add_erp_record(
+        self,
+        import_id: str,
+        values: dict[str, object],
+    ) -> dict[str, object]:
+        result = self._read_erp_state(import_id)
+        task_number = str(values.get("task_number") or "").strip()
+        tasks = result.get("tasks")
+        task_items = tasks if isinstance(tasks, list) else []
+        task = next(
+            (
+                entry
+                for entry in task_items
+                if isinstance(entry, dict)
+                and str(entry.get("task_number") or "").strip() == task_number
+            ),
+            None,
+        )
+        if task is None:
+            raise ValueError("未找到需要补录人员的 ERP 申请")
+        requests = result.get("rights_statement_requests")
+        if not isinstance(requests, list):
+            requests = []
+            result["rights_statement_requests"] = requests
+        group_sequence = 1 + max(
+            (
+                int(entry.get("group_sequence") or 0)
+                for entry in requests
+                if isinstance(entry, dict)
+                and str(entry.get("task_number") or "").strip() == task_number
+            ),
+            default=0,
+        )
+        item: dict[str, object] = {
+            "task_number": task_number,
+            "erp_record_id": str(task.get("record_id") or task.get("id") or ""),
+            "application_date": str(task.get("initiated_date") or ""),
+            "group_id": f"{task_number}-MANUAL-{uuid4().hex[:8]}",
+            "group_label": str(values.get("print_group") or "").strip()
+            or f"组{group_sequence}",
+            "group_sequence": group_sequence,
+            "group_people_count": 1,
+            "source_print_mode": "individual",
+            "resolved_print_mode": "individual",
+            "person_sequence": 1,
+            "review_reasons": [],
+            "warnings": [],
+        }
+        normalized = self._normalize_manual_record(
+            values,
+            row_number=len(requests) + 2,
+            task_number=task_number,
+            item=item,
+        )
+        requests.append(item)
+        self._apply_manual_record(result, item, normalized)
+        self._refresh_erp_group_metadata(result)
+        task["parse_status"] = {
+            "code": ErrorCode.SUCCESS.value,
+            "message": "已人工补录申请人员",
+        }
+        return self._erp_preview(result, import_id=import_id)
+
+    def select_erp_candidate(
+        self,
+        import_id: str,
+        row_number: int,
+        candidate_id: str,
+    ) -> dict[str, object]:
+        result = self._read_erp_state(import_id)
+        item = self._erp_request_row(result, row_number)
+        match = item.get("identity_match")
+        match = match if isinstance(match, dict) else {}
+        candidates = match.get("candidates")
+        candidate_items = candidates if isinstance(candidates, list) else []
+        selected = next(
+            (
+                candidate
+                for index, candidate in enumerate(candidate_items, start=1)
+                if isinstance(candidate, dict)
+                and self._candidate_id(candidate, index) == candidate_id.strip()
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("候选人员不存在或已经失效，请重新获取申请信息")
+        values = {
+            "unit": selected.get("company") or "",
+            "department": selected.get("department") or "",
+            "name": selected.get("name") or item.get("name") or "",
+            "identity_number": selected.get("identity_number") or "",
+            # Candidate selection confirms identity only. Placeholder conditions
+            # keep identity validation independent from unresolved group dates.
+            "insurance_type": "养老",
+            "start_month": "2000-01",
+            "end_month": "2000-01",
+        }
+        normalized = self._normalize_manual_record(
+            values,
+            row_number=row_number,
+            task_number=str(item.get("task_number") or "").strip(),
+            item=item,
+        )
+        item["name"] = normalized.name
+        item["social_security_number"] = normalized.identity_number
+        item["manual_identity_confirmed"] = True
+        item["identity_match"] = {
+            "code": ErrorCode.SUCCESS.value,
+            "message": "已人工选择 ERP 候选人员",
+            "details": "已根据人工选择确定人员身份信息",
+            "source": "manual_candidate_selection",
+            "employee_code": str(selected.get("employee_code") or ""),
+            "department": normalized.department,
+            "company": normalized.unit,
+        }
+        return self._erp_preview(result, import_id=import_id)
+
+    def _normalize_manual_record(
+        self,
+        values: dict[str, object],
+        *,
+        row_number: int,
+        task_number: str,
+        item: dict[str, object],
+    ) -> EmployeeRecord:
+        return self.loader.normalize_record(
+            EmployeeRecord(
+                row_number=row_number,
+                task_number=task_number,
+                unit=str(values.get("unit") or "").strip(),
+                department=str(values.get("department") or "").strip(),
+                name=str(values.get("name") or "").strip(),
+                identity_number=str(
+                    values.get("identity_number") or ""
+                ).strip(),
+                insurance_type=str(
+                    values.get("insurance_type") or ""
+                ).strip(),
+                start_month=str(values.get("start_month") or "").strip(),
+                end_month=str(values.get("end_month") or "").strip(),
+                print_group_id=str(item.get("group_id") or "").strip(),
+                print_group_sequence=int(item.get("group_sequence") or 0),
+                source_print_mode=str(
+                    item.get("source_print_mode") or ""
+                ).strip(),
+                resolved_print_mode=str(
+                    item.get("resolved_print_mode") or ""
+                ).strip(),
+            )
+        )
+
+    @staticmethod
+    def _apply_manual_record(
+        result: dict[str, object],
+        item: dict[str, object],
+        record: EmployeeRecord,
+    ) -> None:
+        item.update(
+            {
+                "name": record.name,
+                "social_security_number": record.identity_number,
+                "insurance_type": record.insurance_type,
+                "start_month": record.start_month,
+                "end_month": record.end_month,
+                "needs_review": False,
+                "review_reasons": [],
+                "manual_review_confirmed": True,
+                "identity_match": {
+                    "code": ErrorCode.SUCCESS.value,
+                    "message": "已人工补充人员信息",
+                    "details": "人员资料已经人工填写并通过格式校验",
+                    "source": "manual_entry",
+                    "department": record.department,
+                    "company": record.unit,
+                },
+            }
+        )
+
+    @staticmethod
+    def _erp_group_label(item: dict[str, object]) -> str:
+        label = str(item.get("group_label") or "").strip()
+        if label:
+            return label
+        sequence = int(item.get("group_sequence") or 0)
+        return f"组{sequence}" if sequence else "默认组"
+
+    def _move_erp_record_to_group(
+        self,
+        result: dict[str, object],
+        item: dict[str, object],
+        requested_label: str,
+    ) -> None:
+        if not requested_label.strip():
+            self._refresh_erp_group_metadata(result)
+            return
+        label = requested_label.strip()
+        if len(label) > 80 or any(character in label for character in "\r\n\t"):
+            raise ValueError("打印组名称不能超过 80 个字符且不能包含换行或制表符")
+        if label == self._erp_group_label(item):
+            self._refresh_erp_group_metadata(result)
+            return
+        requests = result.get("rights_statement_requests")
+        request_items = requests if isinstance(requests, list) else []
+        task_number = str(item.get("task_number") or "").strip()
+        target = next(
+            (
+                entry
+                for entry in request_items
+                if isinstance(entry, dict)
+                and entry is not item
+                and str(entry.get("task_number") or "").strip() == task_number
+                and self._erp_group_label(entry) == label
+            ),
+            None,
+        )
+        if target is None:
+            sequence = 1 + max(
+                (
+                    int(entry.get("group_sequence") or 0)
+                    for entry in request_items
+                    if isinstance(entry, dict)
+                    and str(entry.get("task_number") or "").strip() == task_number
+                ),
+                default=0,
+            )
+            item["group_id"] = f"{task_number}-MANUAL-{uuid4().hex[:8]}"
+            item["group_sequence"] = sequence
+            item["group_label"] = label
+        else:
+            item["group_id"] = str(target.get("group_id") or "").strip()
+            item["group_sequence"] = int(target.get("group_sequence") or 0)
+            item["group_label"] = self._erp_group_label(target)
+            item["source_print_mode"] = target.get("source_print_mode")
+            item["resolved_print_mode"] = target.get("resolved_print_mode")
+        self._refresh_erp_group_metadata(result)
+
+    @staticmethod
+    def _refresh_erp_group_metadata(result: dict[str, object]) -> None:
+        requests = result.get("rights_statement_requests")
+        request_items = requests if isinstance(requests, list) else []
+        counts: dict[tuple[str, str], int] = {}
+        for entry in request_items:
+            if not isinstance(entry, dict):
+                continue
+            key = (
+                str(entry.get("task_number") or "").strip(),
+                str(entry.get("group_id") or "").strip(),
+            )
+            counts[key] = counts.get(key, 0) + 1
+        for entry in request_items:
+            if not isinstance(entry, dict):
+                continue
+            key = (
+                str(entry.get("task_number") or "").strip(),
+                str(entry.get("group_id") or "").strip(),
+            )
+            entry["group_people_count"] = counts.get(key, 1)
+
+    def resolve_erp_print_group(
+        self,
+        import_id: str,
+        task_number: str,
+        group_id: str,
+        mode: str,
+    ) -> dict[str, object]:
+        normalized_task = task_number.strip()
+        normalized_group = group_id.strip()
+        normalized_mode = mode.strip()
+        if not normalized_group:
+            raise ValueError("打印组编号不能为空")
+        if normalized_mode not in {"batch", "individual"}:
+            raise ValueError("打印方式无效")
+        result = self._read_erp_state(import_id)
+        requests = result.get("rights_statement_requests")
+        request_items = requests if isinstance(requests, list) else []
+        matched_items = [
+            item
+            for item in request_items
+            if isinstance(item, dict)
+            and str(item.get("task_number") or "").strip() == normalized_task
+            and str(item.get("group_id") or "").strip() == normalized_group
+        ]
+        if not matched_items:
+            raise ValueError("打印组不存在或已经失效，请重新获取申请信息")
+        stored_mode = "combined" if normalized_mode == "batch" else "individual"
+        if stored_mode == "individual" and len(matched_items) > 1:
+            next_sequence = max(
+                (
+                    int(item.get("group_sequence") or 0)
+                    for item in request_items
+                    if isinstance(item, dict)
+                    and str(item.get("task_number") or "").strip()
+                    == normalized_task
+                ),
+                default=0,
+            )
+            first_sequence = int(
+                matched_items[0].get("group_sequence") or next_sequence + 1
+            )
+            for index, item in enumerate(matched_items):
+                if index == 0:
+                    sequence = first_sequence
+                else:
+                    next_sequence += 1
+                    sequence = next_sequence
+                    item["group_id"] = f"{normalized_task}-G{sequence:02d}"
+                item["group_sequence"] = sequence
+                item["group_label"] = f"组{sequence}"
+                item["person_sequence"] = 1
+                item["resolved_print_mode"] = stored_mode
+        else:
+            for item in matched_items:
+                item["resolved_print_mode"] = stored_mode
+        self._refresh_erp_group_metadata(result)
+        return self._erp_preview(result, import_id=import_id)
+
+    def resolve_erp_print_group_conditions(
+        self,
+        import_id: str,
+        *,
+        task_number: str,
+        group_id: str,
+        insurance_type: str,
+        start_month: str,
+        end_month: str,
+        overwrite: bool,
+    ) -> dict[str, object]:
+        normalized_task = task_number.strip()
+        normalized_group = group_id.strip()
+        if not normalized_group:
+            raise ValueError("打印组编号不能为空")
+        conditions = self.loader.normalize_record(
+            EmployeeRecord(
+                row_number=0,
+                task_number=normalized_task,
+                unit="条件校验",
+                department="条件校验",
+                name="条件校验",
+                identity_number="320101199001011234",
+                insurance_type=insurance_type,
+                start_month=start_month,
+                end_month=end_month,
+                print_group_id=normalized_group,
+            )
+        )
+        result = self._read_erp_state(import_id)
+        requests = result.get("rights_statement_requests")
+        request_items = requests if isinstance(requests, list) else []
+        matched: list[dict[str, object]] = []
+        for item in request_items:
+            if not isinstance(item, dict):
+                continue
+            if (
+                str(item.get("task_number") or "").strip() == normalized_task
+                and str(item.get("group_id") or "").strip() == normalized_group
+            ):
+                matched.append(item)
+        if not matched:
+            raise ValueError("打印组不存在或已经失效，请重新获取申请信息")
+        replacements = {
+            "insurance_type": conditions.insurance_type,
+            "start_month": conditions.start_month,
+            "end_month": conditions.end_month,
+        }
+        for item in matched:
+            for field, value in replacements.items():
+                if overwrite or not str(item.get(field) or "").strip():
+                    item[field] = value
+            item["needs_review"] = False
+            item["review_reasons"] = []
+            item["manual_review_confirmed"] = True
+        return self._erp_preview(result, import_id=import_id)
+
+    def _erp_request_row(
+        self,
+        result: dict[str, object],
+        row_number: int,
+    ) -> dict[str, object]:
+        requests = result.get("rights_statement_requests")
+        request_items = requests if isinstance(requests, list) else []
+        index = row_number - 2
+        if index < 0 or index >= len(request_items):
+            raise ValueError("需要处理的人员记录不存在或已经失效")
+        item = request_items[index]
+        if not isinstance(item, dict):
+            raise ValueError("需要处理的人员记录格式无效")
+        return item
+
+    def _write_erp_state(
+        self,
+        import_id: str,
+        result: dict[str, object],
+    ) -> None:
+        self._validate_import_id(import_id)
+        state = self.import_root / f"{import_id}.json"
+        state.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _read_erp_state(self, import_id: str) -> dict[str, object]:
+        self._validate_import_id(import_id)
+        state = self.import_root / f"{import_id}.json"
+        if not state.is_file():
+            raise ValueError("当前 ERP 解析数据已失效，请重新获取申请信息")
+        try:
+            payload = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("当前 ERP 解析数据损坏，请重新获取申请信息") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("当前 ERP 解析数据格式无效")
+        return payload
+
+    @staticmethod
+    def _validate_import_id(import_id: str) -> None:
+        if not _IMPORT_ID.fullmatch(import_id):
+            raise ValueError("权益单导入记录编号无效")
+
+    @staticmethod
+    def _candidate_id(candidate: dict[str, object], index: int) -> str:
+        return str(
+            candidate.get("id")
+            or candidate.get("employee_code")
+            or index
+        ).strip()
 
     @staticmethod
     def _erp_print_groups(
@@ -397,9 +909,12 @@ class RightsWebService:
                     "group_id": group_id,
                     "group_sequence": record.print_group_sequence,
                     "group_label": (
-                        f"打印组 {record.print_group_sequence}"
-                        if record.print_group_sequence
-                        else "单独打印"
+                        record.print_group_label
+                        or (
+                            f"打印组 {record.print_group_sequence}"
+                            if record.print_group_sequence
+                            else "默认组"
+                        )
                     ),
                     "task_number": record.task_number,
                     "insurance_type": record.insurance_type,
@@ -462,26 +977,28 @@ class RightsWebService:
             details: str,
             row_number: int = 0,
             group_id: str = "",
+            candidates: list[dict[str, str]] | None = None,
         ) -> None:
-            issues.append(
-                {
-                    "issue_id": f"{code}:{task_number}:{row_number}:{len(issues) + 1}",
-                    "level": level,
-                    "level_label": {
-                        "error": "错误",
-                        "warning": "待复核",
-                        "pending": "待处理",
-                        "info": "提示",
-                    }.get(level, "提示"),
-                    "task_number": task_number or "-",
-                    "person_name": person_name or "-",
-                    "code": code,
-                    "message": message,
-                    "details": details or message,
-                    "row_number": row_number,
-                    "group_id": group_id,
-                }
-            )
+            issue: dict[str, object] = {
+                "issue_id": f"{code}:{task_number}:{row_number}:{len(issues) + 1}",
+                "level": level,
+                "level_label": {
+                    "error": "错误",
+                    "warning": "待复核",
+                    "pending": "待处理",
+                    "info": "提示",
+                }.get(level, "提示"),
+                "task_number": task_number or "-",
+                "person_name": person_name or "-",
+                "code": code,
+                "message": message,
+                "details": details or message,
+                "row_number": row_number,
+                "group_id": group_id,
+            }
+            if candidates:
+                issue["candidates"] = candidates
+            issues.append(issue)
 
         raw_requests = result.get("rights_statement_requests")
         requests = raw_requests if isinstance(raw_requests, list) else []
@@ -519,32 +1036,118 @@ class RightsWebService:
                     "申请标题和问题描述中未识别到可处理人员",
                 )
 
+        grouped_requests: dict[
+            tuple[str, str], list[tuple[int, dict[str, object]]]
+        ] = {}
+        for row_number, item in enumerate(requests, start=2):
+            if not isinstance(item, dict):
+                continue
+            task_number = str(item.get("task_number") or "").strip()
+            group_id = str(item.get("group_id") or "").strip()
+            group_key = group_id or f"row:{row_number}"
+            grouped_requests.setdefault((task_number, group_key), []).append(
+                (row_number, item)
+            )
+
+        condition_fields = (
+            ("insurance_type", "险种"),
+            ("start_month", "开始月份"),
+            ("end_month", "结束月份"),
+        )
+        for (task_number, _), members in grouped_requests.items():
+            first_row, first_item = members[0]
+            group_id = str(first_item.get("group_id") or "").strip()
+            group_sequence = int(first_item.get("group_sequence") or 0)
+            group_label = (
+                f"打印组 {group_sequence}" if group_sequence else "默认打印组"
+            )
+            missing_fields: list[str] = []
+            conflicts: list[str] = []
+            for field, label in condition_fields:
+                values = {
+                    str(item.get(field) or "").strip()
+                    for _, item in members
+                    if str(item.get(field) or "").strip()
+                }
+                if any(not str(item.get(field) or "").strip() for _, item in members):
+                    missing_fields.append(label)
+                if len(values) > 1:
+                    conflicts.append(f"{label}存在多个值：{'、'.join(sorted(values))}")
+            if conflicts:
+                add(
+                    "error",
+                    task_number,
+                    group_label,
+                    ErrorCode.PRINT_GROUP_CONDITION_CONFLICT.value,
+                    display_message(ErrorCode.PRINT_GROUP_CONDITION_CONFLICT),
+                    "；".join(conflicts)
+                    + (f"；同时缺少{'、'.join(missing_fields)}" if missing_fields else "")
+                    + "。请确认后将整组条件统一为同一值。",
+                    first_row,
+                    group_id,
+                )
+            elif missing_fields:
+                missing_row = next(
+                    row
+                    for row, item in members
+                    if any(
+                        not str(item.get(field) or "").strip()
+                        for field, _ in condition_fields
+                    )
+                )
+                add(
+                    "error",
+                    task_number,
+                    group_label,
+                    ErrorCode.PRINT_GROUP_CONDITION_MISSING.value,
+                    display_message(ErrorCode.PRINT_GROUP_CONDITION_MISSING),
+                    f"该组缺少{'、'.join(missing_fields)}。本次补充只填写空缺人员，"
+                    "不会覆盖组内已有值；若补充值与已有值不同，系统会继续报告打印组条件不一致。",
+                    missing_row,
+                    group_id,
+                )
+
+        review_issue_groups: set[tuple[str, str, str]] = set()
+        unresolved_print_groups: set[tuple[str, str]] = set()
         for row_number, item in enumerate(requests, start=2):
             if not isinstance(item, dict):
                 continue
             task_number = str(item.get("task_number") or "").strip()
             person_name = str(item.get("name") or "").strip()
             group_id = str(item.get("group_id") or "").strip()
-            for field, label in (("start_month", "开始月份"), ("end_month", "结束月份")):
-                if not str(item.get(field) or "").strip():
-                    add(
-                        "error",
-                        task_number,
-                        person_name,
-                        ErrorCode.AI_DATE_MISSING.value,
-                        display_message(ErrorCode.AI_DATE_MISSING),
-                        f"模型未能确定{label}",
-                        row_number,
-                        group_id,
-                    )
+            group_sequence = int(item.get("group_sequence") or 0)
+            group_label = f"打印组 {group_sequence}" if group_sequence else "默认打印组"
+            group_key = (task_number, group_id or f"row:{row_number}")
+            resolved_print_mode = str(
+                item.get("resolved_print_mode") or ""
+            ).strip()
+            group_people_count = int(item.get("group_people_count") or 0)
+            if (
+                group_people_count > 1
+                and not resolved_print_mode
+                and group_key not in unresolved_print_groups
+            ):
+                unresolved_print_groups.add(group_key)
+                add(
+                    "pending",
+                    task_number,
+                    group_label,
+                    ErrorCode.AI_PRINT_MODE_REQUIRED.value,
+                    "打印组划分需要人工确认",
+                    "原文未明确多人是否属于同一打印组；当前按一个打印组展示，请人工确认。",
+                    row_number,
+                    group_id,
+                )
             reasons = item.get("review_reasons")
             if isinstance(reasons, list):
                 details = "；".join(dict.fromkeys(str(value).strip() for value in reasons if str(value).strip()))
-                if details:
+                review_key = (group_key[0], group_key[1], details)
+                if details and review_key not in review_issue_groups:
+                    review_issue_groups.add(review_key)
                     add(
                         "warning",
                         task_number,
-                        person_name,
+                        group_label if group_id else person_name,
                         ErrorCode.AI_REVIEW_REQUIRED.value,
                         display_message(ErrorCode.AI_REVIEW_REQUIRED),
                         details,
@@ -568,6 +1171,49 @@ class RightsWebService:
             if not str(item.get("social_security_number") or "").strip():
                 match = item.get("identity_match")
                 match = match if isinstance(match, dict) else {}
+                raw_candidates = match.get("candidates")
+                candidate_items = (
+                    raw_candidates if isinstance(raw_candidates, list) else []
+                )
+                public_candidates = []
+                for candidate_index, candidate in enumerate(
+                    candidate_items,
+                    start=1,
+                ):
+                    if not isinstance(candidate, dict):
+                        continue
+                    identity = str(
+                        candidate.get("identity_number") or ""
+                    ).strip()
+                    masked_identity = (
+                        f"{identity[:4]}**********{identity[-4:]}"
+                        if len(identity) >= 8
+                        else "未维护"
+                    )
+                    public_candidates.append(
+                        {
+                            "candidate_id": RightsWebService._candidate_id(
+                                candidate,
+                                candidate_index,
+                            ),
+                            "employee_code": str(
+                                candidate.get("employee_code") or ""
+                            ).strip(),
+                            "name": str(candidate.get("name") or person_name).strip(),
+                            "masked_identity": masked_identity,
+                            "department": str(
+                                candidate.get("department") or ""
+                            ).strip(),
+                            "company": str(
+                                candidate.get("company") or ""
+                            ).strip(),
+                            "status": str(
+                                candidate.get("status")
+                                or candidate.get("is_quit")
+                                or ""
+                            ).strip(),
+                        }
+                    )
                 add(
                     "pending",
                     task_number,
@@ -577,6 +1223,7 @@ class RightsWebService:
                     str(match.get("details") or "人员身份证号尚未匹配"),
                     row_number,
                     group_id,
+                    public_candidates,
                 )
         return issues
 
@@ -726,6 +1373,7 @@ class RightsWebService:
             if item.file_path is not None
         )
         unique_paths = list(dict.fromkeys(path.resolve() for path in paths if path.is_file()))
+        archive_path = self._create_download_archive(result)
         return {
             "mode": result.mode.value,
             "total": result.total,
@@ -734,6 +1382,11 @@ class RightsWebService:
             "erp_uploaded": result.erp_uploaded,
             "erp_failed": result.erp_failed,
             "artifacts": [self.artifacts.register(path) for path in unique_paths],
+            "archive": (
+                self.artifacts.register(archive_path)
+                if archive_path is not None
+                else None
+            ),
             "items": [
                 {
                     "row_number": item.row_number,
@@ -749,6 +1402,49 @@ class RightsWebService:
                 for item in result.items
             ],
         }
+
+    def _create_download_archive(self, result: ExcelRunResult) -> Path | None:
+        """Packages the user-facing PDF and Excel results into one download."""
+        downloadable: list[Path] = []
+        if (
+            result.result_workbook_path is not None
+            and result.result_workbook_path.is_file()
+        ):
+            downloadable.append(result.result_workbook_path.resolve())
+        downloadable.extend(
+            item.file_path.resolve()
+            for item in result.items
+            if item.file_path is not None and item.file_path.is_file()
+        )
+        downloadable = list(dict.fromkeys(downloadable))
+        if not downloadable:
+            return None
+
+        output_dir = result.manifest_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = output_dir / f"{output_dir.name}_完整结果.zip"
+        temporary_path = archive_path.with_suffix(".zip.tmp")
+        used_names: set[str] = set()
+        try:
+            with ZipFile(temporary_path, "w", compression=ZIP_DEFLATED) as archive:
+                for path in downloadable:
+                    archive.write(path, arcname=self._unique_archive_name(path.name, used_names))
+            temporary_path.replace(archive_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return archive_path
+
+    @staticmethod
+    def _unique_archive_name(filename: str, used_names: set[str]) -> str:
+        candidate = filename
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        counter = 2
+        while candidate in used_names:
+            candidate = f"{stem}_{counter}{suffix}"
+            counter += 1
+        used_names.add(candidate)
+        return candidate
 
     def _request(
         self,
@@ -777,7 +1473,11 @@ class RightsWebService:
     def _import_path(self, import_id: str) -> Path:
         if not _IMPORT_ID.fullmatch(import_id):
             raise ValueError("权益单导入记录编号无效")
-        matches = list(self.import_root.glob(f"{import_id}.*"))
+        matches = [
+            path
+            for suffix in (".xlsx", ".xlsm")
+            if (path := self.import_root / f"{import_id}{suffix}").is_file()
+        ]
         if len(matches) != 1 or not matches[0].is_file():
             raise ValueError("导入的 Excel 已失效，请重新上传")
         return matches[0]
@@ -808,6 +1508,7 @@ class RightsWebService:
                     end_month=self._month(person.end_month),
                     task_number=detail.code,
                     print_group_id=f"{detail.application_id}:{logical_group}",
+                    print_group_label=person.print_group or "单独打印",
                     print_group_sequence=sequences[logical_group],
                     source_print_mode=print_mode,
                     resolved_print_mode=print_mode,
@@ -822,6 +1523,7 @@ class RightsWebService:
         return {
             "row_number": record.row_number,
             "task_number": record.task_number,
+            "print_group": record.print_group_label,
             "unit": record.unit,
             "department": record.department,
             "name": record.name,

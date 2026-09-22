@@ -2,8 +2,8 @@
 
 环境初始化与运行文档：
 
-- [macOS 环境初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
-- [Windows 环境初始化与运行](docs/WINDOWS_SETUP_AND_RUN.md)
+- [macOS 服务器迁移、初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
+- [Windows 环境初始化、迁移与运行](docs/WINDOWS_SETUP_AND_RUN.md)
 - [Web 端开发与单服务器运行](docs/WEB_SETUP_AND_RUN.md)
 
 当前版本实现了单位权益单自动化的通用骨架：
@@ -40,8 +40,22 @@ playwright install chromium
 
 - `environment.backend.yml`：Python 3.11.15 和后端运行环境；
 - `environment.frontend.yml`：PySide6 + Qt Quick/QML 桌面前端；
+- `environment.server.yml`：Web 后端、浏览器自动化和前端构建所需的 Node.js；
 - `environment.windows-build.yml`：仅在 Windows 打包机安装；
 - `requirements/*.lock.txt`：各层精确的 Python 包版本。
+
+只部署 Web 工作台时使用服务器环境，并按平台迁移文档完成数据备份、前端构建和
+单实例启动：
+
+```bash
+conda env create -f environment.server.yml
+conda activate ehrm
+python -m playwright install chromium
+cd frontend
+npm ci
+npm run build
+cd ..
+```
 
 开发机也可以使用包含后端、前端和测试依赖的组合环境：
 

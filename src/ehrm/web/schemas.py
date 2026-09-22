@@ -85,6 +85,37 @@ class RightsTaskRequest(BaseModel):
     upload_to_erp: bool = False
 
 
+class RightsManualRecordRequest(BaseModel):
+    task_number: str = ""
+    print_group: str = ""
+    unit: str
+    department: str
+    name: str
+    identity_number: str
+    insurance_type: str
+    start_month: str
+    end_month: str
+
+
+class RightsCandidateSelectionRequest(BaseModel):
+    candidate_id: str
+
+
+class RightsPrintGroupResolutionRequest(BaseModel):
+    task_number: str
+    group_id: str
+    mode: str
+
+
+class RightsPrintGroupConditionsRequest(BaseModel):
+    task_number: str
+    group_id: str
+    insurance_type: str
+    start_month: str
+    end_month: str
+    overwrite: bool = False
+
+
 class ErpRightsExtractionRequest(BaseModel):
     account_id: int
     transaction_type: str

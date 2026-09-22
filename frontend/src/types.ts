@@ -87,6 +87,8 @@ export interface RightsImportPreview {
   record_count: number
   unique_person_count?: number
   group_count: number
+  estimated_pdf_count?: number
+  erp_upload_available?: boolean
   source?: 'excel' | 'erp'
   executable?: boolean
   records: Array<{
@@ -142,6 +144,30 @@ export interface RightsIssue {
   details: string
   row_number: number
   group_id: string
+  candidates?: RightsPersonCandidate[]
+}
+
+export interface RightsPersonCandidate {
+  candidate_id: string
+  employee_code: string
+  name: string
+  masked_identity: string
+  department: string
+  company: string
+  status: string
+}
+
+export interface RightsRecordDetail {
+  row_number: number
+  task_number: string
+  print_group: string
+  unit: string
+  department: string
+  name: string
+  identity_number: string
+  insurance_type: string
+  start_month: string
+  end_month: string
 }
 
 export interface ErpApplicationPreview {

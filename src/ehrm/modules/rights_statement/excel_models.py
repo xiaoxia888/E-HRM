@@ -22,6 +22,7 @@ class EmployeeRecord:
     end_month: str
     task_number: str
     print_group_id: str = ""
+    print_group_label: str = ""
     print_group_sequence: int = 0
     source_print_mode: str = ""
     resolved_print_mode: str = ""

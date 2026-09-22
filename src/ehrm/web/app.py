@@ -42,6 +42,10 @@ from ehrm.web.schemas import (
     TaskResponse,
     PreferencesUpdateRequest,
     RightsTaskRequest,
+    RightsManualRecordRequest,
+    RightsPrintGroupResolutionRequest,
+    RightsPrintGroupConditionsRequest,
+    RightsCandidateSelectionRequest,
 )
 from ehrm.web.rights_service import ArtifactRegistry, RightsWebService
 from ehrm.web.settings_service import WebSettingsService
@@ -365,6 +369,73 @@ def create_app(
             reasoning_mode=request.reasoning_mode,
         )
         return TaskResponse.from_snapshot(snapshot)
+
+    @app.get("/api/v1/rights/imports/{import_id}/records/{row_number}")
+    def get_rights_import_record(
+        import_id: str,
+        row_number: int,
+    ) -> dict[str, object]:
+        return rights_service.erp_record_detail(import_id, row_number)
+
+    @app.put("/api/v1/rights/imports/{import_id}/records/{row_number}")
+    def update_rights_import_record(
+        import_id: str,
+        row_number: int,
+        request: RightsManualRecordRequest,
+    ) -> dict[str, object]:
+        return rights_service.update_erp_record(
+            import_id,
+            row_number,
+            request.model_dump(),
+        )
+
+    @app.post("/api/v1/rights/imports/{import_id}/records")
+    def add_rights_import_record(
+        import_id: str,
+        request: RightsManualRecordRequest,
+    ) -> dict[str, object]:
+        return rights_service.add_erp_record(import_id, request.model_dump())
+
+    @app.post(
+        "/api/v1/rights/imports/{import_id}/records/{row_number}/candidate"
+    )
+    def select_rights_import_candidate(
+        import_id: str,
+        row_number: int,
+        request: RightsCandidateSelectionRequest,
+    ) -> dict[str, object]:
+        return rights_service.select_erp_candidate(
+            import_id,
+            row_number,
+            request.candidate_id,
+        )
+
+    @app.post("/api/v1/rights/imports/{import_id}/print-group")
+    def resolve_rights_print_group(
+        import_id: str,
+        request: RightsPrintGroupResolutionRequest,
+    ) -> dict[str, object]:
+        return rights_service.resolve_erp_print_group(
+            import_id,
+            request.task_number,
+            request.group_id,
+            request.mode,
+        )
+
+    @app.post("/api/v1/rights/imports/{import_id}/print-group/conditions")
+    def resolve_rights_print_group_conditions(
+        import_id: str,
+        request: RightsPrintGroupConditionsRequest,
+    ) -> dict[str, object]:
+        return rights_service.resolve_erp_print_group_conditions(
+            import_id,
+            task_number=request.task_number,
+            group_id=request.group_id,
+            insurance_type=request.insurance_type,
+            start_month=request.start_month,
+            end_month=request.end_month,
+            overwrite=request.overwrite,
+        )
 
     @app.get("/api/v1/rights/template", response_model=None)
     def download_rights_template() -> FileResponse:

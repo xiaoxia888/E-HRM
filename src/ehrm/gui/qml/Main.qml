@@ -677,6 +677,7 @@ ApplicationWindow {
                                                             primary: printGroupCard.modelData.resolvedMode === "combined"
                                                             outline: printGroupCard.modelData.resolvedMode !== "combined"
                                                             onClicked: window.backend.setPrintGroupMode(
+                                                                printGroupCard.modelData.taskNumber,
                                                                 printGroupCard.modelData.groupId,
                                                                 "combined"
                                                             )
@@ -688,6 +689,7 @@ ApplicationWindow {
                                                             primary: printGroupCard.modelData.resolvedMode === "individual"
                                                             outline: printGroupCard.modelData.resolvedMode !== "individual"
                                                             onClicked: window.backend.setPrintGroupMode(
+                                                                printGroupCard.modelData.taskNumber,
                                                                 printGroupCard.modelData.groupId,
                                                                 "individual"
                                                             )

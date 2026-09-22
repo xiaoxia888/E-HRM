@@ -60,8 +60,8 @@ def test_import_failure_emits_specific_row_details(tmp_path: Path) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
-    sheet.append(["测试单位", "信息部", "张三", "错误证件号", "医疗", "2025-01", "2025-06", "RLSQ20260819-0001"])
+    sheet.append(["打印组", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
+    sheet.append(["组1", "测试单位", "信息部", "张三", "错误证件号", "医疗", "2025-01", "2025-06"])
     path = tmp_path / "invalid.xlsx"
     workbook.save(path)
 
@@ -85,9 +85,9 @@ def test_successful_import_updates_preview_and_uses_safe_default(tmp_path: Path)
     application = QGuiApplication.instance() or QGuiApplication([])
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
-    sheet.append(["测试单位", "信息部", "张三", "320101199001011234", "养老", "2025-01", "2025-06", "RLSQ20260819-0001"])
-    sheet.append(["测试单位", "人事部", "李四", "320101199002021235", "养老", "2025-01", "2025-06", "RLSQ20260819-0001"])
+    sheet.append(["打印组", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
+    sheet.append(["组1", "测试单位", "信息部", "张三", "320101199001011234", "养老", "2025-01", "2025-06"])
+    sheet.append(["组1", "测试单位", "人事部", "李四", "320101199002021235", "养老", "2025-01", "2025-06"])
     path = tmp_path / "valid.xlsx"
     workbook.save(path)
 
@@ -101,7 +101,7 @@ def test_successful_import_updates_preview_and_uses_safe_default(tmp_path: Path)
     assert view_model.expectedPdfCount == 2
     assert view_model.batchExpectedPdfCount == 1
     assert view_model.records[0]["identity"] == "320101199001011234"
-    assert view_model.records[0]["taskNumber"] == "RLSQ20260819-0001"
+    assert view_model.records[0]["taskNumber"] == ""
 
 
 def test_erp_extraction_result_is_previewed_with_default_pension_insurance(
@@ -468,7 +468,7 @@ def test_erp_print_groups_are_previewed_and_unresolved_mode_can_be_selected(
     assert view_model.peopleCount == 3
     assert view_model.uniquePeopleCount == 2
     assert view_model.conditionCount == 2
-    assert view_model.expectedPdfCount == 1
+    assert view_model.expectedPdfCount == 3
     assert view_model.recordIssueCount == 1
     assert view_model.recordIssues[0]["code"] == "AI_PRINT_MODE_REQUIRED"
     assert [item["label"] for item in view_model.printGroups] == ["组1", "组2"]
@@ -478,12 +478,27 @@ def test_erp_print_groups_are_previewed_and_unresolved_mode_can_be_selected(
     ]
     assert view_model.printGroups[1]["modeRequired"]
 
-    view_model.setPrintGroupMode("RLSQ-GROUPS-G02", "combined")
+    view_model.setPrintGroupMode(
+        "RLSQ-GROUPS",
+        "RLSQ-GROUPS-G02",
+        "combined",
+    )
 
     assert view_model.recordIssueCount == 0
-    assert view_model.expectedPdfCount == 2
+    assert view_model.expectedPdfCount == 3
     assert view_model.printGroups[1]["resolvedMode"] == "combined"
     assert not view_model.printGroups[1]["modeRequired"]
+
+    view_model.setPrintGroupMode(
+        "RLSQ-GROUPS",
+        "RLSQ-GROUPS-G02",
+        "individual",
+    )
+
+    assert view_model.conditionCount == 3
+    assert view_model.expectedPdfCount == 3
+    assert len(view_model.printGroups) == 3
+    assert all(group["peopleCount"] == 1 for group in view_model.printGroups)
 
 
 def test_preview_edit_updates_person_and_synchronizes_group_conditions(
@@ -567,8 +582,8 @@ def test_preview_edit_rejects_invalid_identity_and_execution_revalidates(
     view_model = _view_model(tmp_path)
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
-    sheet.append(["单位", "部门", "张三", "320101199001011234", "养老", "2025-01", "2025-06", "RLSQ-001"])
+    sheet.append(["打印组", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
+    sheet.append(["组1", "单位", "部门", "张三", "320101199001011234", "养老", "2025-01", "2025-06"])
     path = tmp_path / "edit.xlsx"
     workbook.save(path)
     view_model.importExcel(QUrl.fromLocalFile(str(path)))
@@ -946,8 +961,8 @@ def test_double_clicking_preview_row_opens_record_editor(tmp_path: Path) -> None
     application = QGuiApplication.instance() or QGuiApplication([])
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间", "任务编号"])
-    sheet.append(["测试单位", "项目部", "张三", "320101199001011234", "养老", "2025-01", "2025-06", "RLSQ-001"])
+    sheet.append(["打印组", "单位", "部门", "姓名", "身份证", "险种", "开始时间", "结束时间"])
+    sheet.append(["组1", "测试单位", "项目部", "张三", "320101199001011234", "养老", "2025-01", "2025-06"])
     source = tmp_path / "double-click.xlsx"
     workbook.save(source)
     view_model = _view_model(tmp_path)

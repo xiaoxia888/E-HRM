@@ -343,6 +343,7 @@ class ExcelRightsStatementService:
         """Builds the same deterministic target for every print backend."""
         first = group.first
         pdf_root = output_dir / "PDF"
+        source_label = first.task_number or first.print_group_label or "Excel导入"
         group_suffix = (
             f"_组{first.print_group_sequence:02d}"
             if first.print_group_sequence
@@ -353,7 +354,7 @@ class ExcelRightsStatementService:
                 pdf_root / cls._safe(first.unit) / cls._safe(first.department)
             )
             filename = (
-                f"{cls._safe(first.task_number)}{group_suffix}_"
+                f"{cls._safe(source_label)}{group_suffix}_"
                 f"{cls._safe(first.name)}_"
                 f"{cls._safe(first.insurance_type)}_"
                 f"{first.start_month.replace('-', '')}-"
@@ -362,7 +363,7 @@ class ExcelRightsStatementService:
         else:
             target_dir = pdf_root / cls._safe(first.unit) / "批量"
             filename = (
-                f"{cls._safe(first.task_number)}_"
+                f"{cls._safe(source_label)}_"
                 f"{cls._safe(first.insurance_type)}_"
                 f"{first.start_month.replace('-', '')}-"
                 f"{first.end_month.replace('-', '')}_"

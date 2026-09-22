@@ -97,7 +97,7 @@ export function AppLayout() {
         </div>
       </Sider>
       <Layout>
-        <Content className="app-content">
+        <Content className={`app-content ${location.pathname === '/rights' ? 'app-content-fixed' : ''}`}>
           <Outlet />
         </Content>
       </Layout>

@@ -131,22 +131,34 @@ class ErpTaskExtractionService:
                 succeeded += 1
                 if extraction.needs_review:
                     review_tasks += 1
-                print_groups += len(extraction.groups)
-                for group_index, group in enumerate(
-                    extraction.groups,
-                    start=1,
-                ):
-                    group_id = self._group_id(record, group_index)
+                final_group_sequence = 0
+                for group in extraction.groups:
                     resolved_print_mode = group.print_mode
                     if resolved_print_mode is None and len(group.people) == 1:
                         resolved_print_mode = "individual"
                     if resolved_print_mode is None:
                         print_groups_pending_mode += 1
+
+                    shared_group_sequence: int | None = None
+                    if resolved_print_mode != "individual":
+                        final_group_sequence += 1
+                        shared_group_sequence = final_group_sequence
+
                     assigned_identities: set[str] = set()
                     for person_index, person in enumerate(
                         group.people,
                         start=1,
                     ):
+                        if resolved_print_mode == "individual":
+                            final_group_sequence += 1
+                            group_sequence = final_group_sequence
+                            group_people_count = 1
+                            final_person_sequence = 1
+                        else:
+                            group_sequence = shared_group_sequence or 1
+                            group_people_count = len(group.people)
+                            final_person_sequence = person_index
+                        group_id = self._group_id(record, group_sequence)
                         source_identity = self._identity_from_application_text(
                             record,
                             person.name,
@@ -154,7 +166,7 @@ class ErpTaskExtractionService:
                         )
                         if source_identity in assigned_identities:
                             self._logger.warning(
-                                "忽略同一打印组内重复分配的身份证 "
+                                "忽略同一模型打印组内重复分配的身份证 "
                                 "code=%s group=%s name=%s",
                                 record.code,
                                 group_id,
@@ -182,12 +194,13 @@ class ErpTaskExtractionService:
                                 "erp_record_id": record.id,
                                 "application_date": record.initiated_date,
                                 "group_id": group_id,
-                                "group_sequence": group_index,
-                                "group_people_count": len(group.people),
+                                "group_label": f"组{group_sequence}",
+                                "group_sequence": group_sequence,
+                                "group_people_count": group_people_count,
                                 "source_print_mode": group.print_mode,
                                 "resolved_print_mode": resolved_print_mode,
                                 "group_evidence": group.evidence,
-                                "person_sequence": person_index,
+                                "person_sequence": final_person_sequence,
                                 "name": person.name,
                                 "social_security_number": source_identity,
                                 "birth_year_hint": (
@@ -212,6 +225,7 @@ class ErpTaskExtractionService:
                                 "warnings": warnings,
                             }
                         )
+                print_groups += final_group_sequence
             except EhrmError as exc:
                 failed += 1
                 self._logger.error(
@@ -391,9 +405,13 @@ class ErpTaskExtractionService:
     @staticmethod
     def _candidate_payload(match: ErpPersonRecord) -> dict[str, str]:
         return {
+            "id": match.id,
             "employee_code": match.employee_code,
+            "name": match.name,
+            "identity_number": match.identity_number,
             "department": match.department,
             "company": match.company,
+            "status": match.status,
             "is_quit": match.is_quit,
         }
 

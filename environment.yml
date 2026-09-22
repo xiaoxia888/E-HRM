@@ -3,6 +3,8 @@ name: ehrm
 channels:
   - conda-forge
 
+# 桌面开发组合环境：后端、PySide6 GUI 和测试依赖。
+# Web 服务器部署请使用更精简的 environment.server.yml。
 dependencies:
   - python=3.11.15
   - pip

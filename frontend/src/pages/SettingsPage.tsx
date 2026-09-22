@@ -165,8 +165,7 @@ function DownloadsSection() {
     <>
       <Row gutter={20}>
         <Col span={24}><Form.Item name="output_path" label="服务器默认保存位置" extra="留空时保存到程序 runtime/output/rights 目录"><Input placeholder="例如 D:\\E-HRM\\output" /></Form.Item></Col>
-        <Col xs={24} lg={12}><Form.Item name="export_mode" label="默认导出方式"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: '每人一份', value: 'individual' }, { label: '相同条件合并', value: 'batch' }]} /></Form.Item></Col>
-        <Col xs={24} lg={12}><Form.Item name="batch_size" label="单批最多人数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item></Col>
+        <Col span={24}><Form.Item name="export_mode" label="默认导出方式"><Radio.Group optionType="button" buttonStyle="solid" options={[{ label: '每人单独一份', value: 'individual' }, { label: '按打印组', value: 'batch' }]} /></Form.Item></Col>
       </Row>
       <Card size="small" title="任务完成行为">
         <Space direction="vertical" size={18}>

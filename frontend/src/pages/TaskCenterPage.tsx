@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button, Card, Descriptions, Drawer, Empty, message, Progress, Space, Table, Typography } from 'antd'
-import { StopOutlined } from '@ant-design/icons'
+import { DownloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { api } from '../api/queries'
@@ -28,6 +28,7 @@ export function TaskCenterPage() {
   const tasks = data?.tasks ?? []
   const selected = tasks.find((task) => task.task_id === selectedTaskId) ?? null
   const artifacts = resultArtifacts(selected?.result)
+  const archive = resultArchive(selected?.result)
   return (
     <div className="page-stack">
       <PageTitle
@@ -99,9 +100,14 @@ export function TaskCenterPage() {
                 <Typography.Text type="danger">{selected.error}</Typography.Text>
               </Card>
             )}
-            {artifacts.length > 0 && (
+            {(archive || artifacts.length > 0) && (
               <Card size="small" title="结果文件">
                 <Space direction="vertical">
+                  {archive && (
+                    <Button type="primary" icon={<DownloadOutlined />} href={archive.url}>
+                      下载全部结果（ZIP）
+                    </Button>
+                  )}
                   {artifacts.map((artifact) => (
                     <Button key={artifact.url} type="link" href={artifact.url}>
                       {artifact.name}
@@ -128,4 +134,13 @@ function resultArtifacts(value: unknown): Array<{ name: string; url: string }> {
       && typeof (item as { name?: unknown }).name === 'string'
       && typeof (item as { url?: unknown }).url === 'string',
   )
+}
+
+function resultArchive(value: unknown): { name: string; url: string } | null {
+  if (!value || typeof value !== 'object' || !('archive' in value)) return null
+  const archive = (value as { archive?: unknown }).archive
+  if (!archive || typeof archive !== 'object') return null
+  if (typeof (archive as { name?: unknown }).name !== 'string') return null
+  if (typeof (archive as { url?: unknown }).url !== 'string') return null
+  return archive as { name: string; url: string }
 }

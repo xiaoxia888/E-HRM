@@ -18,6 +18,7 @@ from ehrm.modules.rights_statement.excel_models import (
 
 
 REQUIRED_HEADERS = (
+    "打印组",
     "单位",
     "部门",
     "姓名",
@@ -25,7 +26,6 @@ REQUIRED_HEADERS = (
     "险种",
     "开始时间",
     "结束时间",
-    "任务编号",
 )
 _IDENTITY_PATTERN = re.compile(r"^(?:\d{15}|\d{17}[0-9Xx])$")
 _MONTH_PATTERN = re.compile(r"^(\d{4})[-/.年]?(0?[1-9]|1[0-2])(?:月)?$")
@@ -58,7 +58,12 @@ class RightsStatementExcelLoader:
             if missing:
                 raise ExcelValidationError("Excel 缺少必要列：" + "、".join(missing))
             indexes = {header: headers.index(header) for header in REQUIRED_HEADERS}
-            for optional_header in ("打印组", "打印方式"):
+            for optional_header in (
+                "ERP申请编号",
+                "ERP 申请编号",
+                "任务编号",
+                "打印方式",
+            ):
                 if optional_header in headers:
                     indexes[optional_header] = headers.index(optional_header)
 
@@ -72,6 +77,7 @@ class RightsStatementExcelLoader:
                     record = self._parse_row(row_number, values, indexes)
                     dedupe_key = (
                         record.task_number,
+                        record.print_group_id,
                         record.identity_number,
                         record.insurance_type,
                         record.start_month,
@@ -104,7 +110,7 @@ class RightsStatementExcelLoader:
         if batch_size < 1:
             raise ExcelValidationError("batch_size 必须大于 0")
         if any(record.print_group_id for record in records):
-            return self._plan_print_groups(records, batch_size)
+            return self._plan_print_groups(records, mode)
         if mode is ExportMode.INDIVIDUAL:
             return [
                 WorkGroup(
@@ -176,8 +182,9 @@ class RightsStatementExcelLoader:
                     (item.insurance_type, item.start_month, item.end_month)
                 )
         inconsistent = [
-            group_id
-            for (_, group_id), conditions in grouped_conditions.items()
+            f"{task_number or '未填写ERP申请编号'} / "
+            f"{'默认组' if group_id == '__DEFAULT__' else group_id}"
+            for (task_number, group_id), conditions in grouped_conditions.items()
             if len(conditions) > 1
         ]
         if inconsistent:
@@ -198,9 +205,9 @@ class RightsStatementExcelLoader:
             raise ValueError("险种只能选择养老、工伤或失业")
         start = self._month(record.start_month, "开始时间")
         end = self._month(record.end_month, "结束时间")
-        task_number = self._required_text(record.task_number, "任务编号")
-        if not _TASK_NUMBER_PATTERN.fullmatch(task_number):
-            raise ValueError("任务编号只能包含字母、数字、下划线和短横线")
+        task_number = self._optional_text(record.task_number)
+        if task_number and not _TASK_NUMBER_PATTERN.fullmatch(task_number):
+            raise ValueError("ERP申请编号只能包含字母、数字、下划线和短横线")
         if start > end:
             raise ValueError("开始时间不能晚于结束时间")
         return replace(
@@ -218,7 +225,7 @@ class RightsStatementExcelLoader:
     @staticmethod
     def _plan_print_groups(
         records: list[EmployeeRecord],
-        batch_size: int,
+        mode: ExportMode,
     ) -> list[WorkGroup]:
         grouped: dict[tuple[str, str], list[EmployeeRecord]] = defaultdict(list)
         for record in records:
@@ -235,15 +242,16 @@ class RightsStatementExcelLoader:
                     record.insurance_type,
                     record.start_month,
                     record.end_month,
-                    record.resolved_print_mode,
                 )
                 for record in group_records
             }
             if len(conditions) != 1:
                 raise ExcelValidationError(
-                    f"打印组 {first.print_group_id} 内查询条件不一致"
+                    "打印组条件不一致："
+                    f"{first.task_number or '未填写ERP申请编号'} / "
+                    f"{'默认组' if first.print_group_id == '__DEFAULT__' else first.print_group_id}"
                 )
-            if first.resolved_print_mode == ExportMode.INDIVIDUAL.value:
+            if mode is ExportMode.INDIVIDUAL:
                 for record in group_records:
                     plans.append(
                         WorkGroup(
@@ -254,21 +262,18 @@ class RightsStatementExcelLoader:
                     )
                     sequence += 1
                 continue
-            if first.resolved_print_mode == "combined":
-                for offset in range(0, len(group_records), batch_size):
-                    plans.append(
-                        WorkGroup(
-                            sequence=sequence,
-                            records=tuple(
-                                group_records[offset : offset + batch_size]
-                            ),
-                            mode=ExportMode.BATCH,
-                        )
-                    )
-                    sequence += 1
-                continue
-            # A multi-person group without an explicit or user-resolved mode
-            # remains visible in the preview but is intentionally not executable.
+            plans.append(
+                WorkGroup(
+                    sequence=sequence,
+                    records=tuple(group_records),
+                    mode=(
+                        ExportMode.INDIVIDUAL
+                        if len(group_records) == 1
+                        else ExportMode.BATCH
+                    ),
+                )
+            )
+            sequence += 1
         return plans
 
     def _parse_row(
@@ -287,15 +292,22 @@ class RightsStatementExcelLoader:
             raise ValueError("险种只能选择养老、工伤或失业")
         start = self._month(value("开始时间"), "开始时间")
         end = self._month(value("结束时间"), "结束时间")
-        task_number = self._required_text(value("任务编号"), "任务编号")
-        if not _TASK_NUMBER_PATTERN.fullmatch(task_number):
-            raise ValueError("任务编号只能包含字母、数字、下划线和短横线")
+        task_header = next(
+            (
+                header
+                for header in ("ERP申请编号", "ERP 申请编号", "任务编号")
+                if header in indexes
+            ),
+            "",
+        )
+        task_number = self._optional_text(value(task_header)) if task_header else ""
+        if task_number and not _TASK_NUMBER_PATTERN.fullmatch(task_number):
+            raise ValueError("ERP申请编号只能包含字母、数字、下划线和短横线")
         if start > end:
             raise ValueError("开始时间不能晚于结束时间")
         print_group = (
             self._optional_text(value("打印组"))
-            if "打印组" in indexes
-            else ""
+            if "打印组" in indexes else ""
         )
         print_mode = (
             self._optional_text(value("打印方式"))
@@ -313,7 +325,8 @@ class RightsStatementExcelLoader:
             start_month=start,
             end_month=end,
             task_number=task_number,
-            print_group_id=(f"{task_number}:{print_group}" if print_group else ""),
+            print_group_id=print_group or "__DEFAULT__",
+            print_group_label=print_group,
             print_group_sequence=(
                 int(group_sequence_match.group(1))
                 if group_sequence_match

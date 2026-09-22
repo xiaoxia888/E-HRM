@@ -12,7 +12,8 @@ from ehrm.modules.rights_statement.excel_models import EmployeeRecord
 
 class RightsStatementTemplateService:
     HEADERS = (
-        "任务编号",
+        "ERP申请编号",
+        "打印组",
         "单位",
         "部门",
         "姓名",
@@ -22,18 +23,7 @@ class RightsStatementTemplateService:
         "结束时间",
     )
     INSURANCE_OPTIONS = ("养老", "工伤", "失业")
-    ERP_HEADERS = (
-        "任务编号",
-        "打印组",
-        "打印方式",
-        "单位",
-        "部门",
-        "姓名",
-        "身份证",
-        "险种",
-        "开始时间",
-        "结束时间",
-    )
+    ERP_HEADERS = HEADERS
 
     def write(self, destination: Path) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -49,26 +39,28 @@ class RightsStatementTemplateService:
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
         sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = "A1:H1"
+        sheet.auto_filter.ref = "A1:I1"
         sheet.row_dimensions[1].height = 26
         widths = {
             "A": 24,
-            "B": 24,
-            "C": 18,
-            "D": 14,
-            "E": 24,
-            "F": 13,
-            "G": 16,
+            "B": 18,
+            "C": 24,
+            "D": 18,
+            "E": 14,
+            "F": 24,
+            "G": 13,
             "H": 16,
+            "I": 16,
         }
         for column, width in widths.items():
             sheet.column_dimensions[column].width = width
 
         for row in range(2, 1002):
             sheet.cell(row=row, column=1).number_format = "@"
-            sheet.cell(row=row, column=5).number_format = "@"
-            sheet.cell(row=row, column=7).number_format = "yyyy-mm"
+            sheet.cell(row=row, column=2).number_format = "@"
+            sheet.cell(row=row, column=6).number_format = "@"
             sheet.cell(row=row, column=8).number_format = "yyyy-mm"
+            sheet.cell(row=row, column=9).number_format = "yyyy-mm"
 
         insurance_validation = DataValidation(
             type="list",
@@ -82,18 +74,25 @@ class RightsStatementTemplateService:
         insurance_validation.showInputMessage = True
         insurance_validation.showErrorMessage = True
         sheet.add_data_validation(insurance_validation)
-        insurance_validation.add("F2:F1001")
+        insurance_validation.add("G2:G1001")
 
         invalid_period_fill = PatternFill("solid", fgColor="FDE9E7")
         sheet.conditional_formatting.add(
-            "H2:H1001",
-            FormulaRule(formula=["AND(G2<>\"\",H2<>\"\",G2>H2)"], fill=invalid_period_fill),
+            "I2:I1001",
+            FormulaRule(formula=["AND(H2<>\"\",I2<>\"\",H2>I2)"], fill=invalid_period_fill),
         )
 
         guide = workbook.create_sheet("填写说明")
         guide_rows = (
             ("字段", "填写要求"),
-            ("任务编号", "必填，ERP 人力资源事务申请编号，例如 RLSQ20260819-0001"),
+            (
+                "ERP申请编号",
+                "可留空；填写后可将生成的权益单上传到对应 ERP 申请",
+            ),
+            (
+                "打印组",
+                "可留空；相同内容打印到同一组，不同内容分开打印。所有空白人员打印到同一组",
+            ),
             ("单位", "必填，填写参保单位名称"),
             ("部门", "必填，用于结果文件归类"),
             ("姓名", "必填"),
@@ -138,6 +137,7 @@ class RightsStatementTemplateService:
         for record in records:
             values = [
                 record.task_number,
+                record.print_group_label,
                 record.unit,
                 record.department,
                 record.name,
@@ -147,63 +147,38 @@ class RightsStatementTemplateService:
                 record.end_month,
             ]
             if include_print_groups:
-                values = [
-                    record.task_number,
-                    (
+                values[1] = (
+                    record.print_group_label
+                    or (
                         f"组{record.print_group_sequence}"
                         if record.print_group_sequence
                         else ""
-                    ),
-                    {
-                        "combined": "合并打印",
-                        "individual": "每人单独一份",
-                    }.get(record.resolved_print_mode, "待确认"),
-                    record.unit,
-                    record.department,
-                    record.name,
-                    record.identity_number,
-                    record.insurance_type,
-                    record.start_month,
-                    record.end_month,
-                ]
+                    )
+                )
             sheet.append(values)
             row = sheet.max_row
             sheet.cell(row=row, column=1).number_format = "@"
-            identity_column = 7 if include_print_groups else 5
-            start_column = 9 if include_print_groups else 7
-            end_column = 10 if include_print_groups else 8
+            identity_column = 6
+            start_column = 8
+            end_column = 9
             sheet.cell(row=row, column=identity_column).number_format = "@"
             sheet.cell(row=row, column=start_column).number_format = "@"
             sheet.cell(row=row, column=end_column).number_format = "@"
         sheet.freeze_panes = "A2"
-        last_column = "J" if include_print_groups else "H"
+        last_column = "I"
         sheet.auto_filter.ref = f"A1:{last_column}{max(1, sheet.max_row)}"
         sheet.row_dimensions[1].height = 26
-        widths = (
-            {
-                "A": 24,
-                "B": 12,
-                "C": 18,
-                "D": 24,
-                "E": 18,
-                "F": 14,
-                "G": 24,
-                "H": 13,
-                "I": 16,
-                "J": 16,
-            }
-            if include_print_groups
-            else {
-                "A": 24,
-                "B": 24,
-                "C": 18,
-                "D": 14,
-                "E": 24,
-                "F": 13,
-                "G": 16,
-                "H": 16,
-            }
-        )
+        widths = {
+            "A": 24,
+            "B": 18,
+            "C": 24,
+            "D": 18,
+            "E": 14,
+            "F": 24,
+            "G": 13,
+            "H": 16,
+            "I": 16,
+        }
         for column, width in widths.items():
             sheet.column_dimensions[column].width = width
         workbook.save(destination)

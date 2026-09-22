@@ -3,15 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import sys
+from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QCoreApplication, QStandardPaths
+if TYPE_CHECKING:
+    from PySide6.QtCore import QCoreApplication
 
 
 APPLICATION_NAME = "信息化人力工作台"
 ORGANIZATION_NAME = "NJNCC"
 
 
-def configure_application_identity(application: QCoreApplication) -> None:
+def configure_application_identity(application: "QCoreApplication") -> None:
     """Applies a stable application identity to every Qt entry point."""
 
     application.setApplicationName(APPLICATION_NAME)
@@ -67,6 +69,11 @@ def migrate_legacy_preferences(
     if destination.exists():
         return False
     if legacy_root is None:
+        # Qt is a desktop-only dependency. Import it only for the legacy GUI
+        # migration so the Web server can run from environment.server.yml
+        # without installing the complete PySide6 desktop stack.
+        from PySide6.QtCore import QStandardPaths
+
         location = QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.AppDataLocation
         )

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
 from datetime import datetime
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
 from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.settings import load_settings
 from ehrm.gui.template_service import RightsStatementTemplateService
-from ehrm.modules.rights_statement.excel_models import EmployeeRecord
+from ehrm.modules.rights_statement.excel_models import (
+    EmployeeRecord,
+    ExcelRunResult,
+    ExportMode,
+    ItemResult,
+)
 from ehrm.modules.nocobase.models import (
     NocoBaseRelatedPerson,
     NocoBaseRightsApplicationDetail,
@@ -80,6 +87,51 @@ def test_pdf_artifact_supports_inline_preview_and_download(tmp_path: Path) -> No
         download = client.get(artifact["url"])
         assert download.status_code == 200
         assert download.headers["content-disposition"].startswith("attachment")
+    finally:
+        coordinator.close()
+
+
+def test_rights_result_archive_contains_pdfs_and_result_excel_only(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    output_dir = tmp_path / "RLSQ-001_权益单_20260922_120000"
+    output_dir.mkdir()
+    manifest = output_dir / "result.json"
+    workbook = output_dir / "权益单处理结果.xlsx"
+    first_pdf = output_dir / "第一组.pdf"
+    second_pdf = output_dir / "第二组.pdf"
+    manifest.write_text("{}", encoding="utf-8")
+    workbook.write_bytes(b"excel")
+    first_pdf.write_bytes(b"%PDF-1.4 first")
+    second_pdf.write_bytes(b"%PDF-1.4 second")
+    result = ExcelRunResult(
+        mode=ExportMode.BATCH,
+        total=3,
+        succeeded=3,
+        failed=0,
+        manifest_path=manifest,
+        result_workbook_path=workbook,
+        items=(
+            ItemResult(1, True, "SUCCESS", "成功", first_pdf),
+            ItemResult(2, True, "SUCCESS", "成功", first_pdf),
+            ItemResult(3, True, "SUCCESS", "成功", second_pdf),
+        ),
+    )
+    try:
+        payload = client.app.state.rights_service._result_payload(result)
+        archive = payload["archive"]
+        assert archive is not None
+        response = client.get(archive["url"])
+        assert response.status_code == 200
+        assert response.headers["content-disposition"].startswith("attachment")
+        with ZipFile(BytesIO(response.content)) as zipped:
+            assert set(zipped.namelist()) == {
+                "第一组.pdf",
+                "第二组.pdf",
+                "权益单处理结果.xlsx",
+            }
+            assert "result.json" not in zipped.namelist()
     finally:
         coordinator.close()
 
@@ -291,6 +343,68 @@ def test_rights_excel_import_can_start_account_scoped_task(tmp_path: Path) -> No
         coordinator.close()
 
 
+def test_excel_without_erp_application_number_cannot_upload_to_erp(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    account = repository.save_account(
+        SystemType.JSHRSS,
+        "unit-account",
+        "saved-password",
+        secondary_account="mobile-id",
+        display_name="南京测试单位",
+    )
+    source = RightsStatementTemplateService().write_records(
+        tmp_path / "rights-without-erp-code.xlsx",
+        [
+            EmployeeRecord(
+                row_number=2,
+                unit="南京南化建设有限公司",
+                department="第十六分公司",
+                name="张三",
+                identity_number="320101199001011234",
+                insurance_type="养老",
+                start_month="2026-01",
+                end_month="2026-06",
+                task_number="",
+                print_group_id="__DEFAULT__",
+            )
+        ],
+        include_print_groups=False,
+    )
+    try:
+        imported = client.post(
+            "/api/v1/rights/import",
+            files={
+                "file": (
+                    source.name,
+                    source.read_bytes(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert imported.status_code == 200
+        preview = imported.json()
+        assert preview["erp_upload_available"] is False
+        assert preview["group_count"] == 1
+
+        started = client.post(
+            "/api/v1/rights/tasks",
+            json={
+                "import_id": preview["import_id"],
+                "account_id": account.id,
+                "export_mode": "batch",
+                "batch_size": 50,
+                "upload_to_erp": True,
+            },
+        )
+        assert started.status_code == 400
+        assert "未填写 ERP申请编号" in started.json()["message"]
+    finally:
+        coordinator.close()
+
+
 def test_erp_application_extraction_returns_rights_preview_on_same_page(
     tmp_path: Path,
 ) -> None:
@@ -422,6 +536,641 @@ def test_erp_application_extraction_returns_rights_preview_on_same_page(
         assert [group["people_count"] for group in preview["print_groups"]] == [2, 1]
         assert [person["name"] for person in preview["print_groups"][1]["people"]] == ["张三"]
         assert preview["applications"][0]["description"] == "张三申请养老权益单"
+    finally:
+        coordinator.close()
+
+
+def test_erp_preview_supports_manual_entry_and_candidate_selection(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    result = {
+        "tasks": [
+            {
+                "sequence": 1,
+                "task_number": "RLSQ-MANUAL-001",
+                "title": "权益单申请",
+                "description": "两名人员申请权益单",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": [
+            {
+                "task_number": "RLSQ-MANUAL-001",
+                "group_id": "RLSQ-MANUAL-001-G01",
+                "group_sequence": 1,
+                "group_people_count": 1,
+                "name": "未匹配人员",
+                "social_security_number": None,
+                "insurance_type": "养老",
+                "start_month": "",
+                "end_month": "",
+                "resolved_print_mode": "individual",
+                "review_reasons": [],
+                "warnings": [],
+                "identity_match": {
+                    "code": "ERP_PERSON_NOT_FOUND",
+                    "message": "ERP 人员库中未找到对应人员",
+                    "details": "ERP 人员库未找到姓名对应的人员",
+                },
+            },
+            {
+                "task_number": "RLSQ-MANUAL-001",
+                "group_id": "RLSQ-MANUAL-001-G02",
+                "group_sequence": 2,
+                "group_people_count": 1,
+                "name": "张三",
+                "social_security_number": None,
+                "insurance_type": "养老",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+                "resolved_print_mode": "individual",
+                "review_reasons": [],
+                "warnings": [],
+                "identity_match": {
+                    "code": "ERP_PERSON_AMBIGUOUS",
+                    "message": "ERP 人员库中存在多名同名人员",
+                    "details": "查询到 2 名匹配人员，请人工核对",
+                    "candidates": [
+                        {
+                            "id": "person-1",
+                            "employee_code": "E001",
+                            "name": "张三",
+                            "identity_number": "320101199001011234",
+                            "department": "一部",
+                            "company": "测试单位",
+                            "status": "在职",
+                            "is_quit": "在职",
+                        },
+                        {
+                            "id": "person-2",
+                            "employee_code": "E002",
+                            "name": "张三",
+                            "identity_number": "320101199002021235",
+                            "department": "二部",
+                            "company": "测试单位",
+                            "status": "在职",
+                            "is_quit": "在职",
+                        },
+                    ],
+                },
+            },
+        ],
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        ambiguous = next(
+            issue
+            for issue in preview["issues"]
+            if issue["code"] == "ERP_PERSON_AMBIGUOUS"
+        )
+        assert len(ambiguous["candidates"]) == 2
+        assert ambiguous["candidates"][0]["masked_identity"].startswith("3201")
+        assert "199001" not in str(ambiguous["candidates"])
+
+        detail = client.get(f"/api/v1/rights/imports/{import_id}/records/2")
+        assert detail.status_code == 200
+        assert detail.json()["name"] == "未匹配人员"
+
+        manually_fixed = client.put(
+            f"/api/v1/rights/imports/{import_id}/records/2",
+            json={
+                "unit": "南京南化建设有限公司",
+                "department": "人力资源部",
+                "name": "宋伯伦",
+                "identity_number": "320101199003031236",
+                "insurance_type": "养老",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+            },
+        )
+        assert manually_fixed.status_code == 200
+        assert manually_fixed.json()["records"][0]["status"] == "success"
+        assert manually_fixed.json()["executable"] is False
+
+        selected = client.post(
+            f"/api/v1/rights/imports/{import_id}/records/3/candidate",
+            json={"candidate_id": "person-2"},
+        )
+        assert selected.status_code == 200
+        selected_preview = selected.json()
+        assert selected_preview["executable"] is True
+        assert selected_preview["issues"] == []
+        assert selected_preview["records"][1]["department"] == "二部"
+        assert service.loader.load(service._import_path(import_id))[1].identity_number == (
+            "320101199002021235"
+        )
+    finally:
+        coordinator.close()
+
+
+def test_erp_preview_supports_adding_person_when_ai_found_none(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    result = {
+        "tasks": [
+            {
+                "sequence": 1,
+                "task_number": "RLSQ-MANUAL-002",
+                "title": "权益单申请",
+                "description": "申请内容没有被正确识别",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": [],
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        assert preview["issues"][0]["code"] == "AI_NO_PERSON_EXTRACTED"
+
+        added = client.post(
+            f"/api/v1/rights/imports/{import_id}/records",
+            json={
+                "task_number": "RLSQ-MANUAL-002",
+                "unit": "南京南化建设有限公司",
+                "department": "人力资源部",
+                "name": "王五",
+                "identity_number": "320101199004041237",
+                "insurance_type": "养老",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+            },
+        )
+        assert added.status_code == 200
+        assert added.json()["record_count"] == 1
+        assert added.json()["executable"] is True
+        assert added.json()["issues"] == []
+    finally:
+        coordinator.close()
+
+
+def test_candidate_selection_does_not_require_or_clear_group_dates(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    result = {
+        "tasks": [
+            {
+                "task_number": "RLSQ-CANDIDATE-DATE-001",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": [
+            {
+                "task_number": "RLSQ-CANDIDATE-DATE-001",
+                "group_id": "G01",
+                "group_sequence": 1,
+                "group_people_count": 1,
+                "name": "刘洋",
+                "social_security_number": None,
+                "insurance_type": "养老",
+                "start_month": "",
+                "end_month": "",
+                "resolved_print_mode": "individual",
+                "review_reasons": ["原文中的时间条件存在多种解释"],
+                "warnings": [],
+                "identity_match": {
+                    "code": "ERP_PERSON_AMBIGUOUS",
+                    "message": "查询到多名匹配人员，请人工核对",
+                    "candidates": [
+                        {
+                            "id": "person-1",
+                            "employee_code": "E001",
+                            "name": "刘洋",
+                            "identity_number": "320101199001011234",
+                            "department": "一部",
+                            "company": "测试单位",
+                            "status": "在职",
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        selected = client.post(
+            f"/api/v1/rights/imports/{import_id}/records/2/candidate",
+            json={"candidate_id": "person-1"},
+        )
+        assert selected.status_code == 200
+        payload = selected.json()
+        assert payload["records"][0]["identity_number"].startswith("3201")
+        assert all(
+            issue["code"] != "ERP_PERSON_AMBIGUOUS"
+            for issue in payload["issues"]
+        )
+        assert any(
+            issue["code"] == "PRINT_GROUP_CONDITION_MISSING"
+            for issue in payload["issues"]
+        )
+        assert any(
+            issue["code"] == "AI_REVIEW_REQUIRED"
+            for issue in payload["issues"]
+        )
+        assert payload["executable"] is False
+    finally:
+        coordinator.close()
+
+
+def test_erp_date_and_print_mode_issues_are_resolved_per_print_group(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    requests = []
+    for name, identity in (
+        ("张三", "320101199001011234"),
+        ("李四", "320101199002021235"),
+        ("王五", "320101199003031236"),
+    ):
+        requests.append(
+            {
+                "task_number": "RLSQ-GROUP-DATE-001",
+                "group_id": "RLSQ-GROUP-DATE-001-G01",
+                "group_sequence": 1,
+                "group_people_count": 3,
+                "source_print_mode": None,
+                "resolved_print_mode": None,
+                "name": name,
+                "social_security_number": identity,
+                "insurance_type": "养老",
+                "start_month": "",
+                "end_month": "",
+                "review_reasons": ["原文中的时间条件存在多种解释"],
+                "warnings": [],
+                "identity_match": {
+                    "code": "SUCCESS",
+                    "company": "测试单位",
+                    "department": "项目部",
+                },
+            }
+        )
+    result = {
+        "tasks": [
+            {
+                "task_number": "RLSQ-GROUP-DATE-001",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": requests,
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        assert sum(issue["code"] == "PRINT_GROUP_CONDITION_MISSING" for issue in preview["issues"]) == 1
+        assert sum(issue["code"] == "AI_REVIEW_REQUIRED" for issue in preview["issues"]) == 1
+        assert sum(issue["code"] == "AI_PRINT_MODE_REQUIRED" for issue in preview["issues"]) == 1
+
+        resolved_group = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group",
+            json={
+                "task_number": "RLSQ-GROUP-DATE-001",
+                "group_id": "RLSQ-GROUP-DATE-001-G01",
+                "mode": "batch",
+            },
+        )
+        assert resolved_group.status_code == 200
+        assert all(
+            issue["code"] != "AI_PRINT_MODE_REQUIRED"
+            for issue in resolved_group.json()["issues"]
+        )
+
+        resolved_dates = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group/conditions",
+            json={
+                "task_number": "RLSQ-GROUP-DATE-001",
+                "group_id": "RLSQ-GROUP-DATE-001-G01",
+                "insurance_type": "养老",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+                "overwrite": False,
+            },
+        )
+        assert resolved_dates.status_code == 200
+        payload = resolved_dates.json()
+        assert payload["executable"] is True
+        assert payload["issues"] == []
+        assert {
+            (record["start_month"], record["end_month"])
+            for record in payload["records"]
+        } == {("2026-01", "2026-06")}
+
+        split_group = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group",
+            json={
+                "task_number": "RLSQ-GROUP-DATE-001",
+                "group_id": "RLSQ-GROUP-DATE-001-G01",
+                "mode": "individual",
+            },
+        )
+        assert split_group.status_code == 200
+        split_records = split_group.json()["records"]
+        assert [record["print_group_id"] for record in split_records] == [
+            "RLSQ-GROUP-DATE-001-G01",
+            "RLSQ-GROUP-DATE-001-G02",
+            "RLSQ-GROUP-DATE-001-G03",
+        ]
+        assert len({record["print_group"] for record in split_records}) == 3
+    finally:
+        coordinator.close()
+
+
+def test_group_condition_fill_preserves_existing_values_then_reports_conflict(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    requests = []
+    for index, (name, identity) in enumerate(
+        (
+            ("张三", "320101199001011234"),
+            ("李四", "320101199002021235"),
+            ("王五", "320101199003031236"),
+        )
+    ):
+        requests.append(
+            {
+                "task_number": "RLSQ-COMPOSITE-001",
+                "group_id": "G01",
+                "group_sequence": 1,
+                "group_people_count": 3,
+                "source_print_mode": "combined",
+                "resolved_print_mode": "combined",
+                "name": name,
+                "social_security_number": identity,
+                "insurance_type": "养老" if index < 2 else "",
+                "start_month": "2025-01" if index < 2 else "",
+                "end_month": "2025-06" if index < 2 else "",
+                "review_reasons": [],
+                "warnings": [],
+                "identity_match": {
+                    "code": "SUCCESS",
+                    "company": "测试单位",
+                    "department": "项目部",
+                },
+            }
+        )
+    result = {
+        "tasks": [
+            {
+                "task_number": "RLSQ-COMPOSITE-001",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": requests,
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        assert [issue["code"] for issue in preview["issues"]] == [
+            "PRINT_GROUP_CONDITION_MISSING"
+        ]
+
+        filled = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group/conditions",
+            json={
+                "task_number": "RLSQ-COMPOSITE-001",
+                "group_id": "G01",
+                "insurance_type": "工伤",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+                "overwrite": False,
+            },
+        )
+        assert filled.status_code == 200
+        filled_payload = filled.json()
+        conditions = [
+            (
+                record["insurance_type"],
+                record["start_month"],
+                record["end_month"],
+            )
+            for record in filled_payload["records"]
+        ]
+        assert conditions[:2] == [
+            ("养老", "2025-01", "2025-06"),
+            ("养老", "2025-01", "2025-06"),
+        ]
+        assert conditions[2] == ("工伤", "2026-01", "2026-06")
+        assert any(
+            issue["code"] == "PRINT_GROUP_CONDITION_CONFLICT"
+            for issue in filled_payload["issues"]
+        )
+
+        unified = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group/conditions",
+            json={
+                "task_number": "RLSQ-COMPOSITE-001",
+                "group_id": "G01",
+                "insurance_type": "工伤",
+                "start_month": "2026-01",
+                "end_month": "2026-06",
+                "overwrite": True,
+            },
+        )
+        assert unified.status_code == 200
+        unified_payload = unified.json()
+        assert {
+            (
+                record["insurance_type"],
+                record["start_month"],
+                record["end_month"],
+            )
+            for record in unified_payload["records"]
+        } == {("工伤", "2026-01", "2026-06")}
+        assert unified_payload["issues"] == []
+        assert unified_payload["executable"] is True
+    finally:
+        coordinator.close()
+
+
+def test_manual_person_edit_can_move_between_groups_and_revalidates_conditions(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    requests = [
+        {
+            "task_number": "RLSQ-EDIT-001",
+            "group_id": group_id,
+            "group_label": group_label,
+            "group_sequence": sequence,
+            "group_people_count": 1,
+            "source_print_mode": "combined",
+            "resolved_print_mode": "combined",
+            "name": name,
+            "social_security_number": identity,
+            "insurance_type": insurance,
+            "start_month": start,
+            "end_month": end,
+            "review_reasons": [],
+            "warnings": [],
+            "identity_match": {
+                "code": "SUCCESS",
+                "company": "测试单位",
+                "department": "项目部",
+            },
+        }
+        for group_id, group_label, sequence, name, identity, insurance, start, end in (
+            (
+                "G01",
+                "组1",
+                1,
+                "张三",
+                "320101199001011234",
+                "养老",
+                "2025-01",
+                "2025-06",
+            ),
+            (
+                "G02",
+                "组2",
+                2,
+                "李四",
+                "320101199002021235",
+                "工伤",
+                "2026-01",
+                "2026-06",
+            ),
+        )
+    ]
+    result = {
+        "tasks": [
+            {
+                "task_number": "RLSQ-EDIT-001",
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+        ],
+        "rights_statement_requests": requests,
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        detail = client.get(
+            f"/api/v1/rights/imports/{import_id}/records/2"
+        )
+        assert detail.status_code == 200
+        assert detail.json()["print_group"] == "组1"
+
+        moved = client.put(
+            f"/api/v1/rights/imports/{import_id}/records/2",
+            json={
+                "task_number": "RLSQ-EDIT-001",
+                "print_group": "组2",
+                "unit": "测试单位",
+                "department": "项目部",
+                "name": "张三",
+                "identity_number": "320101199001011234",
+                "insurance_type": "养老",
+                "start_month": "2025-01",
+                "end_month": "2025-06",
+            },
+        )
+        assert moved.status_code == 200
+        payload = moved.json()
+        assert payload["group_count"] == 1
+        assert payload["print_groups"][0]["group_label"] == "组2"
+        assert payload["print_groups"][0]["people_count"] == 2
+        assert any(
+            issue["code"] == "PRINT_GROUP_CONDITION_CONFLICT"
+            for issue in payload["issues"]
+        )
+
+        invalid = client.put(
+            f"/api/v1/rights/imports/{import_id}/records/2",
+            json={
+                "task_number": "RLSQ-EDIT-001",
+                "print_group": "组2",
+                "unit": "测试单位",
+                "department": "项目部",
+                "name": "张三",
+                "identity_number": "123",
+                "insurance_type": "养老",
+                "start_month": "2025-01",
+                "end_month": "2025-06",
+            },
+        )
+        assert invalid.status_code == 400
+        assert "身份证格式错误" in invalid.json()["message"]
+    finally:
+        coordinator.close()
+
+
+def test_print_group_resolution_uses_application_and_group_composite_key(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    requests = [
+        {
+            "task_number": task_number,
+            "group_id": "G01",
+            "group_sequence": 1,
+            "group_people_count": 2,
+            "source_print_mode": None,
+            "resolved_print_mode": None,
+            "name": name,
+            "social_security_number": identity,
+            "insurance_type": "养老",
+            "start_month": "2025-01",
+            "end_month": "2025-06",
+            "review_reasons": [],
+            "warnings": [],
+            "identity_match": {
+                "code": "SUCCESS",
+                "company": "测试单位",
+                "department": "项目部",
+            },
+        }
+        for task_number, name, identity in (
+            ("RLSQ-001", "张三", "320101199001011234"),
+            ("RLSQ-001", "李四", "320101199002021235"),
+            ("RLSQ-002", "王五", "320101199003031236"),
+            ("RLSQ-002", "赵六", "320101199004041237"),
+        )
+    ]
+    result = {
+        "tasks": [
+            {
+                "task_number": task_number,
+                "parse_status": {"code": "SUCCESS", "message": "成功"},
+            }
+            for task_number in ("RLSQ-001", "RLSQ-002")
+        ],
+        "rights_statement_requests": requests,
+    }
+    try:
+        preview = service._erp_preview(result)
+        import_id = preview["import_id"]
+        assert sum(
+            issue["code"] == "AI_PRINT_MODE_REQUIRED"
+            for issue in preview["issues"]
+        ) == 2
+
+        resolved = client.post(
+            f"/api/v1/rights/imports/{import_id}/print-group",
+            json={
+                "task_number": "RLSQ-001",
+                "group_id": "G01",
+                "mode": "batch",
+            },
+        )
+        assert resolved.status_code == 200
+        remaining = [
+            issue
+            for issue in resolved.json()["issues"]
+            if issue["code"] == "AI_PRINT_MODE_REQUIRED"
+        ]
+        assert len(remaining) == 1
+        assert remaining[0]["task_number"] == "RLSQ-002"
     finally:
         coordinator.close()
 

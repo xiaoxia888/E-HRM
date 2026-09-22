@@ -903,7 +903,7 @@ def test_extraction_service_keeps_same_person_in_different_print_groups(
         code="RLSQ-GROUPS",
         initiated_date="2026-08-20",
         title="多组社保打印",
-        description="张三李四一组，张三王五另一组",
+        description="张三李四一组，张三王五另一组，赵六孙七每人一张",
         transaction_type="社保咨询",
         status="0",
         originator="申请人",
@@ -933,9 +933,12 @@ def test_extraction_service_keeps_same_person_in_different_print_groups(
             def person(name: str) -> ExtractedPerson:
                 return ExtractedPerson(name=name, evidence=name, confidence=0.95)
 
-            def group(*names: str) -> ExtractedPrintGroup:
+            def group(
+                *names: str,
+                print_mode: str = "combined",
+            ) -> ExtractedPrintGroup:
                 return ExtractedPrintGroup(
-                    print_mode="combined",
+                    print_mode=print_mode,
                     insurance_type="养老",
                     start_month="2025-08",
                     end_month="2026-07",
@@ -951,7 +954,11 @@ def test_extraction_service_keeps_same_person_in_different_print_groups(
 
             return ExtractionResponse(
                 extraction=TaskExtraction(
-                    groups=(group("张三", "李四"), group("张三", "王五")),
+                    groups=(
+                        group("张三", "李四"),
+                        group("张三", "王五"),
+                        group("赵六", "孙七", print_mode="individual"),
+                    ),
                     needs_review=False,
                     review_reasons=(),
                     warnings=(),
@@ -980,6 +987,8 @@ def test_extraction_service_keeps_same_person_in_different_print_groups(
                 "张三": "320101199001011234",
                 "李四": "320101199002021235",
                 "王五": "320101199003031236",
+                "赵六": "320101199004041237",
+                "孙七": "320101199005051238",
             }
             return {}, {
                 name: (
@@ -1017,19 +1026,29 @@ def test_extraction_service_keeps_same_person_in_different_print_groups(
     ).run("社保咨询", reasoning_mode="off")
 
     requests = result["rights_statement_requests"]
-    assert queried_names == ["张三", "李四", "王五"]
-    assert [item["name"] for item in requests] == ["张三", "李四", "张三", "王五"]
+    assert queried_names == ["张三", "李四", "王五", "赵六", "孙七"]
+    assert [item["name"] for item in requests] == [
+        "张三",
+        "李四",
+        "张三",
+        "王五",
+        "赵六",
+        "孙七",
+    ]
     assert [item["group_id"] for item in requests] == [
         "RLSQ-GROUPS-G01",
         "RLSQ-GROUPS-G01",
         "RLSQ-GROUPS-G02",
         "RLSQ-GROUPS-G02",
+        "RLSQ-GROUPS-G03",
+        "RLSQ-GROUPS-G04",
     ]
+    assert [item["group_people_count"] for item in requests] == [2, 2, 2, 2, 1, 1]
     assert requests[0]["social_security_number"] == requests[2][
         "social_security_number"
     ]
-    assert result["summary"]["print_groups_extracted"] == 2
-    assert result["summary"]["people_extracted"] == 4
+    assert result["summary"]["print_groups_extracted"] == 4
+    assert result["summary"]["people_extracted"] == 6
 
 
 def test_stop_after_active_model_request_preserves_completed_result(
