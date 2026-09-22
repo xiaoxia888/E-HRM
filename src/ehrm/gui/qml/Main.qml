@@ -13,7 +13,7 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 500
     visible: true
-    title: "信息化人力工作台"
+    title: "南化建人力"
     color: "#edf2f7"
     font.family: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : "PingFang SC"
 

@@ -8,7 +8,7 @@
   #define MyOutputDir "..\..\dist\E-HRM-Setup-" + MyAppVersion
 #endif
 
-#define MyAppName "信息化人力工作台"
+#define MyAppName "南化建人力"
 #define MyAppPublisher "NJNCC"
 #define MyAppExeName "E-HRM.exe"
 

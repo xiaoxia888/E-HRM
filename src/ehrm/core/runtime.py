@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication
 
 
-APPLICATION_NAME = "信息化人力工作台"
+APPLICATION_NAME = "南化建人力"
 ORGANIZATION_NAME = "NJNCC"
 
 

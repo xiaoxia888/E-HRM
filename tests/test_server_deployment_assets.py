@@ -26,8 +26,14 @@ def test_macos_scripts_use_resolved_environment_and_project_browser_cache() -> N
     assert 'EHRM_PYTHON="$EHRM_PREFIX/bin/python"' in setup
     assert '"$EHRM_PYTHON" -m playwright install chromium' in setup
     assert 'PLAYWRIGHT_BROWSERS_PATH="$PROJECT_ROOT/runtime/playwright-browsers"' in setup
+    assert 'export ODBCSYSINI="$(dirname "$registry_file")"' in setup
+    assert 'export ODBCINSTINI="$(basename "$registry_file")"' in setup
     assert 'exec "$EHRM_PREFIX/bin/ehrm-web"' in runner
     assert 'PLAYWRIGHT_BROWSERS_PATH="$PROJECT_ROOT/runtime/playwright-browsers"' in runner
+    assert 'export ODBCSYSINI="$(dirname "$registry_file")"' in runner
+    assert '"/opt/homebrew/etc/odbcinst.ini"' in setup
+    assert '"/opt/homebrew/etc/odbcinst.ini"' in runner
+    assert 'http://127.0.0.1:$PORT/rights' in runner
 
 
 def test_windows_scripts_use_resolved_environment_and_project_browser_cache() -> None:
@@ -57,6 +63,7 @@ def test_server_docs_route_users_through_platform_scripts() -> None:
     assert "迁移旧" not in windows
     assert "LaunchAgent" not in macos
     assert "环境排错" not in macos
+    assert "0.0.0.0` 只表示服务监听" in macos
     assert "任务计划程序" not in windows
     assert "环境排错" not in windows
     assert "打包问题" not in windows

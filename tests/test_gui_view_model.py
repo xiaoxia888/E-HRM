@@ -662,7 +662,7 @@ def test_qml_main_window_loads_with_explicit_backend(tmp_path: Path) -> None:
 
     assert len(engine.rootObjects()) == 1
     window = engine.rootObjects()[0]
-    assert window.title() == "信息化人力工作台"
+    assert window.title() == "南化建人力"
     assert window.property("backend") is view_model
     query_dialog = window.findChild(QObject, "erpTaskQueryDialog")
     assert query_dialog is not None

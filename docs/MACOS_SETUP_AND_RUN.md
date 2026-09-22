@@ -73,6 +73,8 @@ odbcinst -q -d
 ```
 
 如果使用 Driver 18，必须同步修改 `config/settings.toml` 中的驱动名称。
+初始化和启动脚本会根据配置的驱动名称查找 Homebrew 和 unixODBC 的实际驱动
+注册表，并让 Conda 环境中的 `pyodbc` 使用同一份注册表。
 
 ## 5. 一键初始化服务器环境
 
@@ -133,7 +135,9 @@ EHRM_HOST=127.0.0.1 EHRM_PORT=8080 ./scripts/run_server_macos.sh
 curl http://127.0.0.1:8000/api/v1/health
 ```
 
-浏览器访问 `http://<服务器内网IP>:8000`。防火墙只允许实际办公网段访问。
+`0.0.0.0` 只表示服务监听所有网络接口，不是浏览器访问地址。本机访问
+`http://127.0.0.1:8000/rights`；其他电脑访问
+`http://<服务器内网IP>:8000/rights`。防火墙只允许实际办公网段访问。
 
 ## 8. 更新程序
 

@@ -245,7 +245,7 @@ function AboutSection({ settings }: { settings?: WebPreferences }) {
   return (
     <Card>
       <Descriptions column={1} bordered>
-        <Descriptions.Item label="软件名称">信息化人力工作台 Web</Descriptions.Item>
+        <Descriptions.Item label="软件名称">南化建人力</Descriptions.Item>
         <Descriptions.Item label="版本">{settings?.version || '-'}</Descriptions.Item>
         <Descriptions.Item label="部署模式">单服务器任务协调</Descriptions.Item>
         <Descriptions.Item label="说明">Web 与桌面端共用账号数据库、用户偏好和业务服务；同一自动化账号的任务会自动串行排队。</Descriptions.Item>

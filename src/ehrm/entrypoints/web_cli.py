@@ -20,7 +20,7 @@ def _ensure_websocket_runtime() -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ehrm-web",
-        description="启动信息化人力工作台 Web 服务（单服务器、单协调器实例）。",
+        description="启动南化建人力 Web 服务（单服务器、单协调器实例）。",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)

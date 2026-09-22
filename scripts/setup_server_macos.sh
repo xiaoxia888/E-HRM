@@ -48,9 +48,41 @@ fi
 echo "使用 Python：$EHRM_PYTHON"
 echo "使用 npm：$EHRM_NPM"
 
-export PATH="$EHRM_PREFIX/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$EHRM_PREFIX/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PLAYWRIGHT_BROWSERS_PATH="$PROJECT_ROOT/runtime/playwright-browsers"
 mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" "$PROJECT_ROOT/runtime/logs"
+
+configure_odbc_registry() {
+  local required_driver registry_file odbcinst_bin discovered
+  local candidates=(
+    "/opt/homebrew/etc/odbcinst.ini"
+    "/usr/local/etc/odbcinst.ini"
+    "/etc/odbcinst.ini"
+    "$HOME/.odbcinst.ini"
+    "$EHRM_PREFIX/etc/odbcinst.ini"
+  )
+
+  required_driver="$("$EHRM_PYTHON" -c 'import sys, tomllib; from pathlib import Path; print(tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["erp"]["database"]["driver"])' "$PROJECT_ROOT/config/settings.toml")"
+  for odbcinst_bin in /opt/homebrew/bin/odbcinst /usr/local/bin/odbcinst /usr/bin/odbcinst "$EHRM_PREFIX/bin/odbcinst"; do
+    [[ -x "$odbcinst_bin" ]] || continue
+    discovered="$("$odbcinst_bin" -j 2>/dev/null | awk -F':' '/^DRIVERS/{sub(/^[[:space:]]*/, "", $2); print $2; exit}' || true)"
+    [[ -n "$discovered" ]] && candidates+=("$discovered")
+  done
+
+  for registry_file in "${candidates[@]}"; do
+    if [[ -f "$registry_file" ]] && grep -Fq "[$required_driver]" "$registry_file"; then
+      export ODBCSYSINI="$(dirname "$registry_file")"
+      export ODBCINSTINI="$(basename "$registry_file")"
+      echo "使用 ODBC 驱动注册表：$registry_file"
+      return
+    fi
+  done
+
+  echo "错误：没有找到包含 [$required_driver] 的 ODBC 驱动注册表。" >&2
+  exit 1
+}
+
+configure_odbc_registry
 
 echo "安装项目锁定版本对应的 Chromium……"
 "$EHRM_PYTHON" -m playwright install chromium

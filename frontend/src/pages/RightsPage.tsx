@@ -274,15 +274,15 @@ export function RightsPage() {
                 </div>
               )}
             </Form.Item>
-            <Form.Item label="下载完成后上传 ERP">
+            {!rightsAccounts.length && <Alert type="warning" showIcon message="尚未配置可用的智慧人社账号" />}
+            <div className="rights-settings-actions">
               <Space align="start">
                 <Switch checked={uploadToErp} disabled={preview?.erp_upload_available === false} onChange={setUploadToErp} />
-                <Typography.Text type="secondary">{preview?.erp_upload_available === false ? '存在未填写 ERP申请编号的打印组，不能自动上传 ERP' : uploadToErp ? '下载成功后按 ERP申请编号匹配并上传 PDF' : '仅生成并保留权益单文件'}</Typography.Text>
+                <Typography.Text type="secondary">{preview?.erp_upload_available === false ? '存在未填写 ERP申请编号的打印组，不能自动上传 ERP' : uploadToErp ? '下载成功后上传 ERP' : '仅生成并保留权益单文件'}</Typography.Text>
               </Space>
-            </Form.Item>
-            {!rightsAccounts.length && <Alert type="warning" showIcon message="尚未配置可用的智慧人社账号" />}
-            <Button type="primary" size="large" block disabled={!canExecute || accountId === undefined} loading={starter.isPending} onClick={() => preview && accountId !== undefined && starter.mutate({ import_id: preview.import_id, account_id: accountId, export_mode: mode, batch_size: batchSize, upload_to_erp: uploadToErp })}>获取权益单</Button>
-            {preview && !canExecute && <Typography.Text type="secondary" className="rights-disabled-reason">当前数据存在阻塞问题，暂不能开始获取。</Typography.Text>}
+              <Button type="primary" size="large" block disabled={!canExecute || accountId === undefined} loading={starter.isPending} onClick={() => preview && accountId !== undefined && starter.mutate({ import_id: preview.import_id, account_id: accountId, export_mode: mode, batch_size: batchSize, upload_to_erp: uploadToErp })}>获取权益单</Button>
+              {preview && !canExecute && <Typography.Text type="secondary" className="rights-disabled-reason">当前数据存在阻塞问题，暂不能开始获取。</Typography.Text>}
+            </div>
           </Form>
         </Card>
       </div>

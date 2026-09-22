@@ -249,7 +249,7 @@ ehrm-login-e2e --check-config
 
 ## 4. 桌面前端（Qt Quick/QML）
 
-启动与原型一致的“信息化人力工作台”：
+启动“南化建人力”：
 
 ```bash
 python scripts/run_gui.py

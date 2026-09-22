@@ -59,7 +59,7 @@ export function AppLayout() {
           {!collapsed && (
             <div className="brand-copy">
               <Typography.Text strong className="brand-title">南化建人力</Typography.Text>
-              <div className="brand-subtitle">信息化工作台</div>
+
             </div>
           )}
           <Tooltip title={collapsed ? '展开导航栏' : '收起导航栏'} placement="right">

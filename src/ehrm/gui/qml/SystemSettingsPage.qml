@@ -1366,7 +1366,7 @@ Item {
                         contentSpacing: 18
                             SectionTitle {
                                 title: "关于软件"
-                                description: "信息化人力桌面工作台"
+                                description: "南化建人力"
                             }
                             Rectangle {
                                 Layout.fillWidth: true
@@ -1394,7 +1394,7 @@ Item {
                                         Layout.fillWidth: true
                                         spacing: 8
                                         Text {
-                                            text: "信息化人力工作台"
+                                            text: "南化建人力"
                                             color: page.titleColor
                                             font.pixelSize: 20
                                             font.weight: Font.Bold

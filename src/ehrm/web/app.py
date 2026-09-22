@@ -90,7 +90,7 @@ def create_app(
             task_coordinator.close(wait=False)
 
     app = FastAPI(
-        title="信息化人力工作台 Web API",
+        title="南化建人力 API",
         version=__version__,
         lifespan=lifespan,
     )

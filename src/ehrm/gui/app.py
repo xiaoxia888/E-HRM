@@ -32,7 +32,7 @@ def _default_config_path() -> Path:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="信息化人力桌面工作台")
+    parser = argparse.ArgumentParser(description="南化建人力")
     parser.add_argument(
         "--config",
         type=Path,

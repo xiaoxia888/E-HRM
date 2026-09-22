@@ -81,11 +81,11 @@ VSVersionInfo(
       StringTable(
         '080404b0',
         [StringStruct('CompanyName', 'NJNCC'),
-         StringStruct('FileDescription', '信息化人力工作台'),
+         StringStruct('FileDescription', '南化建人力'),
          StringStruct('FileVersion', '{version}'),
          StringStruct('InternalName', 'E-HRM'),
          StringStruct('OriginalFilename', 'E-HRM.exe'),
-         StringStruct('ProductName', '信息化人力工作台'),
+         StringStruct('ProductName', '南化建人力'),
          StringStruct('ProductVersion', '{version}')]
       )
     ]),
