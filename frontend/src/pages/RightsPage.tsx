@@ -29,7 +29,7 @@ import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
 import type { ErpApplicationPreview, RightsImportPreview, RightsIssue, RightsPrintGroup, RightsRecordDetail, TaskRecord } from '../types'
-import { projectPrintGroups } from '../utils/rights'
+import { estimateRightsOutputCount } from '../utils/rights'
 
 const TRANSACTION_TYPES = ['社保咨询', '工资咨询', '证实咨询', '福利咨询', '合同咨询', '档案咨询', '项目社保申请挂靠', '其他咨询']
 const STATUS_OPTIONS = [
@@ -135,7 +135,7 @@ export function RightsPage() {
       setPreview(result)
       setUploadToErp(false)
       setActivePreviewTab(result.print_groups?.length ? 'groups' : 'people')
-      message.success(`已读取 ${result.record_count} 人，共 ${result.group_count} 个打印组`)
+      message.success(`已读取 ${result.record_count} 人，共 ${result.group_count} 个申请打印组`)
     },
     onError: (error) => message.error(errorMessage(error)),
   })
@@ -173,12 +173,11 @@ export function RightsPage() {
   const canExecute = Boolean(preview && preview.record_count > 0 && preview.executable !== false && blockingIssueCount === 0)
   const estimatedPdfCount = useMemo(() => {
     if (!preview) return 0
-    if (mode === 'individual') return preview.record_count
-    if (preview.print_groups?.length) return preview.print_groups.length
-    return preview.estimated_pdf_count ?? preview.group_count
-  }, [preview, mode])
-  const displayedPrintGroups = useMemo(() => {
-    return projectPrintGroups(preview?.print_groups ?? [], mode)
+    return estimateRightsOutputCount(
+      preview.print_groups?.length ?? preview.group_count,
+      preview.record_count,
+      mode,
+    )
   }, [preview, mode])
 
   const startExtraction = (values: ErpQueryValues) => {
@@ -225,7 +224,7 @@ export function RightsPage() {
             <>
               <div className="rights-summary-row">
                 <Statistic title="涉及人员" value={preview.unique_person_count ?? preview.record_count} suffix="人" prefix={<UserOutlined />} />
-                <Statistic title={mode === 'batch' ? '打印组' : '单独权益单'} value={displayedPrintGroups.length} suffix="组" prefix={<FileExcelOutlined />} />
+                <Statistic title="申请打印组" value={preview.print_groups?.length ?? preview.group_count} suffix="组" prefix={<FileExcelOutlined />} />
                 <Statistic title="需处理问题" value={issues.filter((item) => item.level !== 'info').length} suffix="项" prefix={<IssuesCloseOutlined />} valueStyle={blockingIssueCount ? { color: '#cf1322' } : undefined} />
                 <button
                   type="button"
@@ -247,7 +246,7 @@ export function RightsPage() {
               <Tabs
                 activeKey={activePreviewTab} onChange={setActivePreviewTab}
                 items={[
-                  ...(preview.print_groups?.length ? [{ key: 'groups', label: `${mode === 'batch' ? '打印组' : '单独权益单'}（${displayedPrintGroups.length}）`, children: <PrintGroupsTable groups={displayedPrintGroups} source={preview.source} individualView={mode === 'individual'} onShowIssues={() => setActivePreviewTab('issues')} onEditGroup={setEditingGroup} onEditPerson={setEditingRowNumber} /> }] : []),
+                  ...(preview.print_groups?.length ? [{ key: 'groups', label: `申请打印组（${preview.print_groups.length}）`, children: <PrintGroupsTable groups={preview.print_groups} source={preview.source} onShowIssues={() => setActivePreviewTab('issues')} onEditGroup={setEditingGroup} onEditPerson={setEditingRowNumber} /> }] : []),
                   { key: 'people', label: `人员明细（${preview.record_count}）`, children: <PeopleTable preview={preview} onShowIssues={() => setActivePreviewTab('issues')} onEditPerson={setEditingRowNumber} /> },
                   { key: 'issues', label: `问题信息（${issues.length}）`, children: <IssuesTable issues={issues} onResolve={setResolutionIssue} /> },
                   ...(preview.applications?.length ? [{ key: 'applications', label: `ERP 申请（${preview.applications.length}）`, children: <ApplicationsTable applications={preview.applications} /> }] : []),
@@ -262,15 +261,19 @@ export function RightsPage() {
             <Form.Item label="智慧人社账号" required>
               <Select value={accountId} placeholder="请先在系统设置中维护账号" options={rightsAccounts.map((item) => ({ value: item.id, label: `${item.display_name} · ${item.masked_account}` }))} onChange={setAccountId} />
             </Form.Item>
-            <Form.Item label="导出方式">
+            <Form.Item label="执行方式">
               <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)} className="rights-export-modes">
-                <Radio.Button value="batch">按打印组</Radio.Button>
-                <Radio.Button value="individual">每人单独一份</Radio.Button>
+                <Radio.Button value="batch">遵循申请打印组</Radio.Button>
+                <Radio.Button value="individual">强制每人单独一份</Radio.Button>
               </Radio.Group>
               {preview && (
                 <div className="rights-pdf-estimate">
-                  预计生成 <strong>{estimatedPdfCount}</strong> 份权益单
-                  {mode === 'batch' && `（${preview.group_count} 个打印组）`}
+                  <span>执行后预计生成 <strong>{estimatedPdfCount}</strong> 份权益单</span>
+                  <small>
+                    {mode === 'batch'
+                      ? `遵循当前 ${preview.print_groups?.length ?? preview.group_count} 个申请打印组`
+                      : `将 ${preview.record_count} 条人员记录分别打印，不修改左侧申请打印组`}
+                  </small>
                 </div>
               )}
             </Form.Item>
@@ -1019,21 +1022,19 @@ function taskResult(value: unknown): { succeeded: number; failed: number; erp_me
 function PrintGroupsTable({
   groups,
   source,
-  individualView,
   onShowIssues,
   onEditGroup,
   onEditPerson,
 }: {
-  groups: Array<RightsPrintGroup & { view_key?: string }>
+  groups: RightsPrintGroup[]
   source?: 'excel' | 'erp'
-  individualView: boolean
   onShowIssues: () => void
   onEditGroup: (group: RightsPrintGroup) => void
   onEditPerson: (rowNumber: number) => void
 }) {
   return (
     <Table
-      rowKey={(record) => record.view_key ?? `${record.task_number}:${record.group_id}`}
+      rowKey={(record) => `${record.task_number}:${record.group_id}`}
       size="small"
       dataSource={groups}
       scroll={{ x: 1050, y: 440 }}
@@ -1083,9 +1084,7 @@ function PrintGroupsTable({
         ...(source === 'erp' ? [{
           title: '操作', width: 110, fixed: 'right' as const,
           render: (_: unknown, record: RightsPrintGroup) => (
-            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => individualView ? onEditPerson(record.people[0].row_number) : onEditGroup(record)}>
-              {individualView ? '编辑人员' : '编辑整组'}
-            </Button>
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => onEditGroup(record)}>编辑整组</Button>
           ),
         }] : []),
       ]}
