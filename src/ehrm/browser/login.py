@@ -9,7 +9,7 @@ from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, Request, Response
+from playwright.sync_api import Locator, Page, Request, Response
 
 from ehrm.browser.access_token import (
     AccessTokenManager,
@@ -258,7 +258,7 @@ class LoginService:
             if response.request.method.upper() != "POST":
                 return False
             actual = urlsplit(response.url)
-            configured = urlsplit(self.settings.government_login.login_url)
+            configured = urlsplit(self.settings.government_login.landing_url)
             return (
                 actual.scheme.casefold() == configured.scheme.casefold()
                 and actual.netloc.casefold() == configured.netloc.casefold()
@@ -437,20 +437,29 @@ class LoginService:
                 "江苏政务服务平台登录信息不完整",
                 details="登录名和密码均不能为空",
             )
-        page = self._active_page()
-        page.goto(
-            self.settings.government_login.login_url,
-            wait_until="domcontentloaded",
-        )
+        page = self._open_government_login_entry()
+        if page is None:
+            if self.is_government_target_reached():
+                self._finish_reused_government_session()
+            return
         selectors = self.settings.government_login_selectors
         timeout = self.settings.browser.action_timeout_ms
         corporate_tab = page.locator(selectors.corporate_tab).first
-        corporate_tab.wait_for(state="visible", timeout=timeout)
-        self.pacer.perform(corporate_tab.click)
-        username_field = page.locator(selectors.username).first
-        password_field = page.locator(selectors.password).first
-        username_field.wait_for(state="visible", timeout=timeout)
-        password_field.wait_for(state="visible", timeout=timeout)
+        try:
+            self.pacer.perform(corporate_tab.click)
+            username_field, password_field = self._wait_for_government_login_form(
+                page
+            )
+        except (AuthenticationFailedError, PlaywrightError) as exc:
+            if self.is_government_target_reached():
+                self._finish_reused_government_session()
+                return
+            if isinstance(exc, AuthenticationFailedError):
+                raise
+            raise AuthenticationFailedError(
+                "无法打开江苏政务服务网法人登录表单",
+                details=str(exc),
+            ) from exc
         self.pacer.perform(lambda: username_field.fill(username))
         self.pacer.perform(lambda: password_field.fill(password))
 
@@ -500,6 +509,174 @@ class LoginService:
                 self._wait_for_government_target()
                 return
         raise AuthenticationFailedError("江苏政务服务平台登录失败")
+
+    def _open_government_login_entry(self) -> Page | None:
+        """Enters the government SSO from the JSHRSS unit-login panel."""
+
+        page = self._active_page()
+        try:
+            page.goto(self.settings.site.login_url, wait_until="domcontentloaded")
+        except PlaywrightError:
+            replacement = self._active_page(prefer_latest=True)
+            if replacement is page:
+                raise
+            page = replacement
+        else:
+            page = self._active_page(prefer_latest=True)
+        self._report_browser_features(page)
+        if self.is_authenticated():
+            return None
+
+        self._ensure_login_tab_active(
+            self.settings.login.unit_login_tab,
+            "单位登录",
+        )
+        page = self._active_page()
+        selector = self.settings.government_login_selectors.entry_button
+        if not selector:
+            raise AuthenticationFailedError(
+                "未配置智慧人社中的江苏政务服务网入口"
+            )
+        try:
+            entry = self._wait_for_unique_visible_locator(
+                page,
+                selector,
+                label="单位登录区域的江苏政务服务网入口",
+            )
+            self._progress("正在从智慧人社单位登录进入江苏政务服务网……")
+            self.pacer.perform(entry.click)
+        except AuthenticationFailedError:
+            raise
+        except PlaywrightError as exc:
+            # Cross-origin gateways can replace the current tab while the click
+            # is still settling. Accept that case only when the expected
+            # government landing page can subsequently be proven ready.
+            _LOGGER.info("政务服务网入口点击期间页面发生切换: %s", exc)
+
+        return self._wait_for_government_landing_page()
+
+    def _wait_for_unique_visible_locator(
+        self,
+        page: Page,
+        selector: str,
+        *,
+        label: str,
+    ) -> Locator:
+        candidates = page.locator(selector)
+        deadline = time.monotonic() + self.settings.browser.action_timeout_ms / 1000
+        last_count = 0
+        while time.monotonic() < deadline:
+            visible: list[Locator] = []
+            try:
+                for index in range(candidates.count()):
+                    candidate = candidates.nth(index)
+                    if candidate.is_visible():
+                        visible.append(candidate)
+            except PlaywrightError:
+                visible = []
+            last_count = len(visible)
+            if last_count == 1:
+                return visible[0]
+            if last_count > 1:
+                raise AuthenticationFailedError(
+                    f"无法唯一定位{label}",
+                    details=f"当前可见匹配数量：{last_count}；定位器：{selector}",
+                )
+            self._wait_for_timeout(100)
+        raise AuthenticationFailedError(
+            f"未找到{label}",
+            details=f"当前可见匹配数量：{last_count}；定位器：{selector}",
+        )
+
+    def _wait_for_government_landing_page(self) -> Page | None:
+        """Waits for a login form or a reused SSO session reaching JSHRSS."""
+
+        timeout_ms = self.settings.browser.navigation_timeout_ms
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        selectors = self.settings.government_login_selectors
+        while time.monotonic() < deadline:
+            self._raise_login_failure()
+            if self.cancel_check is not None and self.cancel_check():
+                raise TaskCancelledError("用户在政务服务平台跳转阶段停止任务")
+            if self.is_government_target_reached():
+                self._progress(
+                    "检测到江苏政务服务网已保存登录状态，已直接进入智慧人社"
+                )
+                return None
+            for candidate in reversed(self._open_pages() or [self._active_page()]):
+                try:
+                    if not self._is_government_landing_url(candidate.url):
+                        continue
+                    candidate.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=min(
+                            self.settings.browser.action_timeout_ms,
+                            max(1, round((deadline - time.monotonic()) * 1000)),
+                        ),
+                    )
+                    corporate_tab = candidate.locator(selectors.corporate_tab).first
+                    if corporate_tab.count() < 1 or not corporate_tab.is_visible():
+                        continue
+                    self.page = candidate
+                    self._progress("已进入江苏政务服务网，法人登录入口加载完成")
+                    return candidate
+                except (AttributeError, PlaywrightError, ValueError):
+                    continue
+            self._active_page(prefer_latest=True)
+            self._wait_for_timeout(100)
+
+        current_urls = [
+            url_without_sensitive_query(page.url)
+            for page in self._open_pages()
+            if getattr(page, "url", "")
+        ]
+        raise AuthenticationFailedError(
+            "未能从智慧人社跳转到江苏政务服务网",
+            details=(
+                "期望页面="
+                f"{self.settings.government_login.landing_url}；"
+                f"当前页面={'、'.join(current_urls) or '无可用页面'}"
+            ),
+        )
+
+    def _finish_reused_government_session(self) -> None:
+        self._progress("正在确认已复用的政务登录会话和智慧人社令牌……")
+        self._wait_for_government_sso_token()
+        self._wait_for_government_target()
+
+    def _is_government_landing_url(self, url: str) -> bool:
+        expected = urlsplit(self.settings.government_login.landing_url)
+        actual = urlsplit(url)
+        return (
+            actual.scheme.casefold() == expected.scheme.casefold()
+            and actual.netloc.casefold() == expected.netloc.casefold()
+            and (actual.path.rstrip("/") or "/")
+            == (expected.path.rstrip("/") or "/")
+        )
+
+    def _wait_for_government_login_form(self, page: Page) -> tuple[Locator, Locator]:
+        selectors = self.settings.government_login_selectors
+        fields = (
+            ("登录名", page.locator(selectors.username).first),
+            ("密码", page.locator(selectors.password).first),
+            ("验证码输入框", page.locator(selectors.captcha_input).first),
+            ("验证码图片", page.locator(selectors.captcha_image).first),
+            ("用户协议", page.locator(selectors.agreement).first),
+            ("登录按钮", page.locator(selectors.submit).first),
+        )
+        deadline = time.monotonic() + self.settings.browser.action_timeout_ms / 1000
+        try:
+            for label, field in fields:
+                remaining_ms = max(1, round((deadline - time.monotonic()) * 1000))
+                field.wait_for(state="visible", timeout=remaining_ms)
+                _LOGGER.debug("政务服务网法人登录控件已加载: %s", label)
+        except PlaywrightError as exc:
+            raise AuthenticationFailedError(
+                "江苏政务服务网法人登录页面未加载完成",
+                details=str(exc),
+            ) from exc
+        self._progress("江苏政务服务网法人登录表单加载完成")
+        return fields[0][1], fields[1][1]
 
     def _wait_for_government_login_result(self) -> str:
         deadline = time.monotonic() + (

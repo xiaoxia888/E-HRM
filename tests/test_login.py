@@ -16,18 +16,33 @@ from ehrm.core.settings import load_settings
 
 
 class FakeLocator:
-    def __init__(self, *, active: bool = False, activate_on_click: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        active: bool = False,
+        activate_on_click: bool = True,
+        visible: bool = True,
+    ) -> None:
         self.first = self
         self.value = ""
         self.clicked = False
         self.active = active
         self.activate_on_click = activate_on_click
+        self.visible = visible
 
     def count(self) -> int:
         return 1
 
+    def nth(self, index: int):
+        if index != 0:
+            raise IndexError(index)
+        return self
+
     def wait_for(self, **_: object) -> None:
         return None
+
+    def is_visible(self) -> bool:
+        return self.visible
 
     def fill(self, value: str) -> None:
         self.value = value
@@ -39,6 +54,28 @@ class FakeLocator:
 
     def evaluate(self, _expression: str) -> bool:
         return self.active
+
+
+class CallbackFakeLocator(FakeLocator):
+    def __init__(self, callback, *, visible: bool = True) -> None:
+        super().__init__(visible=visible)
+        self._callback = callback
+
+    def click(self) -> None:
+        super().click()
+        self._callback()
+
+
+class FakeLocatorCollection:
+    def __init__(self, *items: FakeLocator) -> None:
+        self.items = items
+        self.first = items[0]
+
+    def count(self) -> int:
+        return len(self.items)
+
+    def nth(self, index: int) -> FakeLocator:
+        return self.items[index]
 
 
 class DelayedFakeLocator(FakeLocator):
@@ -73,6 +110,46 @@ class FakePage:
         return None
 
 
+class FakeGovernmentEntryPage(FakePage):
+    def __init__(self, settings) -> None:
+        super().__init__(settings)
+        self.url = "about:blank"
+        self.navigated_urls: list[str] = []
+        self.fields[settings.government_login_selectors.entry_button] = (
+            CallbackFakeLocator(
+                lambda: setattr(
+                    self,
+                    "url",
+                    settings.government_login.landing_url
+                    + "?uuid=fresh-session&gotoUrl=test",
+                )
+            )
+        )
+        for selector in (
+            settings.government_login_selectors.corporate_tab,
+            settings.government_login_selectors.username,
+            settings.government_login_selectors.password,
+            settings.government_login_selectors.captcha_input,
+            settings.government_login_selectors.captcha_image,
+            settings.government_login_selectors.agreement,
+            settings.government_login_selectors.submit,
+        ):
+            self.fields[selector] = FakeLocator()
+
+    def goto(self, url: str, **_: object) -> None:
+        self.navigated_urls.append(url)
+        self.url = url
+
+    def is_closed(self) -> bool:
+        return False
+
+    def wait_for_load_state(self, *_: object, **__: object) -> None:
+        return None
+
+    def evaluate(self, _expression: str) -> bool:
+        return False
+
+
 class FakeLoginResponse:
     def __init__(
         self,
@@ -102,7 +179,7 @@ class FakeLoginResponse:
 class FakeGovernmentLoginResponse(FakeLoginResponse):
     def __init__(self, settings, *, payload: dict[str, object], status: int = 200):
         super().__init__(settings, status=status, payload=payload)
-        login_url = urlsplit(settings.government_login.login_url)
+        login_url = urlsplit(settings.government_login.landing_url)
         self.url = urlunsplit(
             (
                 login_url.scheme,
@@ -280,6 +357,106 @@ def test_business_error_is_rejected_even_with_http_200(tmp_path: Path) -> None:
 
     with pytest.raises(AuthenticationFailedError, match="测试业务错误"):
         service._raise_login_failure()
+
+
+def test_government_login_is_opened_from_jshrss_unit_login(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakeGovernmentEntryPage(settings)
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    landing_page = service._open_government_login_entry()
+
+    assert landing_page is page
+    assert page.navigated_urls == [settings.site.login_url]
+    assert page.fields[settings.login.unit_login_tab].clicked is True
+    assert page.fields[
+        settings.government_login_selectors.entry_button
+    ].clicked is True
+    assert page.url.startswith(settings.government_login.landing_url + "?")
+
+
+def test_government_entry_uses_visible_unit_login_shortcut(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakeGovernmentEntryPage(settings)
+    hidden_personal_entry = CallbackFakeLocator(lambda: None, visible=False)
+    visible_unit_entry = CallbackFakeLocator(
+        lambda: setattr(
+            page,
+            "url",
+            settings.government_login.landing_url + "?uuid=unit-login",
+        )
+    )
+    page.fields[settings.government_login_selectors.entry_button] = (
+        FakeLocatorCollection(hidden_personal_entry, visible_unit_entry)
+    )
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    service._open_government_login_entry()
+
+    assert hidden_personal_entry.clicked is False
+    assert visible_unit_entry.clicked is True
+
+
+def test_government_saved_session_skips_login_form_and_finishes_sso(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakeGovernmentEntryPage(settings)
+    page.fields[settings.government_login_selectors.entry_button] = (
+        CallbackFakeLocator(
+            lambda: setattr(page, "url", settings.government_login.target_url)
+        )
+    )
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    with patch.object(
+        service,
+        "_finish_reused_government_session",
+    ) as finish_session:
+        service._ensure_government_authenticated(
+            username="government-user",
+            password="government-password",
+        )
+
+    finish_session.assert_called_once_with()
+    assert page.fields[
+        settings.government_login_selectors.corporate_tab
+    ].clicked is False
+
+
+def test_government_landing_url_ignores_dynamic_query_but_checks_host_and_path(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+
+    assert service._is_government_landing_url(
+        settings.government_login.landing_url
+        + "?uuid=fresh-session&gotoUrl=%2Fapi%2Fcheck"
+    )
+    assert not service._is_government_landing_url(
+        "https://www.jszwfw.gov.cn/jsjis/front/error.do"
+    )
+    assert not service._is_government_landing_url(
+        "https://example.com/jsjis/front/login.do"
+    )
+
+
+def test_government_login_form_requires_all_recorded_controls(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = FakeGovernmentEntryPage(settings)
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    username, password = service._wait_for_government_login_form(page)  # type: ignore[arg-type]
+
+    assert username is page.fields[settings.government_login_selectors.username]
+    assert password is page.fields[settings.government_login_selectors.password]
 
 
 def test_government_login_captcha_error_is_retryable(tmp_path: Path) -> None:

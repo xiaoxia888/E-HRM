@@ -120,11 +120,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logger = configure_logging(runtime_root / "logs")
     try:
-        authentication_url = (
-            settings.government_login.login_url
-            if settings.rights_credentials.login_method == "government_sso"
-            else settings.site.login_url
-        )
+        authentication_url = settings.site.login_url
         with BrowserManager(
             settings.browser,
             ignore_https_errors=args.ignore_https_errors,

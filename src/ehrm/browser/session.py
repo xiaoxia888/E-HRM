@@ -28,11 +28,9 @@ def authenticated_browser(
     """Uses the configured browser mode and restores any saved login session."""
 
     credentials = settings.rights_credentials
-    authentication_url = (
-        settings.government_login.login_url
-        if credentials.login_method == "government_sso"
-        else settings.site.login_url
-    )
+    # Both login methods start from the JSHRSS login page. Government SSO is
+    # reached by clicking its entry inside the unit-login panel.
+    authentication_url = settings.site.login_url
     stealth_enabled = (
         settings.captcha.stealth_enabled
         and is_allowed_host_url(

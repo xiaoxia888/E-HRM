@@ -57,8 +57,9 @@ unit_password_login_path = "/zuul/api/auth/unit/unitPasswordLogin"
 
 [rights_statement.government_login]
 # 第二种登录方式：江苏政务服务平台法人账号登录。登录成功后进入同一智慧人社业务站点。
-# 本地联调代理地址中的 uuid 由代理端维护；若测试入口变化，只需修改此处。
-login_url = "https://www.jszwfw.gov.cn/jsjis/front/login.do?uuid=P2tMMTbVdRVN&gotoUrl=%2Fapi%2Fggfw-unit-user-center%2Funit%2FunitExtend%2FcheckUnitGoveLogin"
+# 程序必须先访问智慧人社登录页，从“单位登录”区域点击“江苏政务服务网”。
+# 此地址只用于校验自然跳转的域名和路径，程序不会直接访问；动态查询参数不写入配置。
+landing_url = "https://www.jszwfw.gov.cn/jsjis/front/login.do"
 login_api_path = "/jsjis/front/coruser/docoruserlogin.do"
 # 仅用于校验政务平台自然重定向的最终落点，程序不会主动导航到此地址。
 target_url = "https://rs.jshrss.jiangsu.gov.cn/web/unitcenter/unitmain"
@@ -105,7 +106,7 @@ password_env = "EHRM_RIGHTS_PASSWORD"
 # 仅在白名单主机上启用自动验证。这里只填写主机/IP，不填写端口；
 # 因此 127.0.0.1:6066 和 127.0.0.1:8000 都匹配 127.0.0.1。
 enabled = true
-# 仅当 login_url 命中 allowed_hosts 时，才对该测试 BrowserContext 启用官方 stealth 注入。
+# 仅当智慧人社登录入口命中 allowed_hosts 时，才对该测试 BrowserContext 启用官方 stealth 注入。
 stealth_enabled = true
 allowed_hosts = [
   "127.0.0.1",
@@ -141,6 +142,8 @@ submit = 'role=button[name="登录"]'
 authenticated_marker = "text=省本级"
 
 [rights_statement.selectors.government_login]
+# 来自实际录制：切换到智慧人社“单位登录”后，点击该入口自然跳转政务服务网。
+entry_button = ".shortcut-icon-su"
 corporate_tab = 'text="法人登录"'
 username = 'role=textbox[name="请输入登录名"]'
 password = 'role=textbox[name="请输入密码"]'

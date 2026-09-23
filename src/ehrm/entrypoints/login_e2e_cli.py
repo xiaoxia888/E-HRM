@@ -148,16 +148,17 @@ def _print_targets(settings: AppSettings) -> None:
         f"mode={'无头' if settings.browser.headless else '可见'}）"
     )
     login_method = settings.rights_credentials.login_method
-    login_url = (
-        settings.government_login.login_url
-        if login_method == "government_sso"
-        else settings.site.login_url
-    )
+    login_url = settings.site.login_url
     print(
         "登录方式："
         + ("江苏政务服务平台" if login_method == "government_sso" else "智慧人社直登")
     )
-    print(f"登录地址：{login_url}")
+    print(f"登录入口：{login_url}")
+    if login_method == "government_sso":
+        print(
+            "政务服务网落地判定："
+            f"{settings.government_login.landing_url}"
+        )
     target_url = (
         settings.government_login.target_url
         if login_method == "government_sso"
@@ -299,11 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                     mobile,
                     password=password,
                 )
-            authentication_url = (
-                runtime_settings.government_login.login_url
-                if credentials.login_method == "government_sso"
-                else runtime_settings.site.login_url
-            )
+            authentication_url = runtime_settings.site.login_url
             with BrowserManager(
                 runtime_settings.browser,
                 ignore_https_errors=args.ignore_https_errors,

@@ -102,7 +102,7 @@ class LoginSelectors:
 
 @dataclass(frozen=True, slots=True)
 class GovernmentLoginSettings:
-    login_url: str
+    landing_url: str
     login_api_path: str
     target_url: str
     max_attempts: int
@@ -111,6 +111,7 @@ class GovernmentLoginSettings:
 
 @dataclass(frozen=True, slots=True)
 class GovernmentLoginSelectors:
+    entry_button: str
     corporate_tab: str
     username: str
     password: str
@@ -778,9 +779,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         raise ConfigurationError(
             "配置项 rights_statement.site.unit_password_login_path 必须以 / 开头"
         )
-    government_login_url = _text(
+    government_landing_url = _text(
         rights_government_login,
-        "login_url",
+        "landing_url",
         rights_government_login_name,
     )
     government_login_api_path = _text(
@@ -793,8 +794,8 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         "target_url",
         rights_government_login_name,
     )
-    if not government_login_url or not government_target_url:
-        raise ConfigurationError("江苏政务服务登录地址和跳转目标不能为空")
+    if not government_landing_url or not government_target_url:
+        raise ConfigurationError("江苏政务服务落地地址和跳转目标不能为空")
     if not government_login_api_path.startswith("/"):
         raise ConfigurationError(
             "配置项 rights_statement.government_login.login_api_path 必须以 / 开头"
@@ -1089,13 +1090,18 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             ),
         ),
         government_login=GovernmentLoginSettings(
-            login_url=government_login_url,
+            landing_url=government_landing_url,
             login_api_path=government_login_api_path,
             target_url=government_target_url,
             max_attempts=government_max_attempts,
             response_timeout_ms=government_response_timeout_ms,
         ),
         government_login_selectors=GovernmentLoginSelectors(
+            entry_button=_text(
+                rights_government_login_selectors,
+                "entry_button",
+                rights_government_login_selectors_name,
+            ),
             corporate_tab=_text(
                 rights_government_login_selectors,
                 "corporate_tab",
