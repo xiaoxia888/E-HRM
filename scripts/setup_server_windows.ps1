@@ -58,7 +58,7 @@ if ($LASTEXITCODE -ne 0) { throw "前端依赖安装失败。" }
 if ($LASTEXITCODE -ne 0) { throw "前端构建失败。" }
 
 Write-Host "检查 Python 依赖……"
-& $EhrmPython -c "import sys, tomllib; from pathlib import Path; from importlib.metadata import version; import fastapi, playwright, pyodbc; required=tomllib.loads(Path('config/settings.toml').read_text(encoding='utf-8'))['erp']['database']['driver']; installed=pyodbc.drivers(); print('Python:', sys.executable); print('Playwright:', version('playwright')); print('pyodbc:', pyodbc.version); print('ODBC drivers:', installed); assert required in installed, f'缺少配置要求的 ODBC 驱动：{required}'"
+& $EhrmPython -c "import sys, tomllib; from pathlib import Path; from importlib.metadata import version; import ddddocr, fastapi, playwright, pyodbc; required=tomllib.loads(Path('config/settings.toml').read_text(encoding='utf-8'))['erp']['database']['driver']; installed=pyodbc.drivers(); print('Python:', sys.executable); print('Playwright:', version('playwright')); print('ddddocr:', version('ddddocr')); print('pyodbc:', pyodbc.version); print('ODBC drivers:', installed); assert required in installed, f'缺少配置要求的 ODBC 驱动：{required}'"
 if ($LASTEXITCODE -ne 0) { throw "Python 依赖检查失败。" }
 
 Write-Host "检查 Chromium……"

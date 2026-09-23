@@ -6,9 +6,10 @@ from unittest.mock import Mock, patch
 from openpyxl import Workbook
 import pytest
 
-from ehrm.core.exceptions import QueryValidationError
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
+from ehrm.core.exceptions import JshrssBusinessError, QueryValidationError
 from ehrm.core.settings import load_settings
-from ehrm.entrypoints.employment_enrollment_e2e_cli import load_test_excel
+from ehrm.entrypoints.employment_enrollment_e2e_cli import load_test_excel, main
 from ehrm.modules.employment_enrollment.models import (
     ContractAddReason,
     ContractType,
@@ -161,6 +162,73 @@ def test_excel_adapter_reads_new_and_renewal_rows(tmp_path: Path) -> None:
     assert items[1].monthly_wage is None
 
 
+def test_cli_check_input_accepts_government_login_system_without_mobile(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    AuthenticationRepository(settings.auth_database_path).save_account(
+        SystemType.JSHRSS,
+        "government-user",
+        "test-password",
+        secondary_account="",
+        display_name="政务账号",
+        profile={"login_method": "government_sso"},
+    )
+    path = tmp_path / "参保测试.xlsx"
+    workbook = Workbook()
+    workbook.active.append(
+        [
+            "身份证号",
+            "合同增加原因",
+            "合同类别",
+            "劳动合同开始日期",
+            "劳动合同终止日期",
+            "岗位工种",
+            "参保身份",
+            "月缴费工资",
+        ]
+    )
+    workbook.active.append(
+        [
+            "320101199001011234",
+            "新签",
+            "固定期限",
+            date(2026, 9, 1),
+            date(2027, 8, 31),
+            "普通员工",
+            "企业职工",
+            446.32,
+        ]
+    )
+    workbook.save(path)
+    workbook.close()
+
+    with (
+        patch(
+            "ehrm.entrypoints.employment_enrollment_e2e_cli.application_runtime_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_enrollment_e2e_cli.load_settings",
+            return_value=settings,
+        ),
+        patch("ehrm.entrypoints.employment_enrollment_e2e_cli.BrowserManager") as browser,
+    ):
+        assert main(
+            [
+                "--system",
+                "江苏政务服务平台账号",
+                "--input",
+                str(path),
+                "--check-input",
+            ]
+        ) == 0
+
+    assert "方式=江苏政务服务平台" in capsys.readouterr().out
+    browser.assert_not_called()
+
+
 def test_duplicate_identity_is_rejected_before_browser() -> None:
     with pytest.raises(QueryValidationError, match="身份证号重复"):
         normalize_enrollment_items([_item(), _item(source_index=3)])
@@ -309,3 +377,22 @@ def test_recorded_existing_insurance_inline_message_is_detected(tmp_path: Path) 
     automation._topmost_dialog = Mock(return_value=None)
 
     assert "不能办理参保" in automation._feedback_text(frame)
+
+
+def test_enrollment_returns_outer_business_error_as_row_result(
+    tmp_path: Path,
+) -> None:
+    automation = _page(tmp_path)
+    automation.navigator.open_menu = Mock(
+        side_effect=JshrssBusinessError(
+            "无法办理：核心处理异常，详情请查看日志"
+        )
+    )
+
+    with pytest.raises(
+        EmploymentEnrollmentRowError,
+        match="无法办理：核心处理异常，详情请查看日志",
+    ) as exc_info:
+        automation.open()
+
+    assert exc_info.value.reason_code == "BUSINESS_MESSAGE"

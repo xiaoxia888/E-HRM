@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import time
 from urllib.parse import urljoin
 
 from playwright.sync_api import Error as PlaywrightError, Frame, Locator, Page
@@ -9,10 +10,17 @@ from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.browser.smart_wait import SmartWait, SmartWaitTimeoutError, WaitCondition
 from ehrm.core.exceptions import (
     ConfigurationError,
+    JshrssBusinessError,
     TaskCancelledError,
     WebsiteStructureChangedError,
 )
 from ehrm.core.settings import AppSettings
+from ehrm.modules.jshrss_business_dialog import (
+    BusinessDialog,
+    BusinessDialogKind,
+    close_business_dialog,
+    topmost_business_dialog,
+)
 from ehrm.modules.employment_termination.page import EmploymentTerminationPage
 
 
@@ -159,22 +167,73 @@ class JshrssHallNavigator:
                         return business
             return None
 
-        try:
-            return self.waiter.first(
-                [
-                    WaitCondition(
-                        description,
-                        ready_frame,
-                        transient_exceptions=(PlaywrightError,),
-                    )
-                ],
-                timeout_ms=self.settings.browser.action_timeout_ms,
-                description=f"等待{description}",
-            ).value
-        except SmartWaitTimeoutError as exc:
-            raise WebsiteStructureChangedError(
-                f"{description}未加载", details=str(exc)
-            ) from exc
+        deadline = time.monotonic() + self.settings.browser.action_timeout_ms / 1000
+        while True:
+            remaining_ms = round((deadline - time.monotonic()) * 1000)
+            if remaining_ms < 1:
+                raise WebsiteStructureChangedError(f"{description}未加载")
+            try:
+                state = self.waiter.first(
+                    [
+                        WaitCondition(
+                            "智慧人社业务弹窗",
+                            self._topmost_business_dialog,
+                            transient_exceptions=(PlaywrightError,),
+                        ),
+                        WaitCondition(
+                            description,
+                            ready_frame,
+                            transient_exceptions=(PlaywrightError,),
+                        ),
+                    ],
+                    timeout_ms=remaining_ms,
+                    description=f"等待{description}",
+                )
+            except SmartWaitTimeoutError as exc:
+                raise WebsiteStructureChangedError(
+                    f"{description}未加载", details=str(exc)
+                ) from exc
+            if state.condition == description:
+                return state.value
+
+            dialog: BusinessDialog = state.value
+            self._progress(f"检测到业务弹窗：{dialog.display_text}")
+            close_business_dialog(
+                dialog,
+                pacer=self.pacer,
+                waiter=self.waiter,
+                timeout_ms=remaining_ms,
+                description="关闭智慧人社业务弹窗",
+            )
+            if dialog.kind is BusinessDialogKind.INFORMATION:
+                continue
+            raise JshrssBusinessError(dialog.display_text)
+
+    def _topmost_business_dialog(self) -> BusinessDialog | None:
+        contract = self.settings.employment_termination
+        outer_iframes = self.page.locator(contract.outer_business_frame)
+        for outer_index in range(outer_iframes.count() - 1, -1, -1):
+            outer = outer_iframes.nth(outer_index)
+            if not self._visible(outer):
+                continue
+            outer_frame = self._content_frame(outer)
+            if outer_frame is None:
+                continue
+            outer_dialog = topmost_business_dialog(outer_frame)
+            if outer_dialog is not None:
+                return outer_dialog
+            inner_iframes = outer_frame.locator(contract.business_frame)
+            for inner_index in range(inner_iframes.count() - 1, -1, -1):
+                inner = inner_iframes.nth(inner_index)
+                if not self._visible(inner):
+                    continue
+                business_frame = self._content_frame(inner)
+                if business_frame is None:
+                    continue
+                inner_dialog = topmost_business_dialog(business_frame)
+                if inner_dialog is not None:
+                    return inner_dialog
+        return None
 
     def _region_progress(self, message: str) -> None:
         detail = message.split("：", 1)[-1]

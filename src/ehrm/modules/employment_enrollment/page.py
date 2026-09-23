@@ -11,13 +11,23 @@ from playwright.sync_api import Error as PlaywrightError, Frame, Locator, Page
 
 from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.browser.smart_wait import SmartWait, SmartWaitTimeoutError, WaitCondition
-from ehrm.core.exceptions import TaskCancelledError, WebsiteStructureChangedError
+from ehrm.core.exceptions import (
+    JshrssBusinessError,
+    TaskCancelledError,
+    WebsiteStructureChangedError,
+)
 from ehrm.core.settings import AppSettings
 from ehrm.modules.employment_enrollment.models import (
     ContractAddReason,
     ContractType,
     EmploymentEnrollmentItem,
     EmploymentEnrollmentRowError,
+)
+from ehrm.modules.jshrss_business_dialog import (
+    BusinessDialog,
+    BusinessDialogKind,
+    close_business_dialog,
+    inspect_business_dialog,
 )
 from ehrm.modules.jshrss_hall import JshrssHallNavigator
 
@@ -68,13 +78,19 @@ class EmploymentEnrollmentPage:
         )
 
     def open(self) -> Frame:
-        self.navigator.open_menu(_MENU, category_text=_CATEGORY)
-        frame = self.navigator.wait_for_business_frame(
-            _SEARCH,
-            description="用人单位用工参保登记业务窗口",
-        )
-        self._dismiss_entry_notice(frame)
-        return frame
+        try:
+            self.navigator.open_menu(_MENU, category_text=_CATEGORY)
+            frame = self.navigator.wait_for_business_frame(
+                _SEARCH,
+                description="用人单位用工参保登记业务窗口",
+            )
+            self._dismiss_entry_notice(frame)
+            return frame
+        except JshrssBusinessError as exc:
+            raise EmploymentEnrollmentRowError(
+                exc.message,
+                reason_code="BUSINESS_MESSAGE",
+            ) from exc
 
     def fill_item(self, frame: Frame, item: EmploymentEnrollmentItem) -> None:
         item = item.normalized()
@@ -169,14 +185,27 @@ class EmploymentEnrollmentPage:
             if state.condition == "参保人员查询框":
                 return
             dialog = state.value
-            self._progress("检测到业务入口提示，正在确认")
+            snapshot = inspect_business_dialog(dialog)
+            self._progress(f"检测到业务入口弹窗：{snapshot.display_text}")
             self._close_dialog(dialog)
+            if snapshot.kind is not BusinessDialogKind.INFORMATION:
+                raise EmploymentEnrollmentRowError(
+                    snapshot.display_text,
+                    reason_code=(
+                        "EMPLOYEE_NOT_FOUND"
+                        if snapshot.kind is BusinessDialogKind.EMPLOYEE_NOT_FOUND
+                        else "BUSINESS_MESSAGE"
+                    ),
+                )
 
     def _wait_for_query_result(self, frame: Frame, *, baseline: str) -> None:
         reason = frame.locator("#contractAddReasons")
 
-        def feedback() -> str | None:
-            return self._feedback_text(frame)
+        def feedback() -> BusinessDialog | str | None:
+            dialog = self._topmost_dialog(frame)
+            if dialog is not None:
+                return inspect_business_dialog(dialog)
+            return self._inline_feedback_text(frame)
 
         def form_ready() -> bool | None:
             if self._loading_visible(frame) or self._feedback_text(frame):
@@ -190,25 +219,46 @@ class EmploymentEnrollmentPage:
             except PlaywrightError:
                 return None
 
-        try:
-            state = self.waiter.first(
-                [
-                    WaitCondition("参保业务错误", feedback, stable_for_ms=200),
-                    WaitCondition("参保表单已加载", form_ready, stable_for_ms=700),
-                ],
-                timeout_ms=self.settings.browser.action_timeout_ms,
-                description="等待参保人员查询结果",
-            )
-        except SmartWaitTimeoutError as exc:
-            raise WebsiteStructureChangedError(
-                "查询人员后参保表单没有完成加载", details=str(exc)
-            ) from exc
-        if state.condition == "参保业务错误":
-            message = str(state.value)
-            self._close_topmost_dialog(frame)
+        deadline = time.monotonic() + self.settings.browser.action_timeout_ms / 1000
+        while True:
+            remaining_ms = round((deadline - time.monotonic()) * 1000)
+            if remaining_ms < 1:
+                raise WebsiteStructureChangedError("查询人员后参保表单没有完成加载")
+            try:
+                state = self.waiter.first(
+                    [
+                        WaitCondition("参保业务反馈", feedback, stable_for_ms=200),
+                        WaitCondition("参保表单已加载", form_ready, stable_for_ms=700),
+                    ],
+                    timeout_ms=remaining_ms,
+                    description="等待参保人员查询结果",
+                )
+            except SmartWaitTimeoutError as exc:
+                raise WebsiteStructureChangedError(
+                    "查询人员后参保表单没有完成加载", details=str(exc)
+                ) from exc
+            if state.condition == "参保表单已加载":
+                return
+            feedback_value = state.value
+            if isinstance(feedback_value, BusinessDialog):
+                self._close_dialog(feedback_value.locator)
+                if feedback_value.kind is BusinessDialogKind.INFORMATION:
+                    self._progress(
+                        f"已关闭提示信息：{feedback_value.display_text}"
+                    )
+                    continue
+                message = feedback_value.display_text
+                not_found = (
+                    feedback_value.kind is BusinessDialogKind.EMPLOYEE_NOT_FOUND
+                )
+            else:
+                message = str(feedback_value)
+                not_found = any(
+                    token in message for token in ("未找到", "不存在", "无此人员")
+                )
             code = (
                 "EMPLOYEE_NOT_FOUND"
-                if any(token in message for token in ("未找到", "不存在", "无此人员"))
+                if not_found
                 else "BUSINESS_MESSAGE"
             )
             raise EmploymentEnrollmentRowError(message, reason_code=code)
@@ -353,10 +403,10 @@ class EmploymentEnrollmentPage:
     def _feedback_text(self, frame: Frame) -> str | None:
         dialog = self._topmost_dialog(frame)
         if dialog is not None:
-            body = dialog.locator(".modal-body")
-            text = body.inner_text() if self._visible(body) else dialog.inner_text()
-            normalized = " ".join(text.split())
-            return normalized or None
+            return inspect_business_dialog(dialog).display_text
+        return self._inline_feedback_text(frame)
+
+    def _inline_feedback_text(self, frame: Frame) -> str | None:
         try:
             matches = frame.get_by_text(_INLINE_ERROR)
             for index in range(matches.count() - 1, -1, -1):
@@ -385,29 +435,13 @@ class EmploymentEnrollmentPage:
             self._close_dialog(dialog)
 
     def _close_dialog(self, dialog: Locator) -> None:
-        buttons = dialog.get_by_role("button", name="确定", exact=True)
-        button = self._last_visible(buttons)
-        if button is None:
-            raise WebsiteStructureChangedError("业务提示中没有可操作的确定按钮")
-        handle = dialog.element_handle()
-        self.pacer.perform(button.click)
-        if handle is None:
-            return
-        try:
-            self.waiter.first(
-                [
-                    WaitCondition(
-                        "当前业务提示已关闭",
-                        lambda: True if not _handle_visible(handle) else None,
-                    )
-                ],
-                timeout_ms=self.settings.browser.action_timeout_ms,
-                description="关闭参保业务提示",
-            )
-        except SmartWaitTimeoutError as exc:
-            raise WebsiteStructureChangedError(
-                "参保业务提示点击确定后没有关闭", details=str(exc)
-            ) from exc
+        close_business_dialog(
+            inspect_business_dialog(dialog),
+            pacer=self.pacer,
+            waiter=self.waiter,
+            timeout_ms=self.settings.browser.action_timeout_ms,
+            description="关闭参保业务提示",
+        )
 
     def _topmost_dialog(self, frame: Frame) -> Locator | None:
         dialogs = frame.locator(".modal-content")
@@ -461,10 +495,3 @@ class EmploymentEnrollmentPage:
 
 def _decimal_text(value: Decimal) -> str:
     return format(value, "f")
-
-
-def _handle_visible(handle: object) -> bool:
-    try:
-        return bool(handle.is_visible())
-    except PlaywrightError:
-        return False

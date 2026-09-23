@@ -45,7 +45,7 @@ export const api = {
   }),
   saveAccount: (
     systemType: AccountSummary['system_type'],
-    values: { account_id?: number; account: string; secondary_account?: string; password?: string; display_name?: string },
+    values: { account_id?: number; account: string; secondary_account?: string; password?: string; display_name?: string; login_method?: 'direct' | 'government_sso' },
   ) => apiRequest<AccountSummary>(`/api/v1/settings/accounts/${systemType}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

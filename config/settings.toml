@@ -31,7 +31,7 @@ channel = ""
 
 # true 隐藏浏览器窗口，false 显示浏览器窗口；两种模式的浏览器进程都会在工作台内常驻。
 # browser 后端需要人工观察或接管登录时，应设置为 false。
-headless = true
+headless = false
 silent_session_check = false
 # 正式运行保持 0；仅在人工调试、观察每一步操作时临时调大。
 slow_mo_ms = 0
@@ -54,6 +54,16 @@ login_url = "https://rs.jshrss.jiangsu.gov.cn/web/login"
 page_url = "https://rs.jshrss.jiangsu.gov.cn/web/center/unit/rightsBill"
 # 单位账号密码登录接口。这里只配置路径，主机和端口始终取 login_url。
 unit_password_login_path = "/zuul/api/auth/unit/unitPasswordLogin"
+
+[rights_statement.government_login]
+# 第二种登录方式：江苏政务服务平台法人账号登录。登录成功后进入同一智慧人社业务站点。
+# 本地联调代理地址中的 uuid 由代理端维护；若测试入口变化，只需修改此处。
+login_url = "https://www.jszwfw.gov.cn/jsjis/front/login.do?uuid=P2tMMTbVdRVN&gotoUrl=%2Fapi%2Fggfw-unit-user-center%2Funit%2FunitExtend%2FcheckUnitGoveLogin"
+login_api_path = "/jsjis/front/coruser/docoruserlogin.do"
+# 仅用于校验政务平台自然重定向的最终落点，程序不会主动导航到此地址。
+target_url = "https://rs.jshrss.jiangsu.gov.cn/web/unitcenter/unitmain"
+max_attempts = 3
+response_timeout_ms = 30000
 
 [rights_statement.api]
 # 智慧人社业务接口只配置路径，主机和端口始终取 login_url。
@@ -129,6 +139,16 @@ mobile = 'role=textbox[name="证件号码/移动电话"]'
 password = 'role=textbox[name="请输入密码"]'
 submit = 'role=button[name="登录"]'
 authenticated_marker = "text=省本级"
+
+[rights_statement.selectors.government_login]
+corporate_tab = 'text="法人登录"'
+username = 'role=textbox[name="请输入登录名"]'
+password = 'role=textbox[name="请输入密码"]'
+captcha_input = 'role=textbox[name="请输入验证码,验证码不区分大小写"]'
+captcha_image = "#verifyImg_fr"
+agreement = "#fryhxy"
+submit = "#frlogin1"
+authenticated_marker = 'text="单位主页"'
 
 [rights_statement.selectors.navigation]
 province_entry = "text=省本级"

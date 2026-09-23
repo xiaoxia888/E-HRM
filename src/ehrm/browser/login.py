@@ -4,11 +4,12 @@ import os
 import sqlite3
 import time
 import logging
+import hashlib
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, Response
+from playwright.sync_api import Page, Request, Response
 
 from ehrm.browser.access_token import (
     AccessTokenManager,
@@ -51,6 +52,8 @@ class LoginService:
         self._manual_login_status: str | None = None
         self._login_failure: AuthenticationFailedError | None = None
         self._login_succeeded = False
+        self._government_result: str | None = None
+        self._government_message = ""
         self._response_listener_page_ids: set[int] = set()
         self._context = getattr(page, "context", None)
         self.pacer = BrowserInteractionPacer(
@@ -80,11 +83,15 @@ class LoginService:
         if not callable(on):
             return
         on("response", self._capture_login_response)
+        on("request", self._capture_access_token_request)
         self._response_listener_page_ids.add(page_id)
 
     def _capture_login_response(self, response: Response) -> None:
         """Captures the unit-password result without raising in an event hook."""
         try:
+            if self._is_government_login_response(response):
+                self._capture_government_login_response(response)
+                return
             if not self._is_unit_password_login_response(response):
                 return
             try:
@@ -125,6 +132,79 @@ class LoginService:
         except Exception:
             # Playwright event callbacks must not interrupt its internal event loop.
             _LOGGER.exception("解析单位账号密码登录接口响应失败")
+
+    def _capture_government_login_response(self, response: Response) -> None:
+        try:
+            payload = response.json()
+        except (PlaywrightError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        message = str(payload.get("message") or "").strip()
+        success_value = payload.get("success")
+        if response.status >= 400:
+            self._government_result = "fatal"
+            self._government_message = message or f"登录接口返回 HTTP {response.status}"
+        elif success_value is True:
+            self._government_result = "success"
+            self._government_message = message
+            self._progress("江苏政务服务平台账号验证通过，正在进入智慧人社……")
+        elif "验证码" in message:
+            self._government_result = "captcha_error"
+            self._government_message = message or "验证码输入有误"
+        elif success_value is False and message:
+            self._government_result = "fatal"
+            self._government_message = message
+        else:
+            # The gateway may return an empty/non-JSON HTTP 200 response and
+            # immediately navigate through checkUnitGoveLogin. This response is
+            # not proof of failure; the final JSHRSS token is authoritative.
+            self._government_result = "redirecting"
+            self._government_message = message
+            self._progress(
+                "政务服务平台登录接口已返回，正在等待跳转至智慧人社……"
+            )
+        if self._government_result == "fatal":
+            self._login_failure = AuthenticationFailedError(
+                self._government_message,
+                details=f"HTTP={response.status}",
+            )
+            self._progress(f"登录失败：{self._government_message}")
+
+    def _capture_access_token_request(self, request: Request) -> None:
+        """Captures only tokens sent to the configured JSHRSS host after SSO."""
+        try:
+            actual = urlsplit(request.url)
+            trusted = urlsplit(self.settings.site.login_url)
+            if (
+                actual.scheme.casefold() != trusted.scheme.casefold()
+                or actual.netloc.casefold() != trusted.netloc.casefold()
+            ):
+                return
+            headers = request.headers
+            token = str(
+                headers.get("access-token")
+                or headers.get("Access-Token")
+                or ""
+            ).strip()
+            if token:
+                self._save_captured_access_token(token)
+        except Exception:
+            _LOGGER.exception("捕获智慧人社 Access-Token 失败")
+
+    def _save_captured_access_token(self, token: str) -> None:
+        if self._access_token_manager is None:
+            return
+        try:
+            self._access_token_manager.save_token(token)
+        except (EhrmError, OSError, ValueError, sqlite3.Error) as exc:
+            self._login_failure = AuthenticationFailedError(
+                "Access-Token 保存失败",
+                details=str(exc),
+            )
+            return
+        self._login_succeeded = True
+        _LOGGER.info("SSO 登录后的智慧人社 Access-Token 已保存到 SQLite")
 
     def _store_successful_access_token(self, payload: dict[str, object]) -> None:
         raw_map = payload.get("map")
@@ -169,6 +249,21 @@ class LoginService:
                 actual.scheme.casefold() == configured.scheme.casefold()
                 and actual.netloc.casefold() == configured.netloc.casefold()
                 and actual.path.rstrip("/") == expected_path
+            )
+        except (AttributeError, ValueError):
+            return False
+
+    def _is_government_login_response(self, response: Response) -> bool:
+        try:
+            if response.request.method.upper() != "POST":
+                return False
+            actual = urlsplit(response.url)
+            configured = urlsplit(self.settings.government_login.login_url)
+            return (
+                actual.scheme.casefold() == configured.scheme.casefold()
+                and actual.netloc.casefold() == configured.netloc.casefold()
+                and actual.path.rstrip("/")
+                == self.settings.government_login.login_api_path.rstrip("/")
             )
         except (AttributeError, ValueError):
             return False
@@ -227,6 +322,8 @@ class LoginService:
         self._manual_login_status = None
         self._login_failure = None
         self._login_succeeded = False
+        self._government_result = None
+        self._government_message = ""
         credentials = self.settings.rights_credentials
         saved_account = AuthenticationRepository(
             self.settings.auth_database_path
@@ -250,12 +347,28 @@ class LoginService:
             or (saved_account.password if saved_account else None)
         )
         if self._access_token_manager is None:
+            selected_account_id = credentials.account_id
+            if (
+                selected_account_id is None
+                and saved_account is not None
+                and credit_code == saved_account.account
+                and mobile_number == saved_account.secondary_account
+            ):
+                selected_account_id = saved_account.id
             self._access_token_manager = create_rights_access_token_manager(
                 self.settings.auth_database_path,
                 credit_code or "",
                 mobile_number or "",
                 password=resolved_password or "",
+                account_id=selected_account_id,
             )
+
+        if credentials.login_method == "government_sso":
+            self._ensure_government_authenticated(
+                username=credit_code,
+                password=resolved_password,
+            )
+            return
 
         self._open_login_entry()
         if self.is_authenticated():
@@ -312,6 +425,230 @@ class LoginService:
             "等待人工登录超时",
             details="请完成验证码后重试，或增加 manual_login_timeout_seconds",
         )
+
+    def _ensure_government_authenticated(
+        self,
+        *,
+        username: str | None,
+        password: str | None,
+    ) -> None:
+        if not username or not password:
+            raise AuthenticationFailedError(
+                "江苏政务服务平台登录信息不完整",
+                details="登录名和密码均不能为空",
+            )
+        page = self._active_page()
+        page.goto(
+            self.settings.government_login.login_url,
+            wait_until="domcontentloaded",
+        )
+        selectors = self.settings.government_login_selectors
+        timeout = self.settings.browser.action_timeout_ms
+        corporate_tab = page.locator(selectors.corporate_tab).first
+        corporate_tab.wait_for(state="visible", timeout=timeout)
+        self.pacer.perform(corporate_tab.click)
+        username_field = page.locator(selectors.username).first
+        password_field = page.locator(selectors.password).first
+        username_field.wait_for(state="visible", timeout=timeout)
+        password_field.wait_for(state="visible", timeout=timeout)
+        self.pacer.perform(lambda: username_field.fill(username))
+        self.pacer.perform(lambda: password_field.fill(password))
+
+        from ehrm.browser.character_captcha import CharacterCaptchaRecognizer
+
+        recognizer = CharacterCaptchaRecognizer()
+        max_attempts = self.settings.government_login.max_attempts
+        for attempt in range(1, max_attempts + 1):
+            self._government_result = None
+            self._government_message = ""
+            image = page.locator(selectors.captcha_image).first
+            image.wait_for(state="visible", timeout=timeout)
+            try:
+                code = recognizer.recognize(image.screenshot())
+            except (RuntimeError, ValueError) as exc:
+                if attempt >= max_attempts:
+                    raise AuthenticationFailedError(
+                        "验证码自动识别失败",
+                        details=str(exc),
+                    ) from exc
+                self._progress(
+                    f"验证码第 {attempt} 次识别无效，正在更换验证码……"
+                )
+                self._refresh_government_captcha(image)
+                continue
+            captcha_field = page.locator(selectors.captcha_input).first
+            self.pacer.perform(lambda: captcha_field.fill(code))
+            agreement = page.locator(selectors.agreement).first
+            if not agreement.is_checked():
+                self.pacer.perform(agreement.check)
+            self._progress(f"正在提交登录（验证码第 {attempt} 次识别）……")
+            submit = page.locator(selectors.submit).first
+            self.pacer.perform(submit.click)
+            result = self._wait_for_government_login_result()
+            if result == "captcha_error":
+                if attempt >= max_attempts:
+                    raise AuthenticationFailedError(
+                        self._government_message or "验证码输入有误",
+                        details=f"自动识别已尝试 {max_attempts} 次",
+                    )
+                self._progress("验证码校验未通过，正在刷新并重新识别……")
+                self._refresh_government_captcha(image)
+                continue
+            self._raise_login_failure()
+            if result in {"success", "redirecting"}:
+                self._wait_for_government_sso_token()
+                self._wait_for_government_target()
+                return
+        raise AuthenticationFailedError("江苏政务服务平台登录失败")
+
+    def _wait_for_government_login_result(self) -> str:
+        deadline = time.monotonic() + (
+            self.settings.government_login.response_timeout_ms / 1000.0
+        )
+        while time.monotonic() < deadline:
+            self._raise_login_failure()
+            if self._government_result is not None:
+                return self._government_result
+            if self.cancel_check is not None and self.cancel_check():
+                raise TaskCancelledError("用户在登录阶段停止任务")
+            self._wait_for_timeout(100)
+        raise AuthenticationFailedError(
+            "等待江苏政务服务平台登录结果超时",
+            details="未收到登录接口响应",
+        )
+
+    def _refresh_government_captcha(self, image: object) -> None:
+        before = hashlib.sha256(image.screenshot()).digest()  # type: ignore[attr-defined]
+        self.pacer.perform(image.click)  # type: ignore[attr-defined]
+        deadline = time.monotonic() + (
+            self.settings.captcha.image_change_timeout_ms / 1000.0
+        )
+        while time.monotonic() < deadline:
+            current = hashlib.sha256(image.screenshot()).digest()  # type: ignore[attr-defined]
+            if current != before:
+                return
+            self._wait_for_timeout(100)
+        raise AuthenticationFailedError("更换验证码超时")
+
+    def _wait_for_government_sso_token(self) -> None:
+        deadline = time.monotonic() + (
+            self.settings.government_login.response_timeout_ms / 1000.0
+        )
+        while time.monotonic() < deadline:
+            self._raise_login_failure()
+            if self._login_succeeded:
+                return
+            self._capture_token_from_browser_storage()
+            if self._login_succeeded:
+                return
+            self._active_page(prefer_latest=True)
+            self._wait_for_timeout(200)
+        raise AuthenticationFailedError(
+            "政务服务平台登录成功，但未获取到智慧人社 Access-Token",
+            details="请确认登录后已正常跳转到江苏智慧人社",
+        )
+
+    def _wait_for_government_target(self) -> None:
+        deadline = time.monotonic() + (
+            self.settings.browser.navigation_timeout_ms / 1000.0
+        )
+        while time.monotonic() < deadline:
+            self._raise_login_failure()
+            if self.is_government_target_reached():
+                page = self._active_page()
+                try:
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=self.settings.browser.action_timeout_ms,
+                    )
+                    marker = page.locator(
+                        self.settings.government_login_selectors.authenticated_marker
+                    ).first
+                    marker.wait_for(
+                        state="visible",
+                        timeout=self.settings.browser.action_timeout_ms,
+                    )
+                except PlaywrightError:
+                    self._wait_for_timeout(200)
+                    continue
+                self._progress("已进入智慧人社单位主页，登录视图加载完成")
+                return
+            if self.cancel_check is not None and self.cancel_check():
+                raise TaskCancelledError("用户在登录跳转阶段停止任务")
+            self._active_page(prefer_latest=True)
+            self._wait_for_timeout(200)
+        page = self._active_page(prefer_latest=True)
+        if self.is_government_target_reached():
+            raise AuthenticationFailedError(
+                "已进入智慧人社单位主页，但登录视图未加载完成",
+                details=(
+                    "未找到登录后页面标志："
+                    f"{self.settings.government_login_selectors.authenticated_marker}"
+                ),
+            )
+        raise AuthenticationFailedError(
+            "政务服务平台登录成功，但未进入智慧人社首页",
+            details=(
+                f"期望页面={self.settings.government_login.target_url}；"
+                f"当前页面={url_without_sensitive_query(page.url)}"
+            ),
+        )
+
+    def is_government_target_reached(self) -> bool:
+        target = urlsplit(self.settings.government_login.target_url)
+        target_path = target.path.rstrip("/") or "/"
+        for page in reversed(self._open_pages() or [self._active_page()]):
+            try:
+                actual = urlsplit(page.url)
+                actual_path = actual.path.rstrip("/") or "/"
+                if (
+                    actual.scheme.casefold() == target.scheme.casefold()
+                    and actual.netloc.casefold() == target.netloc.casefold()
+                    and actual_path == target_path
+                ):
+                    self.page = page
+                    return True
+            except (AttributeError, ValueError):
+                continue
+        return False
+
+    def is_government_view_ready(self) -> bool:
+        if not self.is_government_target_reached():
+            return False
+        try:
+            marker = self.page.locator(
+                self.settings.government_login_selectors.authenticated_marker
+            ).first
+            return marker.count() > 0 and marker.is_visible()
+        except (AttributeError, PlaywrightError):
+            return False
+
+    def _capture_token_from_browser_storage(self) -> None:
+        trusted = urlsplit(self.settings.site.login_url)
+        for page in reversed(self._open_pages()):
+            try:
+                actual = urlsplit(page.url)
+                if (
+                    actual.scheme.casefold() != trusted.scheme.casefold()
+                    or actual.netloc.casefold() != trusted.netloc.casefold()
+                ):
+                    continue
+                token = page.evaluate(
+                    """() => {
+                      const keys = ['Access-Token', 'access-token', 'accessToken'];
+                      for (const key of keys) {
+                        const value = localStorage.getItem(key) || sessionStorage.getItem(key);
+                        if (value) return value;
+                      }
+                      return '';
+                    }"""
+                )
+                if token:
+                    self._save_captured_access_token(str(token))
+                    self.page = page
+                    return
+            except PlaywrightError:
+                continue
 
     def _autofill_and_submit(
         self,

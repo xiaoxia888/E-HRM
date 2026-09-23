@@ -61,6 +61,10 @@ class WebsiteStructureChangedError(EhrmError):
     code = ErrorCode.WEBSITE_STRUCTURE_CHANGED
 
 
+class JshrssBusinessError(EhrmError):
+    """A business error returned by the Jiangsu HRSS page itself."""
+
+
 class DownloadTimeoutError(EhrmError):
     code = ErrorCode.DOWNLOAD_TIMEOUT
     retryable = True

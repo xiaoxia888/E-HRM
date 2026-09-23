@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
 from ehrm import __version__
-from ehrm.core.auth_repository import AuthenticationRepository, SystemType
+from ehrm.core.auth_repository import AuthenticationRepository, SystemAccount, SystemType
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
 from ehrm.core.preferences import UserPreferences
@@ -197,7 +197,8 @@ def create_app(
                 display_name=record.display_name or record.system_type.value,
                 masked_account=_mask_account(record.account),
                 is_default=record.is_default,
-                ready=_account_ready(record.system_type, record.account, record.secondary_account, record.password),
+                ready=_account_ready(record),
+                login_method=str(record.profile.get("login_method") or "direct"),
             )
             for record in records
         ]
@@ -235,6 +236,7 @@ def create_app(
             secondary_account=selected.secondary_account,
             password_mask="******" if selected.password else "",
             password_saved=bool(selected.password),
+            login_method=str(selected.profile.get("login_method") or "direct"),
         )
 
     @app.put("/api/v1/settings/preferences")
@@ -278,6 +280,7 @@ def create_app(
             secondary_account=request.secondary_account,
             password=request.password,
             display_name=request.display_name,
+            login_method=request.login_method,
         )
         return AccountSummary(
             id=saved.id,
@@ -285,7 +288,8 @@ def create_app(
             display_name=saved.display_name or saved.system_type.value,
             masked_account=_mask_account(saved.account),
             is_default=saved.is_default,
-            ready=_account_ready(saved.system_type, saved.account, saved.secondary_account, saved.password),
+            ready=_account_ready(saved),
+            login_method=str(saved.profile.get("login_method") or "direct"),
         )
 
     @app.get("/api/v1/tasks", response_model=TaskListResponse)
@@ -532,15 +536,13 @@ def _mask_account(account: str) -> str:
     return f"{value[:2]}{'*' * max(len(value) - 4, 4)}{value[-2:]}"
 
 
-def _account_ready(
-    system_type: SystemType,
-    account: str,
-    secondary_account: str,
-    password: str,
-) -> bool:
-    if not account or not password:
+def _account_ready(account: SystemAccount) -> bool:
+    if not account.account or not account.password:
         return False
-    return system_type is not SystemType.JSHRSS or bool(secondary_account)
+    if account.system_type is not SystemType.JSHRSS:
+        return True
+    login_method = str(account.profile.get("login_method") or "direct")
+    return login_method == "government_sso" or bool(account.secondary_account)
 
 
 app = create_app()

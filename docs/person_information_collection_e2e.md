@@ -1,6 +1,6 @@
 # 人员基础信息采集：仅录入测试
 
-此入口复用系统设置中已保存的默认智慧人社单位账号完成登录，从大厅进入“人员基础信息采集”，并强校验办事地区为南京（`areaCode=320100`）。**不会点击业务提交按钮**。多行测试数据各占一个浏览器标签页，避免后续人员覆盖未提交的表单。
+此入口使用系统设置中已保存的指定系统账号完成登录，从大厅进入“人员基础信息采集”，并强校验办事地区为南京（`areaCode=320100`）。不指定系统时默认使用“江苏智慧人社账号”，也可通过 `--system "江苏政务服务平台账号"` 切换政务登录。**不会点击业务提交按钮**。多行测试数据各占一个浏览器标签页，避免后续人员覆盖未提交的表单。
 
 测试 Excel 仅支持 `.xlsx` / `.xlsm`，首行需包含以下列（顺序不限）：
 
@@ -21,14 +21,22 @@
 先只检查文件和已保存的账号：
 
 ```bash
-python -m ehrm.entrypoints.person_information_collection_e2e_cli --input /path/to/test.xlsx --check-input
+python scripts/run_person_information_collection_e2e.py \
+  --system "江苏政务服务平台账号" \
+  --input /path/to/test.xlsx \
+  --check-input
 ```
 
 实际打开浏览器并停在提交前，供人工核对：
 
 ```bash
-python -m ehrm.entrypoints.person_information_collection_e2e_cli --input /path/to/test.xlsx --pause-after-fill
+python scripts/run_person_information_collection_e2e.py \
+  --system "江苏政务服务平台账号" \
+  --input /path/to/test.xlsx \
+  --pause-after-fill
 ```
+
+安装项目后，也可以将 `python scripts/run_person_information_collection_e2e.py` 替换为 `ehrm-person-information-collection-e2e`，两者调用同一个入口。测试原智慧人社直登时省略 `--system` 即可。
 
 默认输出逐行结果至 `output/person-information-collection-e2e.xlsx`，当前页面截图至 `output/person-information-collection-e2e.png`。正式平台接入时调用 `PersonInformationService.prepare_with_page(page, items)`，传入 `PersonInformationItem` 对象数组；Excel 解析只存在于这个测试入口。
 

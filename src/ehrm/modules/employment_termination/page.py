@@ -4,7 +4,7 @@ from collections.abc import Callable
 import logging
 import re
 import time
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import (
     Error as PlaywrightError,
@@ -18,6 +18,7 @@ from ehrm.browser.smart_wait import SmartWait, SmartWaitTimeoutError, WaitCondit
 from ehrm.browser.interaction_pacer import BrowserInteractionPacer
 from ehrm.core.exceptions import (
     EmployeeNotFoundError,
+    JshrssBusinessError,
     QueryResultTimeoutError,
     TaskCancelledError,
     WebsiteStructureChangedError,
@@ -26,6 +27,10 @@ from ehrm.core.settings import AppSettings
 from ehrm.modules.employment_termination.models import (
     EmploymentTerminationItem,
     EmploymentTerminationReason,
+)
+from ehrm.modules.jshrss_business_dialog import (
+    BusinessDialogKind,
+    classify_business_dialog,
 )
 
 
@@ -153,29 +158,26 @@ class EmploymentTerminationPage:
 
     def open(self) -> Frame:
         self._raise_if_cancelled()
-        home_url = urljoin(self.settings.site.login_url, self.contract.home_path)
-        self._progress("退保：正在进入智慧人社大厅")
-        self.page.goto(home_url, wait_until="domcontentloaded")
-        # The hall may open a mandatory region chooser on first entry. Its
-        # backdrop is a modal layer, not a loading state, so handle it before
-        # waiting for ordinary loading indicators.
-        self._ensure_nanjing()
-        self._wait_for_loading_to_finish()
-        self._progress("退保：南京地区校验通过，正在打开退工停保登记")
-        try:
-            middle = self.page.frame_locator(self.contract.middle_frame)
-            menu = middle.get_by_text(self.contract.menu_text, exact=True)
-            menu.wait_for(
-                state="visible",
-                timeout=self.settings.browser.action_timeout_ms,
-            )
-            self.pacer.perform(menu.click)
-        except PlaywrightError as exc:
-            raise WebsiteStructureChangedError(
-                "无法打开用人单位退工停保登记",
-                details=str(exc),
-            ) from exc
-        frame = self._wait_for_business_frame()
+        # Local import avoids the navigator's existing region-guard import
+        # creating a module cycle. Termination now enters through the same
+        # “单位办事 -> 搜索业务” path as enrollment.
+        from ehrm.modules.jshrss_hall import JshrssHallNavigator
+
+        navigator = JshrssHallNavigator(
+            self.page,
+            self.settings,
+            operation_name="退保",
+            progress_callback=self.progress_callback,
+            cancel_check=self.cancel_check,
+        )
+        navigator.open_menu(
+            self.contract.menu_text,
+            category_text="社会保险登记",
+        )
+        frame = navigator.wait_for_business_frame(
+            self.contract.person_search,
+            description="用人单位退工停保登记业务窗口",
+        )
         self._dismiss_entry_notice(frame)
         return frame
 
@@ -453,20 +455,26 @@ class EmploymentTerminationPage:
                         button = buttons.nth(button_index)
                         if not self._actionable(button):
                             continue
-                        text = re.sub(
-                            r"\s+",
-                            "",
-                            dialog.inner_text(timeout=_DOM_PROBE_TIMEOUT_MS),
+                        text = " ".join(
+                            dialog.inner_text(
+                                timeout=_DOM_PROBE_TIMEOUT_MS
+                            ).split()
                         )
                         notice_text = re.sub(
                             r"\s+",
                             "",
                             self.contract.entry_notice_text,
                         )
+                        compact_text = re.sub(r"\s+", "", text)
                         if _is_employee_not_found_message(text):
                             dialog_kind = "employee-not-found"
-                        elif notice_text in text:
+                        elif notice_text in compact_text:
                             dialog_kind = "termination-time"
+                        elif (
+                            classify_business_dialog("", text)
+                            is BusinessDialogKind.ERROR
+                        ):
+                            dialog_kind = "business-error"
                         else:
                             dialog_kind = "business-entry"
                         return dialog, button, dialog_kind, text
@@ -523,6 +531,9 @@ class EmploymentTerminationPage:
             elif dialog_kind == "employee-not-found":
                 self._progress("退保：检测到未查询到人员提示，正在关闭")
                 error_message = "无法关闭未查询到人员提示"
+            elif dialog_kind == "business-error":
+                self._progress(f"退保：检测到业务错误，正在关闭：{dialog_text}")
+                error_message = "无法关闭退保业务错误提示"
             else:
                 # Only a button inside the topmost Angular modal is eligible.
                 # The page's final action is named “确认提交”, lives outside
@@ -550,8 +561,8 @@ class EmploymentTerminationPage:
                 try:
                     if not clicked_dialog_handle.is_visible():
                         return True
-                    current_text = re.sub(
-                        r"\s+", "", clicked_dialog_handle.inner_text()
+                    current_text = " ".join(
+                        clicked_dialog_handle.inner_text().split()
                     )
                     if current_text != dialog_text:
                         return True
@@ -657,6 +668,8 @@ class EmploymentTerminationPage:
                 dialog_kind,
                 time.monotonic() - click_started_at,
             )
+            if dialog_kind == "business-error":
+                raise JshrssBusinessError(dialog_text)
 
     def dismiss_query_feedback(self, frame: Frame) -> None:
         """Closes row-level query feedback before processing the next item."""

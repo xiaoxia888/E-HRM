@@ -412,6 +412,38 @@ def test_business_frame_uses_newest_visible_recorded_frame_chain(
     old_outer.element_handle.assert_not_called()
 
 
+def test_termination_opens_from_shared_unit_affairs_entry(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    automation = EmploymentTerminationPage.__new__(EmploymentTerminationPage)
+    automation.page = Mock()
+    automation.settings = settings
+    automation.contract = settings.employment_termination
+    automation.progress_callback = Mock()
+    automation.cancel_check = None
+    automation._raise_if_cancelled = Mock()
+    automation._dismiss_entry_notice = Mock()
+    business_frame = Mock()
+
+    with patch("ehrm.modules.jshrss_hall.JshrssHallNavigator") as navigator_class:
+        navigator_class.return_value.wait_for_business_frame.return_value = (
+            business_frame
+        )
+        result = automation.open()
+
+    assert result is business_frame
+    navigator_class.return_value.open_menu.assert_called_once_with(
+        "用人单位退工停保登记",
+        category_text="社会保险登记",
+    )
+    navigator_class.return_value.wait_for_business_frame.assert_called_once_with(
+        "sipub-person-quick-search",
+        description="用人单位退工停保登记业务窗口",
+    )
+    automation._dismiss_entry_notice.assert_called_once_with(business_frame)
+
+
 def test_recorded_notice_and_entry_confirm_are_clicked_once_in_order(
     tmp_path: Path,
 ) -> None:

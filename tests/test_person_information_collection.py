@@ -590,3 +590,52 @@ def test_cli_check_input_reuses_saved_default_account_without_browser(
     ):
         assert main(["--input", str(path), "--check-input"]) == 0
     browser.assert_not_called()
+
+
+def test_cli_check_input_accepts_government_login_system_without_mobile(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    AuthenticationRepository(settings.auth_database_path).save_account(
+        SystemType.JSHRSS,
+        "government-user",
+        "test-password",
+        secondary_account="",
+        display_name="政务账号",
+        profile={"login_method": "government_sso"},
+    )
+    path = tmp_path / "采集测试.xlsx"
+    workbook = Workbook()
+    workbook.active.append(
+        ["身份证号", "姓名", "手机号", "民族", "户籍性质", "省", "市", "区县", "街道", "社区村"]
+    )
+    workbook.active.append(
+        ["320101199001011234", "测试人员", "13800138000", "汉族", "11", "江苏省", "南京市", "玄武区", "玄武门街道", "社区甲"]
+    )
+    workbook.save(path)
+    workbook.close()
+
+    with (
+        patch(
+            "ehrm.entrypoints.person_information_collection_e2e_cli.application_runtime_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "ehrm.entrypoints.person_information_collection_e2e_cli.load_settings",
+            return_value=settings,
+        ),
+        patch("ehrm.entrypoints.person_information_collection_e2e_cli.BrowserManager") as browser,
+    ):
+        assert main(
+            [
+                "--system",
+                "江苏政务服务平台账号",
+                "--input",
+                str(path),
+                "--check-input",
+            ]
+        ) == 0
+
+    assert "方式=江苏政务服务平台" in capsys.readouterr().out
+    browser.assert_not_called()

@@ -64,3 +64,24 @@ def test_rights_manager_does_not_create_account_until_token_is_saved(
     assert account.secondary_account == "new-mobile"
     assert account.password == "verified-password"
     assert repository.get_session(account.id).session_data == "verified-access-token"
+
+
+def test_rights_manager_can_persist_by_selected_account_id(tmp_path: Path) -> None:
+    database_path = tmp_path / "auth.sqlite3"
+    repository = AuthenticationRepository(database_path)
+    account = repository.save_account(
+        SystemType.JSHRSS,
+        "government-login-name",
+        "password",
+        profile={"login_method": "government_sso"},
+    )
+    manager = create_rights_access_token_manager(
+        database_path,
+        "",
+        "",
+        account_id=account.id,
+    )
+
+    manager.save_token("sso-access-token")
+
+    assert repository.get_session(account.id).session_data == "sso-access-token"

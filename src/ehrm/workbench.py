@@ -74,6 +74,16 @@ class DesktopWorkbench:
             credit_code,
             mobile,
             password=password,
+            account_id=(
+                credentials.account_id
+                or (
+                    saved_account.id
+                    if saved_account is not None
+                    and credit_code == saved_account.account
+                    and mobile == saved_account.secondary_account
+                    else None
+                )
+            ),
         )
         self._service = ExcelRightsStatementService(
             settings,
@@ -262,7 +272,12 @@ class DesktopWorkbench:
         stealth_enabled = (
             self.settings.captcha.stealth_enabled
             and is_allowed_host_url(
-                self.settings.site.login_url,
+                (
+                    self.settings.government_login.login_url
+                    if self.settings.rights_credentials.login_method
+                    == "government_sso"
+                    else self.settings.site.login_url
+                ),
                 self.settings.captcha.allowed_hosts,
             )
         )

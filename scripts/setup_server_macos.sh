@@ -99,6 +99,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import fastapi
+import ddddocr
 import playwright
 import pyodbc
 from playwright.sync_api import sync_playwright
@@ -106,6 +107,7 @@ from playwright.sync_api import sync_playwright
 print(f"Python: {sys.executable}")
 print(f"Playwright: {version('playwright')}")
 print(f"pyodbc: {pyodbc.version}")
+print(f"ddddocr: {version('ddddocr')}")
 with Path("config/settings.toml").open("rb") as stream:
     required_driver = tomllib.load(stream)["erp"]["database"]["driver"]
 installed_drivers = pyodbc.drivers()

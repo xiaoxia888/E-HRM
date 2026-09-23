@@ -47,6 +47,180 @@ def test_check_input_reads_saved_sqlite_account_without_prompt(
     assert status == 0
 
 
+def test_default_system_remains_direct_when_government_account_is_database_default(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    repository = AuthenticationRepository(settings.auth_database_path)
+    repository.save_account(
+        SystemType.JSHRSS,
+        "direct-unit-code",
+        "direct-password",
+        secondary_account="direct-mobile",
+        display_name="直登账号",
+        profile={"login_method": "direct"},
+    )
+    repository.save_account(
+        SystemType.JSHRSS,
+        "government-user",
+        "government-password",
+        secondary_account="",
+        display_name="政务账号",
+        profile={"login_method": "government_sso"},
+    )
+    workbook_path = tmp_path / "退保测试.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["身份证号", "退工原因"])
+    workbook.active.append(["320101199001011234", "6304"])
+    workbook.save(workbook_path)
+    workbook.close()
+
+    with (
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.application_runtime_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.load_settings",
+            return_value=settings,
+        ),
+    ):
+        status = main(["--input", str(workbook_path), "--check-input"])
+
+    assert status == 0
+    output = capsys.readouterr().out
+    assert "直登账号" in output
+    assert "方式=智慧人社直登" in output
+
+
+def test_check_input_accepts_government_login_system(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    account = AuthenticationRepository(settings.auth_database_path).save_account(
+        SystemType.JSHRSS,
+        "government-user",
+        "test-password",
+        secondary_account="",
+        display_name="政务服务平台账号",
+        profile={"login_method": "government_sso"},
+    )
+    workbook_path = tmp_path / "退保测试.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["身份证号", "退工原因"])
+    workbook.active.append(["320101199001011234", "6304"])
+    workbook.save(workbook_path)
+    workbook.close()
+
+    with (
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.application_runtime_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.load_settings",
+            return_value=settings,
+        ),
+    ):
+        status = main(
+            [
+                "--input",
+                str(workbook_path),
+                "--system",
+                "江苏政务服务平台账号",
+                "--check-input",
+            ]
+        )
+
+    assert status == 0
+
+
+def test_selected_government_account_controls_termination_login(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    account = AuthenticationRepository(settings.auth_database_path).save_account(
+        SystemType.JSHRSS,
+        "government-user",
+        "test-password",
+        secondary_account="",
+        display_name="政务服务平台账号",
+        profile={"login_method": "government_sso"},
+    )
+    workbook_path = tmp_path / "退保测试.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["身份证号", "退工原因"])
+    workbook.active.append(["320101199001011234", "6304"])
+    workbook.save(workbook_path)
+    workbook.close()
+
+    class FakeBrowserManager:
+        def __init__(self) -> None:
+            self.page = Mock()
+
+        def __enter__(self) -> "FakeBrowserManager":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    captured: dict[str, object] = {}
+
+    class CapturingLoginService:
+        def __init__(
+            self,
+            page: object,
+            runtime_settings: object,
+            **_kwargs: object,
+        ) -> None:
+            self.page = page
+            captured["settings"] = runtime_settings
+
+        def ensure_authenticated(self) -> None:
+            raise ValueError("stop after checking selected login settings")
+
+    with (
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.application_runtime_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.load_settings",
+            return_value=settings,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.BrowserManager",
+            return_value=FakeBrowserManager(),
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.LoginService",
+            CapturingLoginService,
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli.configure_logging",
+            return_value=Mock(),
+        ),
+        patch(
+            "ehrm.entrypoints.employment_termination_e2e_cli._save_screenshot",
+        ),
+    ):
+        status = main(
+            [
+                "--input",
+                str(workbook_path),
+                "--system",
+                "江苏政务服务平台账号",
+            ]
+        )
+
+    runtime_settings = captured["settings"]
+    assert status == 1
+    assert runtime_settings.rights_credentials.login_method == "government_sso"
+    assert runtime_settings.rights_credentials.account_id == account.id
+    assert runtime_settings.rights_credentials.credit_code == "government-user"
+    assert runtime_settings.rights_credentials.mobile == ""
+    assert runtime_settings.browser.user_data_dir.name == f"jshrss-{account.id}"
+
+
 def test_failure_screenshot_is_saved_before_browser_closes(tmp_path: Path) -> None:
     settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
     AuthenticationRepository(settings.auth_database_path).save_account(

@@ -233,6 +233,15 @@ PYTHONPATH=src python scripts/run_login_e2e.py
 ehrm-login-e2e
 ```
 
+测试系统设置中保存的账号时，先查看账号 ID，再指定账号运行。该方式会自动采用账号保存的登录方式，因此既可以测试原智慧人社直登，也可以测试江苏政务服务平台登录：
+
+```bash
+ehrm-login-e2e --list-accounts
+ehrm-login-e2e --account-id 2
+```
+
+测试只验证登录、跳转到最终业务页和 Access-Token 获取，不执行权益单、参保或退保业务。无论验证成功或失败，浏览器默认都会保持打开；人工检查完成后，在终端按 Enter 才会关闭浏览器并退出。自动化测试环境如需完成后自动关闭，可显式增加 `--close-on-finish`。
+
 本地测试环境使用自签名证书时：
 
 ```bash
@@ -246,6 +255,36 @@ ehrm-login-e2e --check-config
 ```
 
 默认使用临时资料以避免旧会话跳过登录。只有排查已有浏览器资料时才使用 `--reuse-profile`。登录失败时页面截图默认保存到 `output/login-e2e-failure.png`。
+
+### 退保录入 E2E 测试
+
+退保测试脚本按照系统设置页面中的“系统”名称选择登录入口。测试原智慧人社直登时可以沿用原命令，不传 `--system`：
+
+```bash
+ehrm-employment-termination-e2e \
+  --input "/绝对路径/退保测试.xlsx" \
+  --pause-after-fill
+```
+
+测试江苏政务服务平台登录时，指定对应的系统名称：
+
+```bash
+ehrm-employment-termination-e2e \
+  --system "江苏政务服务平台账号" \
+  --input "/绝对路径/退保测试.xlsx" \
+  --pause-after-fill
+```
+
+输入 Excel 需要包含“身份证号”和“退工原因”两列。脚本会从所选系统读取已保存账号，登录成功后进入现有退保录入流程，只填写并核对数据，不点击“确定提交”；`--pause-after-fill` 会在录入完成后保留浏览器，人工检查完毕后按回车关闭。
+
+正式打开浏览器前，可以只校验账号、配置和 Excel：
+
+```bash
+ehrm-employment-termination-e2e \
+  --system "江苏政务服务平台账号" \
+  --input "/绝对路径/退保测试.xlsx" \
+  --check-input
+```
 
 ## 4. 桌面前端（Qt Quick/QML）
 

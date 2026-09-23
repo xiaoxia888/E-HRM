@@ -37,6 +37,7 @@ export interface AccountSummary {
   masked_account: string
   is_default: boolean
   ready: boolean
+  login_method: 'direct' | 'government_sso'
 }
 
 export interface AccountEditDetail {
@@ -47,6 +48,7 @@ export interface AccountEditDetail {
   secondary_account: string
   password_mask: string
   password_saved: boolean
+  login_method: 'direct' | 'government_sso'
 }
 
 export interface WebPreferences {

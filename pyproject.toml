@@ -9,6 +9,7 @@ description = "E-HRM browser automation"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "defusedxml==0.7.1",
+  "ddddocr==1.6.1",
   "numpy==2.2.6",
   "openpyxl==3.1.5",
   "opencv-python-headless==4.12.0.88",

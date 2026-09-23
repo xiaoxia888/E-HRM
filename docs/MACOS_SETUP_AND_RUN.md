@@ -92,7 +92,7 @@ chmod +x scripts/setup_server_macos.sh scripts/run_server_macos.sh
 3. 将 Playwright Chromium 安装到项目自己的
    `runtime/playwright-browsers/`；
 4. 执行 `npm ci` 并构建 Web 页面；
-5. 检查 FastAPI、Playwright、pyodbc、ODBC 驱动列表；
+5. 检查 FastAPI、Playwright、ddddocr、pyodbc、ODBC 驱动列表；
 6. 临时启动并立即关闭无界面 Chromium，确认浏览器确实可用。
 
 初始化脚本不会启动 Web 服务。

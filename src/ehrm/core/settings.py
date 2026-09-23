@@ -85,6 +85,8 @@ class RightsCredentialsSettings:
     credit_code: str = ""
     mobile: str = ""
     password: str = ""
+    login_method: str = "direct"
+    account_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +96,27 @@ class LoginSelectors:
     credit_code: str
     mobile: str
     password: str
+    submit: str
+    authenticated_marker: str
+
+
+@dataclass(frozen=True, slots=True)
+class GovernmentLoginSettings:
+    login_url: str
+    login_api_path: str
+    target_url: str
+    max_attempts: int
+    response_timeout_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class GovernmentLoginSelectors:
+    corporate_tab: str
+    username: str
+    password: str
+    captcha_input: str
+    captcha_image: str
+    agreement: str
     submit: str
     authenticated_marker: str
 
@@ -267,6 +290,8 @@ class AppSettings:
     rights_api: RightsApiSettings
     rights_credentials: RightsCredentialsSettings
     login: LoginSelectors
+    government_login: GovernmentLoginSettings
+    government_login_selectors: GovernmentLoginSelectors
     captcha: CaptchaSettings
     navigation: NavigationSelectors
     rights_statement: RightsStatementSelectors
@@ -596,6 +621,14 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_login = _required_section(
         rights_selectors, "login", parent="rights_statement.selectors"
     )
+    rights_government_login = _required_section(
+        rights_root, "government_login", parent="rights_statement"
+    )
+    rights_government_login_selectors = _required_section(
+        rights_selectors,
+        "government_login",
+        parent="rights_statement.selectors",
+    )
     rights_captcha = _required_section(
         rights_root, "captcha", parent="rights_statement"
     )
@@ -644,6 +677,10 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_api_name = "rights_statement.api"
     rights_credentials_name = "rights_statement.credentials"
     rights_login_name = "rights_statement.selectors.login"
+    rights_government_login_name = "rights_statement.government_login"
+    rights_government_login_selectors_name = (
+        "rights_statement.selectors.government_login"
+    )
     rights_captcha_name = "rights_statement.captcha"
     rights_navigation_name = "rights_statement.selectors.navigation"
     rights_page_name = "rights_statement.selectors.page"
@@ -741,6 +778,39 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         raise ConfigurationError(
             "配置项 rights_statement.site.unit_password_login_path 必须以 / 开头"
         )
+    government_login_url = _text(
+        rights_government_login,
+        "login_url",
+        rights_government_login_name,
+    )
+    government_login_api_path = _text(
+        rights_government_login,
+        "login_api_path",
+        rights_government_login_name,
+    )
+    government_target_url = _text(
+        rights_government_login,
+        "target_url",
+        rights_government_login_name,
+    )
+    if not government_login_url or not government_target_url:
+        raise ConfigurationError("江苏政务服务登录地址和跳转目标不能为空")
+    if not government_login_api_path.startswith("/"):
+        raise ConfigurationError(
+            "配置项 rights_statement.government_login.login_api_path 必须以 / 开头"
+        )
+    government_max_attempts = _integer(
+        rights_government_login,
+        "max_attempts",
+        rights_government_login_name,
+    )
+    government_response_timeout_ms = _integer(
+        rights_government_login,
+        "response_timeout_ms",
+        rights_government_login_name,
+    )
+    if government_max_attempts < 1 or government_response_timeout_ms < 1:
+        raise ConfigurationError("政务服务平台登录重试次数和响应超时必须大于 0")
     query_common_path = _text(
         rights_api,
         "query_common_path",
@@ -1016,6 +1086,55 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             submit=_text(rights_login, "submit", rights_login_name),
             authenticated_marker=_text(
                 rights_login, "authenticated_marker", rights_login_name
+            ),
+        ),
+        government_login=GovernmentLoginSettings(
+            login_url=government_login_url,
+            login_api_path=government_login_api_path,
+            target_url=government_target_url,
+            max_attempts=government_max_attempts,
+            response_timeout_ms=government_response_timeout_ms,
+        ),
+        government_login_selectors=GovernmentLoginSelectors(
+            corporate_tab=_text(
+                rights_government_login_selectors,
+                "corporate_tab",
+                rights_government_login_selectors_name,
+            ),
+            username=_text(
+                rights_government_login_selectors,
+                "username",
+                rights_government_login_selectors_name,
+            ),
+            password=_text(
+                rights_government_login_selectors,
+                "password",
+                rights_government_login_selectors_name,
+            ),
+            captcha_input=_text(
+                rights_government_login_selectors,
+                "captcha_input",
+                rights_government_login_selectors_name,
+            ),
+            captcha_image=_text(
+                rights_government_login_selectors,
+                "captcha_image",
+                rights_government_login_selectors_name,
+            ),
+            agreement=_text(
+                rights_government_login_selectors,
+                "agreement",
+                rights_government_login_selectors_name,
+            ),
+            submit=_text(
+                rights_government_login_selectors,
+                "submit",
+                rights_government_login_selectors_name,
+            ),
+            authenticated_marker=_text(
+                rights_government_login_selectors,
+                "authenticated_marker",
+                rights_government_login_selectors_name,
             ),
         ),
         captcha=captcha,

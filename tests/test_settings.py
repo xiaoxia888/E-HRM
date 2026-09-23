@@ -26,6 +26,8 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.browser.pacing.min_delay_ms == 1000
     assert settings.browser.pacing.max_delay_ms == 2000
     assert settings.site.rights_statement_url.endswith("/unit/rightsBill")
+    assert settings.government_login.target_url.endswith("/web/unitcenter/unitmain")
+    assert settings.government_login_selectors.authenticated_marker
     assert settings.site.unit_password_login_path.startswith("/")
     assert settings.rights_api.query_common_path.startswith("/")
     assert settings.rights_api.acquire_business_no_path.startswith("/")

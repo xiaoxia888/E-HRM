@@ -43,6 +43,7 @@ class AccountSummary(BaseModel):
     masked_account: str
     is_default: bool
     ready: bool
+    login_method: str = "direct"
 
 
 class AccountEditDetail(BaseModel):
@@ -53,6 +54,7 @@ class AccountEditDetail(BaseModel):
     secondary_account: str
     password_mask: str
     password_saved: bool
+    login_method: str = "direct"
 
 
 class AccountUpdateRequest(BaseModel):
@@ -61,6 +63,7 @@ class AccountUpdateRequest(BaseModel):
     secondary_account: str = ""
     password: str = ""
     display_name: str = ""
+    login_method: str = "direct"
 
 
 class PreferencesUpdateRequest(BaseModel):

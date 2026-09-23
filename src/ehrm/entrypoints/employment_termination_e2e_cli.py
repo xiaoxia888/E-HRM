@@ -8,7 +8,7 @@ from playwright.sync_api import Error as PlaywrightError
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
-from ehrm.core.auth_repository import AuthenticationRepository, SystemType
+from ehrm.core.auth_repository import AuthenticationRepository
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
 from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
@@ -22,6 +22,13 @@ from ehrm.modules.employment_termination.service import (
 from ehrm.modules.employment_termination.result_workbook import (
     EmploymentTerminationResultWorkbookWriter,
 )
+from ehrm.entrypoints.jshrss_login_system import (
+    DEFAULT_LOGIN_SYSTEM,
+    LOGIN_SYSTEMS,
+    login_method_label,
+    select_login_account,
+)
+from ehrm.web.settings_service import WebSettingsService
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,6 +40,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
+    parser.add_argument(
+        "--system",
+        choices=tuple(LOGIN_SYSTEMS),
+        default=DEFAULT_LOGIN_SYSTEM,
+        help=(
+            "选择系统设置中的登录入口；默认使用“江苏智慧人社账号”"
+        ),
+    )
     parser.add_argument(
         "--input",
         type=Path,
@@ -64,7 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check-input",
         action="store_true",
-        help="只检查配置、SQLite 默认账号和 Excel，不启动浏览器",
+        help="只检查配置、所选系统账号和 Excel，不启动浏览器",
     )
     return parser
 
@@ -78,17 +93,11 @@ def main(argv: list[str] | None = None) -> int:
         output_dir = resolve_runtime_path(args.output, runtime_root)
         diagnostic = resolve_runtime_path(args.diagnostic, runtime_root)
         items = EmploymentTerminationExcelLoader().load(input_path)
-        account = AuthenticationRepository(
-            settings.auth_database_path
-        ).get_default_account(SystemType.JSHRSS)
-        if account is None:
-            raise ValueError(
-                "SQLite 中没有默认的江苏智慧人社账号，请先在系统设置中保存账号"
-            )
-        if not account.secondary_account or not account.password:
-            raise ValueError(
-                "SQLite 中的智慧人社登录信息不完整，请先保存单位编号、手机号和密码"
-            )
+        repository = AuthenticationRepository(settings.auth_database_path)
+        account = select_login_account(repository, args.system)
+        settings = WebSettingsService(settings, runtime_root).runtime_settings(
+            rights_account=account,
+        )
     except (EhrmError, OSError, ValueError) as exc:
         _print_failure("退保 E2E 准备失败", exc)
         return 2
@@ -98,7 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         f"执行地区：{contract.city_name}（areaCode={contract.city_code}，运行时强校验）"
     )
     print(f"测试数据：{input_path}，共 {len(items)} 条")
-    print("登录凭据：读取应用 SQLite 中的默认智慧人社账号")
+    method_label = login_method_label(settings.rights_credentials.login_method)
+    print(
+        "登录账号："
+        f"ID={account.id}，{account.display_name or account.account}，"
+        f"方式={method_label}"
+    )
     print("安全边界：只录入数据，不点击“确定提交”")
     if args.check_input:
         print("退保 E2E 配置、账号和 Excel 检查通过")
@@ -106,13 +120,18 @@ def main(argv: list[str] | None = None) -> int:
 
     logger = configure_logging(runtime_root / "logs")
     try:
+        authentication_url = (
+            settings.government_login.login_url
+            if settings.rights_credentials.login_method == "government_sso"
+            else settings.site.login_url
+        )
         with BrowserManager(
             settings.browser,
             ignore_https_errors=args.ignore_https_errors,
             stealth_enabled=(
                 settings.captcha.stealth_enabled
                 and is_allowed_host_url(
-                    settings.site.login_url,
+                    authentication_url,
                     settings.captcha.allowed_hosts,
                 )
             ),
@@ -120,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             page = browser.page
             try:
                 login = LoginService(page, settings, progress_callback=print)
-                print("阶段 1/2：正在复用现有智慧人社自动化登录……")
+                print(f"阶段 1/2：正在通过{method_label}完成自动化登录……")
                 login.ensure_authenticated()
                 page = login.page
 

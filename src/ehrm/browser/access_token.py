@@ -97,6 +97,45 @@ class RightsAccountSessionStore:
             self.repository.mark_session_verified(account.id)
 
 
+class AccountIdSessionStore:
+    """Persists a token for the exact account selected by a Web task."""
+
+    def __init__(
+        self,
+        repository: AuthenticationRepository,
+        account_id: int,
+        owner_id: str,
+    ) -> None:
+        self.repository = repository
+        self.account_id = account_id
+        self.owner_id = owner_id
+
+    def _account(self) -> SystemAccount:
+        account = self.repository.get_account_by_id(
+            self.account_id,
+            owner_id=self.owner_id,
+        )
+        if account is None or account.system_type is not SystemType.JSHRSS:
+            raise ValueError("所选智慧人社账号不存在")
+        return account
+
+    def save_token(self, account_key: str, token: str) -> None:
+        del account_key
+        self.repository.save_session(self._account().id, token)
+
+    def load_token(self, account_key: str) -> str | None:
+        del account_key
+        session = self.repository.get_session(self._account().id)
+        return session.session_data if session is not None else None
+
+    def delete_token(self, account_key: str) -> None:
+        del account_key
+        self.repository.delete_session(self._account().id)
+
+    def mark_verified(self) -> None:
+        self.repository.mark_session_verified(self._account().id)
+
+
 class AccessTokenManager:
     """Keeps one token in memory and optionally restores it from a vault."""
 
@@ -154,13 +193,21 @@ def create_rights_access_token_manager(
     *,
     password: str = "",
     owner_id: str = LOCAL_OWNER_ID,
+    account_id: int | None = None,
 ) -> AccessTokenManager:
     """Builds a JSHRSS token manager backed by the unified SQLite database."""
+    repository = AuthenticationRepository(database_path)
+    if account_id is not None:
+        if account_id < 1:
+            raise ValueError("智慧人社账号 ID 无效")
+        return AccessTokenManager(
+            str(account_id),
+            AccountIdSessionStore(repository, account_id, owner_id),
+        )
     normalized_credit = credit_code.strip()
     normalized_mobile = mobile.strip()
     if not normalized_credit or not normalized_mobile:
         raise ValueError("智慧人社账号信息不完整")
-    repository = AuthenticationRepository(database_path)
     return AccessTokenManager(
         f"{normalized_credit}|{normalized_mobile}",
         RightsAccountSessionStore(

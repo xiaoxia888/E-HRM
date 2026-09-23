@@ -111,7 +111,7 @@ conda env update -n ehrm -f environment.windows-build.yml
 $envs = (conda env list --json | ConvertFrom-Json).envs
 $EhrmPrefix = $envs | Where-Object { (Split-Path $_ -Leaf) -eq "ehrm" } | Select-Object -First 1
 $EhrmPython = Join-Path $EhrmPrefix "python.exe"
-& $EhrmPython -c "import PySide6, playwright, pyodbc; print('构建环境检查通过'); print(pyodbc.drivers())"
+& $EhrmPython -c "import PySide6, ddddocr, playwright, pyodbc; print('构建环境检查通过'); print(pyodbc.drivers())"
 ```
 
 输出必须包含 `ODBC Driver 17 for SQL Server`。

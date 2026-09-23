@@ -1,6 +1,6 @@
 # 用人单位用工参保登记 E2E
 
-该入口复用系统设置中保存的智慧人社默认单位账号，强校验南京地区后搜索并打开“用人单位用工参保登记”。流程只填写表单，**不会点击“确认提交”**。
+该入口使用系统设置中保存的指定系统账号，强校验南京地区后搜索并打开“用人单位用工参保登记”。不指定系统时默认使用“江苏智慧人社账号”，也可通过 `--system "江苏政务服务平台账号"` 切换政务登录。流程只填写表单，**不会点击“确认提交”**。
 
 ## 测试 Excel
 
@@ -18,10 +18,11 @@
 
 ## 命令
 
-先校验配置、默认账号和 Excel，不启动浏览器：
+先校验配置、所选系统账号和 Excel，不启动浏览器：
 
 ```bash
-python -m ehrm.entrypoints.employment_enrollment_e2e_cli \
+python scripts/run_employment_enrollment_e2e.py \
+  --system "江苏政务服务平台账号" \
   --input "/你的路径/参保测试.xlsx" \
   --check-input
 ```
@@ -29,9 +30,12 @@ python -m ehrm.entrypoints.employment_enrollment_e2e_cli \
 执行录入并在提交前等待人工检查：
 
 ```bash
-python -m ehrm.entrypoints.employment_enrollment_e2e_cli \
+python scripts/run_employment_enrollment_e2e.py \
+  --system "江苏政务服务平台账号" \
   --input "/你的路径/参保测试.xlsx" \
   --pause-after-fill
 ```
+
+安装项目后，也可以将 `python scripts/run_employment_enrollment_e2e.py` 替换为 `ehrm-employment-enrollment-e2e`，两者调用同一个入口。测试原智慧人社直登时省略 `--system` 即可。
 
 业务弹窗或页面内联提示会写入结果 Excel。当前实现不会触发最终提交。

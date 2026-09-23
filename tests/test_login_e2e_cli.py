@@ -42,13 +42,17 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
     for name, value in supplied.items():
         monkeypatch.setenv(name, value)
 
-    page = SimpleNamespace(url=settings.site.login_url)
+    page = SimpleNamespace(url=settings.site.rights_statement_url)
     browser = Mock()
     browser.__enter__ = Mock(return_value=browser)
     browser.__exit__ = Mock(return_value=None)
     browser.page = page
     service = Mock()
-    service.is_authenticated.return_value = True
+    service.page = page
+    service.is_authenticated.return_value = False
+    service.check_authenticated.return_value = True
+    access_tokens = Mock()
+    access_tokens.get_token.return_value = "captured-token"
 
     with (
         patch(
@@ -59,6 +63,11 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
             "ehrm.entrypoints.login_e2e_cli.LoginService",
             return_value=service,
         ),
+        patch(
+            "ehrm.entrypoints.login_e2e_cli.create_rights_access_token_manager",
+            return_value=access_tokens,
+        ),
+        patch("builtins.input", return_value="") as wait_for_inspection,
     ):
         result = main(["--no-prompt"])
 
@@ -80,3 +89,5 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
         mobile=supplied[credentials.mobile_env],
         password=supplied[credentials.password_env],
     )
+    service.check_authenticated.assert_called_once_with()
+    wait_for_inspection.assert_called_once()

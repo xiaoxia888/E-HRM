@@ -99,6 +99,21 @@ class FakeLoginResponse:
         return self._payload
 
 
+class FakeGovernmentLoginResponse(FakeLoginResponse):
+    def __init__(self, settings, *, payload: dict[str, object], status: int = 200):
+        super().__init__(settings, status=status, payload=payload)
+        login_url = urlsplit(settings.government_login.login_url)
+        self.url = urlunsplit(
+            (
+                login_url.scheme,
+                login_url.netloc,
+                settings.government_login.login_api_path,
+                "",
+                "",
+            )
+        )
+
+
 def test_login_method_tabs_are_clicked_and_verified_active(tmp_path: Path) -> None:
     settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
     page = FakePage(settings)
@@ -265,6 +280,118 @@ def test_business_error_is_rejected_even_with_http_200(tmp_path: Path) -> None:
 
     with pytest.raises(AuthenticationFailedError, match="测试业务错误"):
         service._raise_login_failure()
+
+
+def test_government_login_captcha_error_is_retryable(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeGovernmentLoginResponse(
+        settings,
+        payload={
+            "params": {"isShowVerifyCode": "1"},
+            "message": "验证码输入有误，看不清可点击验证码更换",
+            "success": False,
+        },
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    service._raise_login_failure()
+    assert service._government_result == "captcha_error"
+
+
+def test_government_login_password_error_stops_immediately(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeGovernmentLoginResponse(
+        settings,
+        payload={
+            "params": {},
+            "message": "用户名或密码不正确，注意区分大小写",
+            "success": False,
+        },
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    with pytest.raises(AuthenticationFailedError, match="用户名或密码不正确"):
+        service._raise_login_failure()
+
+
+def test_government_login_empty_http_200_waits_for_redirect(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeGovernmentLoginResponse(settings, payload={}, status=200)
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    service._raise_login_failure()
+    assert service._government_result == "redirecting"
+
+
+def test_government_login_explicit_empty_failure_waits_for_redirect(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    service = LoginService(FakePage(settings), settings)  # type: ignore[arg-type]
+    response = FakeGovernmentLoginResponse(
+        settings,
+        payload={"params": {}, "message": "", "success": False},
+        status=200,
+    )
+
+    service._capture_login_response(response)  # type: ignore[arg-type]
+
+    service._raise_login_failure()
+    assert service._government_result == "redirecting"
+
+
+def test_government_login_target_requires_exact_home_page(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    marker = SimpleNamespace(
+        count=lambda: 1,
+        is_visible=lambda: True,
+    )
+    page = SimpleNamespace(
+        url=settings.government_login.target_url,
+        locator=lambda _selector: SimpleNamespace(first=marker),
+    )
+    service = LoginService(page, settings)  # type: ignore[arg-type]
+
+    assert service.is_government_target_reached() is True
+    assert service.is_government_view_ready() is True
+
+    page.url = "https://rs.jshrss.jiangsu.gov.cn/web/thirdLogin?ticket=test"
+    assert service.is_government_target_reached() is False
+    assert service.is_government_view_ready() is False
+
+    page.url = "https://example.com/index/"
+    assert service.is_government_target_reached() is False
+
+
+def test_sso_access_token_is_only_captured_from_jshrss_host(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    store = MemoryAccessTokenStore()
+    manager = AccessTokenManager("selected-account", store)
+    service = LoginService(  # type: ignore[arg-type]
+        FakePage(settings),
+        settings,
+        access_token_manager=manager,
+    )
+    trusted = SimpleNamespace(
+        url="https://rs.jshrss.jiangsu.gov.cn/api/example",
+        headers={"access-token": "captured-token"},
+    )
+    untrusted = SimpleNamespace(
+        url="https://example.invalid/api/example",
+        headers={"access-token": "untrusted-token"},
+    )
+
+    service._capture_access_token_request(untrusted)  # type: ignore[arg-type]
+    assert manager.get_token() is None
+    service._capture_access_token_request(trusted)  # type: ignore[arg-type]
+
+    assert manager.get_token() == "captured-token"
 
 
 def test_unit_password_login_listener_ignores_other_paths(tmp_path: Path) -> None:

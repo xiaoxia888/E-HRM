@@ -103,7 +103,7 @@ export function ApplicationsPage() {
               value={printAccountId}
               placeholder="选择智慧人社账号"
               style={{ width: 210 }}
-              options={rightsAccounts.map((item) => ({ value: item.id, label: `${item.display_name} · ${item.masked_account}` }))}
+              options={rightsAccounts.map((item) => ({ value: item.id, label: `${item.display_name} · ${item.masked_account} · ${item.login_method === 'government_sso' ? '政务服务平台' : '智慧人社直登'}` }))}
               onChange={setPrintAccountId}
             />
             <Button

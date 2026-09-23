@@ -223,6 +223,7 @@ def test_web_settings_can_update_preferences_and_preserve_saved_password(
             "secondary_account": "mobile-id",
             "password_mask": "******",
             "password_saved": True,
+            "login_method": "direct",
         }
         assert "saved-password" not in edit_detail.text
 
@@ -263,6 +264,94 @@ def test_web_settings_can_update_preferences_and_preserve_saved_password(
         assert reloaded.account == "unit-account"
         assert reloaded.password == "saved-password"
         assert reloaded.display_name == "Web 修改后名称"
+    finally:
+        coordinator.close()
+
+
+def test_government_sso_account_does_not_require_secondary_account(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    try:
+        response = client.put(
+            "/api/v1/settings/accounts/JSHRSS",
+            json={
+                "account": "government-user",
+                "secondary_account": "",
+                "password": "saved-password",
+                "display_name": "政务服务账号",
+                "login_method": "government_sso",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ready"] is True
+        assert response.json()["login_method"] == "government_sso"
+        repository = AuthenticationRepository(
+            client.app.state.settings.auth_database_path
+        )
+        saved = repository.get_default_account(SystemType.JSHRSS)
+        assert saved is not None
+        assert saved.secondary_account == ""
+        assert saved.profile["login_method"] == "government_sso"
+    finally:
+        coordinator.close()
+
+
+def test_jshrss_login_entries_are_saved_as_independent_accounts(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    direct = repository.save_account(
+        SystemType.JSHRSS,
+        "direct-unit",
+        "direct-password",
+        secondary_account="direct-mobile",
+        display_name="智慧人社账号",
+        profile={"login_method": "direct"},
+    )
+    try:
+        government_response = client.put(
+            "/api/v1/settings/accounts/JSHRSS",
+            json={
+                "account": "government-user",
+                "secondary_account": "",
+                "password": "government-password",
+                "display_name": "政务服务平台账号",
+                "login_method": "government_sso",
+            },
+        )
+        assert government_response.status_code == 200
+        government_id = government_response.json()["id"]
+        assert government_id != direct.id
+
+        update_government = client.put(
+            "/api/v1/settings/accounts/JSHRSS",
+            json={
+                "account_id": government_id,
+                "account": "",
+                "secondary_account": "",
+                "password": "",
+                "display_name": "政务服务平台账号（更新）",
+                "login_method": "government_sso",
+            },
+        )
+        assert update_government.status_code == 200
+
+        accounts = repository.list_accounts(SystemType.JSHRSS)
+        assert len(accounts) == 2
+        direct_saved = next(item for item in accounts if item.id == direct.id)
+        government_saved = next(item for item in accounts if item.id == government_id)
+        assert direct_saved.account == "direct-unit"
+        assert direct_saved.secondary_account == "direct-mobile"
+        assert direct_saved.password == "direct-password"
+        assert direct_saved.profile["login_method"] == "direct"
+        assert government_saved.account == "government-user"
+        assert government_saved.secondary_account == ""
+        assert government_saved.password == "government-password"
+        assert government_saved.display_name == "政务服务平台账号（更新）"
+        assert government_saved.profile["login_method"] == "government_sso"
     finally:
         coordinator.close()
 

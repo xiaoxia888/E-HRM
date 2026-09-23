@@ -220,6 +220,19 @@ class AuthenticationRepository:
             ).fetchone()
         return self._account(row) if row is not None else None
 
+    def get_account_by_id(
+        self,
+        account_id: int,
+        *,
+        owner_id: str = LOCAL_OWNER_ID,
+    ) -> SystemAccount | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM system_accounts WHERE id = ? AND owner_id = ?",
+                (account_id, owner_id),
+            ).fetchone()
+        return self._account(row) if row is not None else None
+
     def list_accounts(
         self,
         system_type: SystemType | None = None,

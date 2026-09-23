@@ -27,30 +27,50 @@ def authenticated_browser(
 ) -> Iterator[BrowserManager]:
     """Uses the configured browser mode and restores any saved login session."""
 
+    credentials = settings.rights_credentials
+    authentication_url = (
+        settings.government_login.login_url
+        if credentials.login_method == "government_sso"
+        else settings.site.login_url
+    )
     stealth_enabled = (
         settings.captcha.stealth_enabled
         and is_allowed_host_url(
-            settings.site.login_url,
+            authentication_url,
             settings.captcha.allowed_hosts,
         )
     )
-    credentials = settings.rights_credentials
     saved_account = AuthenticationRepository(
         settings.auth_database_path
     ).get_default_account(SystemType.JSHRSS)
-    token_manager = create_rights_access_token_manager(
-        settings.auth_database_path,
+    resolved_account = (
         username
         or credentials.credit_code
-        or (saved_account.account if saved_account else ""),
+        or (saved_account.account if saved_account else "")
+    )
+    resolved_mobile = (
         mobile
         or credentials.mobile
-        or (saved_account.secondary_account if saved_account else ""),
+        or (saved_account.secondary_account if saved_account else "")
+    )
+    selected_account_id = credentials.account_id
+    if (
+        selected_account_id is None
+        and saved_account is not None
+        and resolved_account == saved_account.account
+        and resolved_mobile == saved_account.secondary_account
+    ):
+        selected_account_id = saved_account.id
+    token_manager = create_rights_access_token_manager(
+        settings.auth_database_path,
+        resolved_account,
+        resolved_mobile,
         password=(
             password
             or credentials.password
             or (saved_account.password if saved_account else "")
         ),
+        account_id=selected_account_id,
     )
 
     if settings.browser.silent_session_check:

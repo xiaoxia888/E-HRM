@@ -79,6 +79,7 @@ class WebSettingsService:
         secondary_account: str = "",
         password: str = "",
         display_name: str = "",
+        login_method: str = "direct",
     ) -> SystemAccount:
         selected = None
         if account_id is not None:
@@ -92,20 +93,49 @@ class WebSettingsService:
             )
             if selected is None:
                 raise ValueError("原账号已不存在，请刷新页面后重试")
-        normalized_account = account.strip() or (selected.account if selected else "")
-        normalized_secondary = secondary_account.strip() or (
-            selected.secondary_account if selected else ""
+        normalized_method = login_method.strip().lower() or "direct"
+        if system_type is not SystemType.JSHRSS:
+            normalized_method = "direct"
+        if normalized_method not in {"direct", "government_sso"}:
+            raise ValueError("智慧人社登录方式无效")
+        if (
+            selected is not None
+            and str(selected.profile.get("login_method") or "direct")
+            != normalized_method
+        ):
+            raise ValueError("不能将一个登录入口的账号改为另一个登录入口")
+        method_accounts = tuple(
+            item
+            for item in self.repository.list_accounts(system_type)
+            if str(item.profile.get("login_method") or "direct")
+            == normalized_method
         )
+        existing = selected or next(
+            (item for item in method_accounts if item.is_default),
+            method_accounts[0] if method_accounts else None,
+        )
+        normalized_account = account.strip() or (selected.account if selected else "")
+        if system_type is SystemType.JSHRSS and normalized_method == "government_sso":
+            normalized_secondary = ""
+        else:
+            normalized_secondary = secondary_account.strip() or (
+                selected.secondary_account if selected else ""
+            )
         if not normalized_account:
             raise ValueError("登录账号不能为空")
-        if system_type is SystemType.JSHRSS and not normalized_secondary:
+        if (
+            system_type is SystemType.JSHRSS
+            and normalized_method == "direct"
+            and not normalized_secondary
+        ):
             raise ValueError("江苏智慧人社证件号码或移动电话不能为空")
 
-        existing = selected or self.repository.get_default_account(system_type)
         same_identity = bool(
             existing
             and existing.account == normalized_account
             and existing.secondary_account == normalized_secondary
+            and str(existing.profile.get("login_method") or "direct")
+            == normalized_method
         )
         resolved_password = password or (existing.password if same_identity else "")
         if not resolved_password:
@@ -116,6 +146,10 @@ class WebSettingsService:
             resolved_password,
             secondary_account=normalized_secondary,
             display_name=display_name.strip() or (existing.display_name if existing else ""),
+            profile={
+                **(existing.profile if existing is not None else {}),
+                "login_method": normalized_method,
+            },
         )
         if existing is not None and existing.id == saved.id and password:
             self.repository.delete_session(saved.id)
@@ -134,7 +168,12 @@ class WebSettingsService:
             raise ValueError("所选账号不存在，请刷新系统设置后重试")
         if not account.account or not account.password:
             raise ValueError("所选账号信息不完整，请先在系统设置中补充")
-        if system_type is SystemType.JSHRSS and not account.secondary_account:
+        login_method = str(account.profile.get("login_method") or "direct")
+        if (
+            system_type is SystemType.JSHRSS
+            and login_method == "direct"
+            and not account.secondary_account
+        ):
             raise ValueError("所选智慧人社账号缺少证件号码或移动电话")
         return account
 
@@ -203,6 +242,10 @@ class WebSettingsService:
                 credit_code=rights_account.account,
                 mobile=rights_account.secondary_account,
                 password=rights_account.password,
+                login_method=str(
+                    rights_account.profile.get("login_method") or "direct"
+                ),
+                account_id=rights_account.id,
             )
         erp = selected.erp
         if erp_account is not None:

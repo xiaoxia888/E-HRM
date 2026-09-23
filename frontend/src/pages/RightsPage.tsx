@@ -259,7 +259,7 @@ export function RightsPage() {
         <Card className="content-card rights-settings-card" title="执行设置">
           <Form layout="vertical">
             <Form.Item label="智慧人社账号" required>
-              <Select value={accountId} placeholder="请先在系统设置中维护账号" options={rightsAccounts.map((item) => ({ value: item.id, label: `${item.display_name} · ${item.masked_account}` }))} onChange={setAccountId} />
+              <Select value={accountId} placeholder="请先在系统设置中维护账号" options={rightsAccounts.map((item) => ({ value: item.id, label: `${item.display_name} · ${item.masked_account} · ${item.login_method === 'government_sso' ? '政务服务平台' : '智慧人社直登'}` }))} onChange={setAccountId} />
             </Form.Item>
             <Form.Item label="执行方式">
               <Radio.Group value={mode} onChange={(event) => setMode(event.target.value)} className="rights-export-modes">
