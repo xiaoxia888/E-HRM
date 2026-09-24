@@ -113,6 +113,10 @@ chmod +x scripts/setup_server_macos.sh scripts/run_server_macos.sh
 - Ollama 地址、模型和提示词配置；
 - 服务器浏览器是否设置为无界面模式。
 
+`config/page_selectors.toml` 保存智慧人社和 ERP 的页面定位契约，正常部署时无需
+修改，但必须与 `settings.toml` 一起保留。只有目标网页结构发生变化并重新录制、
+验证定位器后，才调整该文件。
+
 业务账号在 Web 页面“系统设置 → 账户与连接”中维护，不要写入部署文档。
 
 ## 7. 启动 Web 服务

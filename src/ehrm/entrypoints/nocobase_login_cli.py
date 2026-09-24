@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -29,7 +28,10 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_SETTINGS_PATH,
         help="系统配置文件",
     )
-    parser.add_argument("--account", help="登录账号；默认读取配置指定的环境变量")
+    parser.add_argument(
+        "--account",
+        help="选择系统设置中已保存的登录账号；默认使用默认账号",
+    )
     parser.add_argument(
         "--force-login",
         action="store_true",
@@ -47,18 +49,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         repository = AuthenticationRepository(settings.auth_database_path)
         default_account = repository.get_default_account(SystemType.NOCOBASE)
-        account = (
-            args.account
-            or os.getenv(settings.nocobase.account_env, "")
-            or (default_account.account if default_account else "")
-        ).strip()
-        if not account:
-            account = input("NocoBase 账号：").strip()
-        saved_account = repository.get_account(SystemType.NOCOBASE, account)
-        password = (
-            os.getenv(settings.nocobase.password_env, "")
-            or (saved_account.password if saved_account else "")
+        saved_account = (
+            repository.get_account(SystemType.NOCOBASE, args.account)
+            if args.account
+            else default_account
         )
+        if saved_account is None:
+            raise ValueError(
+                "NocoBase 账号未配置，请先在“系统设置 → 账户与连接”中保存账号"
+            )
+        account = saved_account.account
+        password = saved_account.password
+        if not password:
+            raise ValueError(
+                "所选 NocoBase 账号缺少密码，请先在系统设置中补充"
+            )
         token_manager = create_nocobase_token_manager(
             settings.auth_database_path,
             account,
@@ -84,13 +89,6 @@ def main(argv: list[str] | None = None) -> int:
                         return 0
                     token_manager.invalidate()
 
-        if not password:
-            password = input("NocoBase 密码（输入内容可见）：")
-            token_manager = create_nocobase_token_manager(
-                settings.auth_database_path,
-                account,
-                password=password,
-            )
         credentials = NocoBaseCredentials(account=account, password=password)
         with sync_playwright() as playwright:
             request = playwright.request.new_context()

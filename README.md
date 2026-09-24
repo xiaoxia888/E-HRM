@@ -22,8 +22,9 @@
 - 人员查询优先使用身份证作为社会保障号码，姓名仅作为非 Excel 调用的兜底。
 - 权益单下载完成后，可按 Excel 任务编号静默上传至 ERP 并回写结果。
 
-智慧人社、ERP 和 NocoBase 的 URL、定位器及系统级超时统一维护在
-`config/settings.toml`。
+智慧人社、ERP 和 NocoBase 的 URL、接口、业务参数及系统级超时统一维护在
+`config/settings.toml`；Playwright 页面定位契约独立维护在
+`config/page_selectors.toml`。
 
 ## 1. 创建环境
 
@@ -66,8 +67,13 @@ conda activate ehrm
 playwright install chromium
 ```
 
-项目只有一个系统配置入口 `config/settings.toml`，不再使用样例配置和隐式
-Python 默认值。配置按命名空间分为：
+项目不使用样例配置和隐式 Python 默认值。配置按职责拆成两个必需文件：
+
+- `config/settings.toml`：部署与运行配置，包括 URL、接口路径、业务规则、超时和重试；
+- `config/page_selectors.toml`：开发维护的页面契约，包括 CSS、role/text、iframe、弹窗和成功标志。
+
+程序仍通过一次 `load_settings()` 调用加载两者；页面定位文件默认取运行配置同目录下
+的 `page_selectors.toml`。`settings.toml` 的主要命名空间为：
 
 - `[common]`：自动化模块真正共用的参数；
 - `[rights_statement.*]`：智慧人社及单位权益单配置；
@@ -161,7 +167,8 @@ ehrm record --url "智慧人社登录页地址"
 
 ## 3. 配置并运行
 
-将录制得到的 URL 和定位器整理进 `config/settings.toml`，然后执行：
+将录制得到的 URL 整理进 `config/settings.toml`，将页面定位器整理进
+`config/page_selectors.toml`，然后执行：
 
 ```bash
 ehrm download \
@@ -219,7 +226,7 @@ click_offset_max_px = 3
 
 ### 完整登录 E2E 测试
 
-下面的入口会使用全新的临时浏览器资料目录，从打开登录页开始执行完整流程：填写账号信息、点击登录、验证码识别与点击、确认验证，并检查最终登录标志。凭据优先从配置指定的环境变量读取；缺失时在终端询问，密码不会回显。
+下面的入口会使用全新的临时浏览器资料目录，从打开登录页开始执行完整流程：填写账号信息、点击登录、验证码识别与点击、确认验证，并检查最终登录标志。登录凭据统一读取“系统设置 → 账户与连接”中保存的账号；未指定账号 ID 时使用默认账号。
 
 源码环境执行：
 
@@ -430,13 +437,8 @@ ERP 默认使用无界面 Chromium 静默执行，不显示浏览器窗口。智
 `[rights_statement.captcha]` 配置执行自动或人工安全验证；需要排查 ERP 页面时，
 可在 `config/settings.toml` 的 `[erp.browser]` 中临时设置 `headless = false`。
 
-桌面端可在“系统设置 → 账户与连接”中保存 ERP 凭据。命令行联调也可通过
-环境变量提供 ERP 凭据，不要将账号密码写入配置文件：
-
-```bash
-export EHRM_ERP_USERNAME='ERP账号'
-export EHRM_ERP_PASSWORD='ERP密码'
-```
+桌面端和命令行联调统一使用“系统设置 → 账户与连接”中保存的默认 ERP 账号，
+不再从配置文件或环境变量读取网站登录凭据。
 
 依次验证自动登录、申请查询和 PDF 上传：
 
@@ -530,4 +532,4 @@ python scripts/run_erp_person_query.py "张三"
 
 ## 8. 当前适配边界
 
-已根据录制结果适配 Ant Design 年月选择、险种下拉框、查询结果转移、预览弹窗和下载事件。姓名输入框与已选人员表格目前仍使用录制所得的相对定位器，第一次连接真实网站时可能需要在 `config/settings.toml` 中做一次小幅调整。
+已根据录制结果适配 Ant Design 年月选择、险种下拉框、查询结果转移、预览弹窗和下载事件。姓名输入框与已选人员表格目前仍使用录制所得的相对定位器，第一次连接真实网站时可能需要在 `config/page_selectors.toml` 中做一次小幅调整。

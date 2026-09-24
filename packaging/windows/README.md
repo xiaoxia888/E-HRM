@@ -112,4 +112,5 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1 -Version 0.2.
 
 智慧人社、ERP 网站及 NocoBase 的个人登录密码、浏览器资料、日志和下载结果
 不会进入安装包。内部部署使用的 ERP/NCC 数据库连接参数会随
-`config/settings.toml` 一同进入安装包。
+`config/settings.toml` 一同进入安装包；页面定位契约 `config/page_selectors.toml`
+也会作为程序运行所需配置进入安装包。

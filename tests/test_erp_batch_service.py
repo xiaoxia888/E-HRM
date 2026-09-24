@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.settings import load_settings
 from ehrm.modules.erp import batch_service as batch_module
 from ehrm.modules.erp.batch_service import ErpBatchUploadService
@@ -23,8 +24,11 @@ def test_shared_batch_pdf_is_uploaded_once_and_written_to_every_row(
         Path("config/settings.toml"),
         data_root=tmp_path / "runtime",
     )
-    monkeypatch.setenv(settings.erp.username_env, "tester")
-    monkeypatch.setenv(settings.erp.password_env, "secret")
+    AuthenticationRepository(settings.auth_database_path).save_account(
+        SystemType.ERP,
+        "tester",
+        "secret",
+    )
     pdf = tmp_path / "batch.pdf"
     pdf.write_bytes(b"%PDF-1.7\n%%EOF")
     records = (

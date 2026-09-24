@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
@@ -12,15 +11,16 @@ from ehrm.browser.access_token import (
 from ehrm.browser.captcha_policy import is_allowed_host_url
 from ehrm.browser.login import LoginService
 from ehrm.browser.manager import BrowserManager
+from ehrm.core.auth_repository import AuthenticationRepository
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.logging import configure_logging
 from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.entrypoints.login_e2e_cli import (
-    _credential,
     _isolated_settings,
     _print_targets,
     _save_diagnostic,
+    _selected_account,
 )
 from ehrm.modules.rights_statement.api_client import RightsStatementApiClient
 from ehrm.modules.rights_statement.api_contract import RightsApiContract
@@ -30,6 +30,7 @@ from ehrm.modules.rights_statement.api_models import (
     PersonQueryRequest,
     RightsBillPrintRequest,
 )
+from ehrm.web.settings_service import WebSettingsService
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -40,6 +41,11 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
+    parser.add_argument(
+        "--account-id",
+        type=int,
+        help="使用系统设置中已保存的智慧人社账号 ID；默认使用默认账号",
+    )
     parser.add_argument("--identity-number", required=True, help="身份证号码")
     parser.add_argument("--name", default="", help="姓名，可不填写")
     parser.add_argument("--start-month", required=True, help="格式 YYYYMM")
@@ -65,11 +71,6 @@ def _parser() -> argparse.ArgumentParser:
         "--reuse-profile",
         action="store_true",
         help="复用配置中的浏览器资料；默认使用全新临时资料",
-    )
-    parser.add_argument(
-        "--no-prompt",
-        action="store_true",
-        help="凭据缺失时直接失败，适用于 CI",
     )
     parser.add_argument(
         "--ignore-https-errors",
@@ -125,6 +126,16 @@ def main(argv: list[str] | None = None) -> int:
         _print_failure("参数或配置检查失败", exc)
         return 2
 
+    repository = AuthenticationRepository(settings.auth_database_path)
+    try:
+        selected_account = _selected_account(repository, args.account_id)
+    except ValueError as exc:
+        _print_failure("账号选择失败", exc)
+        return 2
+    settings = WebSettingsService(settings, runtime_root).runtime_settings(
+        rights_account=selected_account,
+    )
+
     _print_targets(settings)
     print(f"人员查询接口：{settings.rights_api.query_common_path}")
     print(f"流水号接口：{settings.rights_api.acquire_business_no_path}")
@@ -139,41 +150,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     credentials = settings.rights_credentials
-    try:
-        credit_code = _credential(
-            configured=credentials.credit_code,
-            environment_name=credentials.credit_code_env,
-            prompt="统一信用代码：",
-            secret=False,
-            no_prompt=args.no_prompt,
+    if selected_account is None:
+        _print_failure(
+            "凭据准备失败",
+            ValueError("请先在“系统设置 → 账户与连接”中保存智慧人社账号"),
         )
-        mobile = _credential(
-            configured=credentials.mobile,
-            environment_name=credentials.mobile_env,
-            prompt="证件号码/移动电话：",
-            secret=False,
-            no_prompt=args.no_prompt,
-        )
-        password = _credential(
-            configured=credentials.password,
-            environment_name=credentials.password_env,
-            prompt="登录密码：",
-            secret=True,
-            no_prompt=args.no_prompt,
-        )
-    except ValueError as exc:
-        _print_failure("凭据准备失败", exc)
         return 2
-
-    settings = replace(
-        settings,
-        rights_credentials=replace(
-            credentials,
-            credit_code=credit_code,
-            mobile=mobile,
-            password=password,
-        ),
-    )
+    credit_code = credentials.credit_code.strip()
+    mobile = credentials.mobile.strip()
+    password = credentials.password
+    if not credit_code or not password or (
+        credentials.login_method != "government_sso" and not mobile
+    ):
+        _print_failure(
+            "凭据准备失败",
+            ValueError("所选智慧人社账号信息不完整，请先在系统设置中补充"),
+        )
+        return 2
     logger = configure_logging(runtime_root / "logs")
     try:
         with _isolated_settings(
@@ -185,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                 credit_code,
                 mobile,
                 password=password,
+                account_id=credentials.account_id,
             )
             with BrowserManager(
                 runtime_settings.browser,

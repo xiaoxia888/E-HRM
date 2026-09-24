@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Callable
 
@@ -55,18 +54,15 @@ class DesktopWorkbench:
         saved_account = AuthenticationRepository(
             settings.auth_database_path
         ).get_default_account(SystemType.JSHRSS)
-        credit_code = credentials.credit_code or os.getenv(
-            credentials.credit_code_env,
-            "",
-        ) or (saved_account.account if saved_account else "")
+        credit_code = credentials.credit_code or (
+            saved_account.account if saved_account else ""
+        )
         mobile = (
             credentials.mobile
-            or os.getenv(credentials.mobile_env, "")
             or (saved_account.secondary_account if saved_account else "")
         )
         password = (
             credentials.password
-            or os.getenv(credentials.password_env, "")
             or (saved_account.password if saved_account else "")
         )
         self._access_token_manager = create_rights_access_token_manager(

@@ -1,0 +1,159 @@
+# E-HRM 页面定位配置
+#
+# 本文件由开发人员维护，集中保存 Playwright 用于识别和操作网页的页面契约，
+# 包括 CSS 选择器、role/text 定位器、iframe、弹窗、加载标志和页面成功标志。
+# 部署人员通常不需要修改本文件；页面升级或重新录制操作后，应在验证定位唯一性
+# 和可见性后再更新对应字段。
+#
+# 本文件不得保存 URL、接口路径、账号、密码、业务地区、超时或重试次数；这些参数
+# 统一维护在同目录的 settings.toml。模板中的 {value}、{city_code} 由程序运行时替换，
+# 不要改成固定值。空字符串表示该定位器当前未启用，业务代码会使用其他可靠标志。
+
+# -----------------------------------------------------------------------------
+# 江苏智慧人社：单位账号密码登录页
+# -----------------------------------------------------------------------------
+
+[jshrss.login.direct]
+# 登录页顶部的“单位登录”页签。程序点击后还会校验 tab-active/tab-active-r 状态。
+unit_login_tab = 'text="单位登录"'
+# 单位登录区域内的“账号密码”页签；页面上存在同名元素，因此使用实际录制序号。
+account_password_tab = 'text="账号密码" >> nth=1'
+# 单位编号或统一社会信用代码输入框。
+credit_code = 'role=textbox[name="统一社会信用代码/单位编号/机构编号"]'
+# 经办人证件号码或移动电话输入框。
+mobile = 'role=textbox[name="证件号码/移动电话"]'
+# 智慧人社单位账号密码输入框。
+password = 'role=textbox[name="请输入密码"]'
+# 单位账号密码登录提交按钮。
+submit = 'role=button[name="登录"]'
+# 登录后页面必须可见的标志，用于判断智慧人社会话是否仍然有效。
+authenticated_marker = "text=省本级"
+
+# -----------------------------------------------------------------------------
+# 江苏智慧人社：江苏政务服务网法人登录
+# -----------------------------------------------------------------------------
+
+[jshrss.login.government]
+# 切换至智慧人社“单位登录”后显示的江苏政务服务网入口图标。
+# 页面可能同时保留个人登录区域的同类图标，程序只接受唯一可见的匹配项。
+entry_button = ".shortcut-icon-su"
+# 自然跳转到江苏政务服务网后选择的“法人登录”页签。
+corporate_tab = 'text="法人登录"'
+# 法人账号登录名输入框。
+username = 'role=textbox[name="请输入登录名"]'
+# 法人账号密码输入框。
+password = 'role=textbox[name="请输入密码"]'
+# 字符验证码输入框；验证码不区分大小写。
+captcha_input = 'role=textbox[name="请输入验证码,验证码不区分大小写"]'
+# 字符验证码图片。程序从该元素截图后交给本地识别器。
+captcha_image = "#verifyImg_fr"
+# 用户服务协议和隐私协议复选框。
+agreement = "#fryhxy"
+# 法人账号登录提交按钮。
+submit = "#frlogin1"
+# 政务网单点登录完成后，智慧人社单位主页必须可见的页面标志。
+authenticated_marker = 'text="单位主页"'
+
+# -----------------------------------------------------------------------------
+# 江苏智慧人社：大厅及地区导航
+# -----------------------------------------------------------------------------
+
+[jshrss.navigation]
+# 省级大厅入口；既用于页面导航，也可作为已登录状态的辅助标志。
+province_entry = "text=省本级"
+# 南京办事地区入口。
+city_entry = "text=南京"
+# 单位权益单业务菜单入口。
+rights_statement_menu = "text=单位权益单"
+
+# -----------------------------------------------------------------------------
+# 江苏智慧人社：单位权益单浏览器页面
+# -----------------------------------------------------------------------------
+
+[jshrss.rights_bill]
+# 查询起始月份输入框，同名年月输入框中的第一个。
+start_month = 'role=textbox[name="选择年月"] >> nth=0'
+# 查询结束月份输入框，同名年月输入框中的第二个。
+end_month = 'role=textbox[name="选择年月"] >> nth=1'
+# 险种下拉框。
+insurance_type = "role=combobox"
+# 险种选项模板，{value} 由程序替换为养老、工伤等实际险种名称。
+insurance_option_template = 'role=option[name="{value}"]'
+# 身份证号或社会保障号查询输入框；序号来自实际页面录制。
+social_security_number = "role=textbox >> nth=4"
+# 人员姓名查询输入框；序号来自实际页面录制。
+employee_name = "role=textbox >> nth=5"
+# 人员查询按钮。
+query_button = 'role=button[name="查 询"]'
+# 查询结果表格行标志。
+results_ready = "role=row"
+# 查询明确无结果时的页面文字。
+no_results = "text=暂无数据"
+# Ant Design 正在加载状态；仅匹配当前可见的旋转加载标志。
+loading_indicator = ".ant-spin-spinning:visible"
+# 月份选择器当前可见的日历弹层。
+calendar_popup = ".ant-calendar:visible"
+# 候选人员表格。空字符串表示不直接依赖该定位器，由表格内容和转移结果判断。
+candidate_table = ""
+# 已选人员表格。
+selected_table = "div:nth-child(3) > .ant-table-wrapper"
+# 将候选人员加入已选列表的左移按钮。
+transfer_left = ".arrowLeft"
+# 将已选人员退回候选列表的右移按钮。
+transfer_back = ".arrowRight"
+# 生成权益单预览的按钮。
+generate_button = 'role=button[name="预览权益单"]'
+# 预览内容加载完成后会出现的业务文字标志。
+download_ready = "text=缴费月数"
+# 预览弹窗内的 PDF 下载按钮。
+download_button = 'role=button[name="图标: download 下载"]'
+# 当前可见的权益单预览弹窗。
+preview_dialog = ".ant-modal:visible"
+# 关闭权益单预览弹窗的按钮。
+close_preview = 'role=button[name="Close"]'
+
+# -----------------------------------------------------------------------------
+# 江苏智慧人社：用人单位退工停保登记及通用单位办事窗口
+# -----------------------------------------------------------------------------
+
+[jshrss.employment_termination]
+# 智慧人社大厅首页文字入口。
+hall_home = 'text="大厅首页"'
+# 办事地区切换入口。
+region_switch = 'text="地区切换"'
+# 地区选项模板；{city_code} 由 settings.toml 中配置的业务地区编码替换。
+region_option_template = '[id="{city_code}_1"]'
+# 智慧人社大厅中承载业务菜单的中间 iframe。
+middle_frame = "#middle"
+# 单位办事列表中的退工停保业务名称。
+menu_text = "用人单位退工停保登记"
+# layui 外层业务 iframe；末尾数字每次打开都会变化，因此只匹配名称前缀。
+outer_business_frame = 'iframe[name^="layui-layer-iframe"]'
+# 外层业务窗口中承载实际表单的 iframe。
+business_frame = "#busiIframe"
+# Angular/Bootstrap 业务提示弹窗容器。
+entry_notice_dialog = ".modal-content"
+# 进入退保业务时可能出现的办理月份提示特征文字。
+entry_notice_text = "当前时间办理人员停保"
+# 办理月份提示弹窗中的确定按钮。
+entry_notice_confirm = 'button[data-ng-click="modalOptions.ok();"]'
+# 退保人员快速查询自定义组件，同时用于确认业务表单已经加载。
+person_search = "sipub-person-quick-search"
+# 退保人员信息表单。
+person_form = 'form[name="personinfoForm"]'
+# 退工原因下拉框。
+reason_combobox = "role=combobox"
+# 业务页面真实加载遮罩。不要加入 layui-layer-shade，它只是普通弹窗背景层。
+loading_indicator = ".loading-mask:visible, .ant-spin-spinning:visible, .el-loading-mask:visible"
+
+# -----------------------------------------------------------------------------
+# ERP：账号登录页
+# -----------------------------------------------------------------------------
+
+[erp.login]
+# ERP 用户名输入框，兼容 name 和 id 两种页面结构。
+username = 'input[name="usercode"], #usercode'
+# ERP 密码输入框，兼容 name、id 和标准密码输入框。
+password = 'input[name="userpass"], #userpass, input[type="password"]'
+# ERP 登录按钮，兼容有空格和无空格的按钮文字以及 input 提交控件。
+submit = 'button:has-text("登录"), button:has-text("登 录"), input[type="submit"]'

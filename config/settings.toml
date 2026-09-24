@@ -1,6 +1,10 @@
-# E-HRM 唯一系统配置
+# E-HRM 运行与业务配置
 #
-# 只维护系统级规则，不保存账号密码、下载目录等个人数据。
+# 本文件由部署/运维人员维护，只保存运行参数、站点与接口地址、业务规则、
+# 超时和重试策略。页面 CSS、文本按钮、iframe 等定位契约统一维护在同目录的
+# page_selectors.toml 中，修改网页定位时不要改动本文件。
+#
+# 应限制本文件的读取权限，后续可再迁移为环境变量。
 # 时间字段以 _ms 结尾时单位为毫秒，以 _seconds 结尾时单位为秒。
 
 [common]
@@ -79,6 +83,18 @@ page_size = 100
 # 单次业务 API 请求超时，单位毫秒；正常接口应快速返回，此值仅作为异常保护上限。
 request_timeout_ms = 30000
 
+[rights_statement.operations.rights_bill]
+# 以下参数只控制浏览器版单位权益单页面的等待与确认节奏；API 版权益单使用
+# rights_statement.api.request_timeout_ms。全部以毫秒为单位。
+
+# 点击查询后，等待人员表格、无结果提示或业务错误出现的最长时间。
+query_result_timeout_ms = 45000
+# 人员在候选区与已选区之间移动后，等待目标列表更新的最长时间。
+transfer_result_timeout_ms = 10000
+# 点击预览后，等待权益单预览弹窗和可下载内容就绪的最长时间。
+preview_ready_timeout_ms = 30000
+# 无结果确认、预览下载等待和下载超时由“系统设置 → 执行设置”统一管理。
+
 [rights_statement.employment_termination]
 # 退工停保业务从智慧人社大厅首页进入；这里只配置路径，主机继承 login_url。
 home_path = "/index/"
@@ -90,14 +106,6 @@ person_query_path = "/api/ehrss-si-enterprise-app/api/simis/persons/employees"
 # 人员查询接口和页面遮罩的异常保护上限。
 response_timeout_ms = 15000
 loading_timeout_ms = 30000
-# 遮罩消失后继续观察页面的稳定时间，避免退出动画期间操作表单。
-stable_delay_ms = 500
-
-[rights_statement.credentials]
-# 这里只保存环境变量名称，不保存真实账号密码。
-credit_code_env = "EHRM_RIGHTS_CREDIT_CODE"
-mobile_env = "EHRM_RIGHTS_MOBILE"
-password_env = "EHRM_RIGHTS_PASSWORD"
 
 [rights_statement.captcha]
 # true：必须自动完成验证码；任何识别、限流或配置错误都会立即结束登录，
@@ -125,92 +133,6 @@ diagnostic_images_enabled = false
 diagnostic_output_dir = "diagnostics/captcha"
 frame_timeout_ms = 10000
 verify_timeout_ms = 15000
-# 验证码识别等待时间
-image_change_timeout_ms = 10000
-
-[rights_statement.selectors.login]
-# 以下定位器来自 Playwright 对登录页的实际录制结果：
-# “单位登录”只有一个匹配项；单位登录区域的“账号密码”是页面中的第二个同名项。
-unit_login_tab = 'text="单位登录"'
-account_password_tab = 'text="账号密码" >> nth=1'
-# 输入框定位器同样来自 Playwright 录制结果。
-# 图形安全验证仍由用户手动完成。
-credit_code = 'role=textbox[name="统一社会信用代码/单位编号/机构编号"]'
-mobile = 'role=textbox[name="证件号码/移动电话"]'
-password = 'role=textbox[name="请输入密码"]'
-submit = 'role=button[name="登录"]'
-authenticated_marker = "text=省本级"
-
-[rights_statement.selectors.government_login]
-# 来自实际录制：切换到智慧人社“单位登录”后，点击该入口自然跳转政务服务网。
-entry_button = ".shortcut-icon-su"
-corporate_tab = 'text="法人登录"'
-username = 'role=textbox[name="请输入登录名"]'
-password = 'role=textbox[name="请输入密码"]'
-captcha_input = 'role=textbox[name="请输入验证码,验证码不区分大小写"]'
-captcha_image = "#verifyImg_fr"
-agreement = "#fryhxy"
-submit = "#frlogin1"
-authenticated_marker = 'text="单位主页"'
-
-[rights_statement.selectors.navigation]
-province_entry = "text=省本级"
-city_entry = "text=南京"
-page_menu = "text=单位权益单"
-
-[rights_statement.selectors.page]
-start_month = 'role=textbox[name="选择年月"] >> nth=0'
-end_month = 'role=textbox[name="选择年月"] >> nth=1'
-insurance_type = "role=combobox"
-insurance_option_template = 'role=option[name="{value}"]'
-social_security_number = "role=textbox >> nth=4"
-employee_name = "role=textbox >> nth=5"
-query_button = 'role=button[name="查 询"]'
-results_ready = "role=row"
-no_results = "text=暂无数据"
-loading_indicator = ".ant-spin-spinning:visible"
-
-# 权益单业务阶段超时和动作缓冲。
-query_result_timeout_ms = 45000
-no_result_confirm_ms = 10000
-transfer_result_timeout_ms = 10000
-preview_ready_timeout_ms = 30000
-preview_download_delay_ms = 1500
-download_timeout_ms = 20000
-
-# 官网页面结构定位器，仅由开发人员维护。
-calendar_popup = ".ant-calendar:visible"
-candidate_table = ""
-selected_table = "div:nth-child(3) > .ant-table-wrapper"
-transfer_left = ".arrowLeft"
-transfer_back = ".arrowRight"
-generate_button = 'role=button[name="预览权益单"]'
-download_ready = "text=缴费月数"
-download_button = 'role=button[name="图标: download 下载"]'
-preview_dialog = ".ant-modal:visible"
-close_preview = 'role=button[name="Close"]'
-
-[rights_statement.selectors.employment_termination]
-# 以下定位器来自 2026-09-04 的 Playwright 实际录制。
-hall_home = 'text="大厅首页"'
-region_switch = 'text="地区切换"'
-# 来自 Playwright 对办事地区弹窗的实际录制；南京对应 id="320100_1"。
-# 模板保留 city_code，切换其他地区时无需修改业务代码。
-region_option_template = '[id="{city_code}_1"]'
-middle_frame = "#middle"
-menu_text = "用人单位退工停保登记"
-# 录制结果中的外层名称类似 layui-layer-iframe100008，数字每次都会变化。
-outer_business_frame = 'iframe[name^="layui-layer-iframe"]'
-business_frame = "#busiIframe"
-# 可选提示使用页面真实 DOM 定位，避免无障碍 role 在不同渲染阶段无法识别。
-entry_notice_dialog = ".modal-content"
-entry_notice_text = "当前时间办理人员停保"
-entry_notice_confirm = 'button[data-ng-click="modalOptions.ok();"]'
-person_search = "sipub-person-quick-search"
-person_form = 'form[name="personinfoForm"]'
-reason_combobox = "role=combobox"
-# 只匹配真正的加载动画。layui-layer-shade 是普通弹窗的背景遮罩，不能用于判断加载状态。
-loading_indicator = ".loading-mask:visible, .ant-spin-spinning:visible, .el-loading-mask:visible"
 
 # -----------------------------------------------------------------------------
 # NocoBase 权益单申请模块
@@ -227,11 +149,6 @@ rights_application_detail_path = "/api/NCC_HumProblem:get"
 # 分页列表默认每页数量。
 default_page_size = 20
 request_timeout_ms = 15000
-
-[nocobase.credentials]
-# 这里只配置环境变量名称，不在配置文件中保存真实账号密码。
-account_env = "EHRM_NOCOBASE_ACCOUNT"
-password_env = "EHRM_NOCOBASE_PASSWORD"
 
 # -----------------------------------------------------------------------------
 # ERP 附件模块
@@ -256,11 +173,6 @@ library_id = "98005811-fdd1-4449-a391-245543f32da5"
 storage_type = "ftp"
 chunk_size_bytes = 2097152
 
-[erp.credentials]
-# 环境变量名称，不是账号密码本身。
-username_env = "EHRM_ERP_USERNAME"
-password_env = "EHRM_ERP_PASSWORD"
-
 [erp.database]
 # ERP/NCC 人员库 SQL Server 连接参数，用于按身份证或姓名补齐单位、部门信息。
 host = "192.168.30.12"
@@ -271,11 +183,6 @@ password = "xxzx@3201"
 driver = "ODBC Driver 17 for SQL Server"
 connection_timeout_seconds = 10
 query_timeout_seconds = 30
-
-[erp.selectors.login]
-username = 'input[name="usercode"], #usercode'
-password = 'input[name="userpass"], #userpass, input[type="password"]'
-submit = 'button:has-text("登录"), button:has-text("登 录"), input[type="submit"]'
 
 # -----------------------------------------------------------------------------
 # AI / ERP 事务解析模块

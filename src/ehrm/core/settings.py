@@ -9,6 +9,11 @@ from typing import Any
 
 from ehrm.core.error_catalog import configure_error_messages
 from ehrm.core.exceptions import ConfigurationError
+from ehrm.core.preferences import (
+    DEFAULT_DOWNLOAD_TIMEOUT_SECONDS,
+    DEFAULT_NO_RESULT_CONFIRM_SECONDS,
+    DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS,
+)
 from ehrm.modules.ai.models import AiModelProfile
 
 
@@ -28,6 +33,8 @@ _SUPPORTED_CHROMIUM_CHANNELS = frozenset(
         "msedge-canary",
     }
 )
+_DEFAULT_CAPTCHA_IMAGE_CHANGE_TIMEOUT_MS = 10_000
+_DEFAULT_TERMINATION_STABLE_DELAY_MS = 500
 
 
 class RightsPrintBackend(str, Enum):
@@ -79,9 +86,6 @@ class RightsApiSettings:
 
 @dataclass(frozen=True, slots=True)
 class RightsCredentialsSettings:
-    credit_code_env: str
-    mobile_env: str
-    password_env: str
     credit_code: str = ""
     mobile: str = ""
     password: str = ""
@@ -216,8 +220,6 @@ class NocoBaseSettings:
     rights_application_detail_path: str
     default_page_size: int
     request_timeout_ms: int
-    account_env: str
-    password_env: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,8 +235,6 @@ class ErpSettings:
     library_id: str
     storage_type: str
     chunk_size_bytes: int
-    username_env: str
-    password_env: str
     login: ErpLoginSelectors
 
 
@@ -581,16 +581,39 @@ def _load_ai_models(
     return tuple(profiles), active_model
 
 
-def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
-    """Loads the single authoritative, namespaced system configuration."""
+def load_settings(
+    path: Path,
+    *,
+    data_root: Path | None = None,
+    selectors_path: Path | None = None,
+) -> AppSettings:
+    """Loads runtime/business settings and the separate page contract."""
     if not path.is_file():
         raise ConfigurationError(f"配置文件不存在：{path}")
+
+    resolved_selectors_path = selectors_path or path.with_name(
+        "page_selectors.toml"
+    )
+    if not resolved_selectors_path.is_file():
+        raise ConfigurationError(
+            f"页面定位配置文件不存在：{resolved_selectors_path}"
+        )
 
     try:
         with path.open("rb") as stream:
             data = tomllib.load(stream)
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigurationError("配置文件 TOML 格式错误", details=str(exc)) from exc
+        raise ConfigurationError(
+            "运行与业务配置文件 TOML 格式错误", details=str(exc)
+        ) from exc
+
+    try:
+        with resolved_selectors_path.open("rb") as stream:
+            selectors_data = tomllib.load(stream)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigurationError(
+            "页面定位配置文件 TOML 格式错误", details=str(exc)
+        ) from exc
 
     try:
         configure_error_messages(path.parent / "error_messages.toml")
@@ -613,60 +636,61 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     )
     rights_site = _required_section(rights_root, "site", parent="rights_statement")
     rights_api = _required_section(rights_root, "api", parent="rights_statement")
-    rights_credentials = _required_section(
-        rights_root, "credentials", parent="rights_statement"
+    rights_operations = _required_section(
+        rights_root, "operations", parent="rights_statement"
     )
-    rights_selectors = _required_section(
-        rights_root, "selectors", parent="rights_statement"
+    rights_bill_operation = _required_section(
+        rights_operations,
+        "rights_bill",
+        parent="rights_statement.operations",
+    )
+    jshrss_selectors = _required_section(selectors_data, "jshrss")
+    jshrss_login_selectors = _required_section(
+        jshrss_selectors, "login", parent="jshrss"
     )
     rights_login = _required_section(
-        rights_selectors, "login", parent="rights_statement.selectors"
+        jshrss_login_selectors, "direct", parent="jshrss.login"
     )
     rights_government_login = _required_section(
         rights_root, "government_login", parent="rights_statement"
     )
     rights_government_login_selectors = _required_section(
-        rights_selectors,
-        "government_login",
-        parent="rights_statement.selectors",
+        jshrss_login_selectors,
+        "government",
+        parent="jshrss.login",
     )
     rights_captcha = _required_section(
         rights_root, "captcha", parent="rights_statement"
     )
     rights_navigation = _required_section(
-        rights_selectors, "navigation", parent="rights_statement.selectors"
+        jshrss_selectors, "navigation", parent="jshrss"
     )
     rights_page = _required_section(
-        rights_selectors, "page", parent="rights_statement.selectors"
+        jshrss_selectors, "rights_bill", parent="jshrss"
     )
     rights_termination = _required_section(
         rights_root, "employment_termination", parent="rights_statement"
     )
     rights_termination_selectors = _required_section(
-        rights_selectors,
+        jshrss_selectors,
         "employment_termination",
-        parent="rights_statement.selectors",
+        parent="jshrss",
     )
 
     erp_root = _required_section(data, "erp")
     erp_browser = _required_section(erp_root, "browser", parent="erp")
     erp_site = _required_section(erp_root, "site", parent="erp")
     erp_upload = _required_section(erp_root, "upload", parent="erp")
-    erp_credentials = _required_section(erp_root, "credentials", parent="erp")
     erp_database = _required_section(erp_root, "database", parent="erp")
-    erp_selectors = _required_section(erp_root, "selectors", parent="erp")
+    erp_selectors = _required_section(selectors_data, "erp")
     erp_login = _required_section(
-        erp_selectors, "login", parent="erp.selectors"
+        erp_selectors, "login", parent="erp"
     )
 
     nocobase_root = _required_section(data, "nocobase")
     nocobase_site = _required_section(
         nocobase_root, "site", parent="nocobase"
     )
-    nocobase_credentials = _required_section(
-        nocobase_root, "credentials", parent="nocobase"
-    )
-
     ai_root = _required_section(data, "ai")
 
     relative_root = data_root or Path.cwd()
@@ -676,27 +700,25 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     rights_browser_pacing_name = "rights_statement.browser.pacing"
     rights_site_name = "rights_statement.site"
     rights_api_name = "rights_statement.api"
-    rights_credentials_name = "rights_statement.credentials"
-    rights_login_name = "rights_statement.selectors.login"
+    rights_bill_operation_name = "rights_statement.operations.rights_bill"
+    rights_login_name = "jshrss.login.direct"
     rights_government_login_name = "rights_statement.government_login"
     rights_government_login_selectors_name = (
-        "rights_statement.selectors.government_login"
+        "jshrss.login.government"
     )
     rights_captcha_name = "rights_statement.captcha"
-    rights_navigation_name = "rights_statement.selectors.navigation"
-    rights_page_name = "rights_statement.selectors.page"
+    rights_navigation_name = "jshrss.navigation"
+    rights_page_name = "jshrss.rights_bill"
     rights_termination_name = "rights_statement.employment_termination"
     rights_termination_selectors_name = (
-        "rights_statement.selectors.employment_termination"
+        "jshrss.employment_termination"
     )
     erp_browser_name = "erp.browser"
     erp_site_name = "erp.site"
     erp_upload_name = "erp.upload"
-    erp_credentials_name = "erp.credentials"
     erp_database_name = "erp.database"
-    erp_login_name = "erp.selectors.login"
+    erp_login_name = "erp.login"
     nocobase_site_name = "nocobase.site"
-    nocobase_credentials_name = "nocobase.credentials"
 
     action_timeout_ms = _integer(common, "action_timeout_ms", common_name)
     raw_rights_print_backend = _text(
@@ -858,6 +880,28 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             "配置项 rights_statement.api.request_timeout_ms 必须大于 0"
         )
 
+    rights_query_result_timeout_ms = _integer(
+        rights_bill_operation,
+        "query_result_timeout_ms",
+        rights_bill_operation_name,
+    )
+    rights_transfer_result_timeout_ms = _integer(
+        rights_bill_operation,
+        "transfer_result_timeout_ms",
+        rights_bill_operation_name,
+    )
+    rights_preview_ready_timeout_ms = _integer(
+        rights_bill_operation,
+        "preview_ready_timeout_ms",
+        rights_bill_operation_name,
+    )
+    if min(
+        rights_query_result_timeout_ms,
+        rights_transfer_result_timeout_ms,
+        rights_preview_ready_timeout_ms,
+    ) < 1:
+        raise ConfigurationError("单位权益单浏览器业务等待时间必须大于 0")
+
     termination_home_path = _text(
         rights_termination, "home_path", rights_termination_name
     )
@@ -879,13 +923,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     termination_loading_timeout_ms = _integer(
         rights_termination, "loading_timeout_ms", rights_termination_name
     )
-    termination_stable_delay_ms = _integer(
-        rights_termination, "stable_delay_ms", rights_termination_name
-    )
     if min(
         termination_response_timeout_ms,
         termination_loading_timeout_ms,
-        termination_stable_delay_ms,
     ) < 1:
         raise ConfigurationError("退保业务等待时间必须大于 0")
     termination_person_query_path = _text(
@@ -994,9 +1034,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
         verify_timeout_ms=_integer(
             rights_captcha, "verify_timeout_ms", rights_captcha_name
         ),
-        image_change_timeout_ms=_integer(
-            rights_captcha, "image_change_timeout_ms", rights_captcha_name
-        ),
+        image_change_timeout_ms=_DEFAULT_CAPTCHA_IMAGE_CHANGE_TIMEOUT_MS,
     )
     if captcha.max_attempts < 1:
         raise ConfigurationError(
@@ -1009,7 +1047,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
     if min(
         captcha.frame_timeout_ms,
         captcha.verify_timeout_ms,
-        captcha.image_change_timeout_ms,
     ) < 1:
         raise ConfigurationError(
             "验证码超时配置必须大于 0"
@@ -1057,23 +1094,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             page_size=rights_api_page_size,
             request_timeout_ms=rights_api_request_timeout_ms,
         ),
-        rights_credentials=RightsCredentialsSettings(
-            credit_code_env=_text(
-                rights_credentials,
-                "credit_code_env",
-                rights_credentials_name,
-            ),
-            mobile_env=_text(
-                rights_credentials,
-                "mobile_env",
-                rights_credentials_name,
-            ),
-            password_env=_text(
-                rights_credentials,
-                "password_env",
-                rights_credentials_name,
-            ),
-        ),
+        rights_credentials=RightsCredentialsSettings(),
         login=LoginSelectors(
             unit_login_tab=_text(rights_login, "unit_login_tab", rights_login_name),
             account_password_tab=_text(
@@ -1152,7 +1173,9 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
                 rights_navigation, "city_entry", rights_navigation_name
             ),
             rights_statement_menu=_text(
-                rights_navigation, "page_menu", rights_navigation_name
+                rights_navigation,
+                "rights_statement_menu",
+                rights_navigation_name,
             ),
         ),
         rights_statement=RightsStatementSelectors(
@@ -1172,24 +1195,12 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             loading_indicator=_text(
                 rights_page, "loading_indicator", rights_page_name
             ),
-            query_result_timeout_ms=_integer(
-                rights_page, "query_result_timeout_ms", rights_page_name
-            ),
-            no_result_confirm_ms=_integer(
-                rights_page, "no_result_confirm_ms", rights_page_name
-            ),
-            transfer_result_timeout_ms=_integer(
-                rights_page, "transfer_result_timeout_ms", rights_page_name
-            ),
-            preview_ready_timeout_ms=_integer(
-                rights_page, "preview_ready_timeout_ms", rights_page_name
-            ),
-            preview_download_delay_ms=_integer(
-                rights_page, "preview_download_delay_ms", rights_page_name
-            ),
-            download_timeout_ms=_integer(
-                rights_page, "download_timeout_ms", rights_page_name
-            ),
+            query_result_timeout_ms=rights_query_result_timeout_ms,
+            no_result_confirm_ms=DEFAULT_NO_RESULT_CONFIRM_SECONDS * 1000,
+            transfer_result_timeout_ms=rights_transfer_result_timeout_ms,
+            preview_ready_timeout_ms=rights_preview_ready_timeout_ms,
+            preview_download_delay_ms=DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS,
+            download_timeout_ms=DEFAULT_DOWNLOAD_TIMEOUT_SECONDS * 1000,
             calendar_popup=_text(rights_page, "calendar_popup", rights_page_name),
             candidate_table=_text(rights_page, "candidate_table", rights_page_name),
             selected_table=_text(rights_page, "selected_table", rights_page_name),
@@ -1207,7 +1218,7 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             city_name=termination_city_name,
             response_timeout_ms=termination_response_timeout_ms,
             loading_timeout_ms=termination_loading_timeout_ms,
-            stable_delay_ms=termination_stable_delay_ms,
+            stable_delay_ms=_DEFAULT_TERMINATION_STABLE_DELAY_MS,
             hall_home=_text(
                 rights_termination_selectors,
                 "hall_home",
@@ -1291,16 +1302,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             ),
             default_page_size=nocobase_default_page_size,
             request_timeout_ms=nocobase_request_timeout_ms,
-            account_env=_text(
-                nocobase_credentials,
-                "account_env",
-                nocobase_credentials_name,
-            ),
-            password_env=_text(
-                nocobase_credentials,
-                "password_env",
-                nocobase_credentials_name,
-            ),
         ),
         erp=ErpSettings(
             base_url=_text(erp_site, "base_url", erp_site_name),
@@ -1326,12 +1327,6 @@ def load_settings(path: Path, *, data_root: Path | None = None) -> AppSettings:
             storage_type=_text(erp_upload, "storage_type", erp_upload_name),
             chunk_size_bytes=_integer(
                 erp_upload, "chunk_size_bytes", erp_upload_name
-            ),
-            username_env=_text(
-                erp_credentials, "username_env", erp_credentials_name
-            ),
-            password_env=_text(
-                erp_credentials, "password_env", erp_credentials_name
             ),
             login=ErpLoginSelectors(
                 username=_text(erp_login, "username", erp_login_name),

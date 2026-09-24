@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
-import os
 from contextlib import contextmanager
 from collections.abc import Iterator
 from dataclasses import replace
@@ -48,11 +46,6 @@ def _parser() -> argparse.ArgumentParser:
         help="复用配置中的浏览器资料；默认使用全新临时资料以确保完整登录流程",
     )
     parser.add_argument(
-        "--no-prompt",
-        action="store_true",
-        help="凭据缺失时直接失败，适用于 CI",
-    )
-    parser.add_argument(
         "--ignore-https-errors",
         action="store_true",
         help="仅用于自签名证书的测试环境",
@@ -74,26 +67,6 @@ def _parser() -> argparse.ArgumentParser:
         help="登录失败时保存页面截图的位置",
     )
     return parser
-
-
-def _credential(
-    *,
-    configured: str,
-    environment_name: str,
-    prompt: str,
-    secret: bool,
-    no_prompt: bool,
-) -> str:
-    value = configured or os.getenv(environment_name, "")
-    if value:
-        return value
-    if no_prompt:
-        raise ValueError(f"缺少环境变量 {environment_name}")
-    entered = getpass.getpass(prompt) if secret else input(prompt)
-    value = entered.strip()
-    if not value:
-        raise ValueError(f"{prompt.rstrip('：')}不能为空")
-    return value
 
 
 @contextmanager
@@ -203,7 +176,7 @@ def _selected_account(
     account_id: int | None,
 ) -> SystemAccount | None:
     if account_id is None:
-        return None
+        return repository.get_default_account(SystemType.JSHRSS)
     account = repository.get_account_by_id(account_id)
     if account is None or account.system_type is not SystemType.JSHRSS:
         raise ValueError(f"智慧人社账号 ID={account_id} 不存在")
@@ -244,36 +217,25 @@ def main(argv: list[str] | None = None) -> int:
     _print_targets(settings)
 
     credentials = settings.rights_credentials
-    try:
-        credit_code = _credential(
-            configured=credentials.credit_code,
-            environment_name=credentials.credit_code_env,
-            prompt=(
-                "政务服务平台登录名："
-                if credentials.login_method == "government_sso"
-                else "统一信用代码："
-            ),
-            secret=False,
-            no_prompt=args.no_prompt,
+    if selected_account is None:
+        print("凭据准备失败：请先在“系统设置 → 账户与连接”中保存智慧人社账号")
+        return 2
+    credit_code = credentials.credit_code.strip()
+    mobile = credentials.mobile.strip()
+    password = credentials.password
+    missing = []
+    if not credit_code:
+        missing.append("登录账号")
+    if credentials.login_method != "government_sso" and not mobile:
+        missing.append("证件号码或移动电话")
+    if not password:
+        missing.append("密码")
+    if missing:
+        print(
+            "凭据准备失败：所选智慧人社账号缺少"
+            + "、".join(missing)
+            + "，请先在系统设置中补充"
         )
-        mobile = credentials.mobile
-        if credentials.login_method != "government_sso":
-            mobile = _credential(
-                configured=credentials.mobile,
-                environment_name=credentials.mobile_env,
-                prompt="证件号码/移动电话：",
-                secret=False,
-                no_prompt=args.no_prompt,
-            )
-        password = _credential(
-            configured=credentials.password,
-            environment_name=credentials.password_env,
-            prompt="登录密码：",
-            secret=True,
-            no_prompt=args.no_prompt,
-        )
-    except ValueError as exc:
-        print(f"凭据准备失败：{exc}")
         return 2
 
     try:

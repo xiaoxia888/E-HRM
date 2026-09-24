@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 import time
 import logging
@@ -331,19 +330,16 @@ class LoginService:
         credit_code = (
             username
             or credentials.credit_code
-            or os.getenv(credentials.credit_code_env)
             or (saved_account.account if saved_account else None)
         )
         mobile_number = (
             mobile
             or credentials.mobile
-            or os.getenv(credentials.mobile_env)
             or (saved_account.secondary_account if saved_account else None)
         )
         resolved_password = (
             password
             or credentials.password
-            or os.getenv(credentials.password_env)
             or (saved_account.password if saved_account else None)
         )
         if self._access_token_manager is None:

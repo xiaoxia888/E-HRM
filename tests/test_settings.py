@@ -10,12 +10,30 @@ from ehrm.core.settings import RightsPrintBackend, load_settings, select_ai_mode
 from ehrm.modules.ai.models import AiModelProfile
 
 
-def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> None:
+def test_split_configuration_loads_all_modules(tmp_path: Path) -> None:
     config_path = Path("config/settings.toml")
+    selectors_path = Path("config/page_selectors.toml")
     settings = load_settings(config_path, data_root=tmp_path)
     assert settings.auth_database_path == tmp_path / "data" / "auth.sqlite3"
     with config_path.open("rb") as stream:
         configured = tomllib.load(stream)
+    with selectors_path.open("rb") as stream:
+        configured_selectors = tomllib.load(stream)
+
+    assert "selectors" not in configured["rights_statement"]
+    assert "selectors" not in configured["erp"]
+    assert "credentials" not in configured["rights_statement"]
+    assert "credentials" not in configured["nocobase"]
+    assert "credentials" not in configured["erp"]
+    assert settings.login.unit_login_tab == configured_selectors["jshrss"][
+        "login"
+    ]["direct"]["unit_login_tab"]
+    assert settings.government_login_selectors.entry_button == (
+        configured_selectors["jshrss"]["login"]["government"]["entry_button"]
+    )
+    assert settings.rights_statement.download_timeout_ms == configured[
+        "rights_statement"
+    ]["operations"]["rights_bill"]["download_timeout_ms"]
 
     assert settings.browser.engine in {"chromium", "firefox", "webkit"}
     assert settings.rights_print_backend is RightsPrintBackend.API
@@ -51,7 +69,6 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     assert settings.employment_termination.loading_timeout_ms > 0
     assert settings.employment_termination.person_search
     assert settings.employment_termination.person_query_path.startswith("/")
-    assert settings.rights_credentials.credit_code_env == "EHRM_RIGHTS_CREDIT_CODE"
     assert settings.login.mobile == 'role=textbox[name="证件号码/移动电话"]'
     assert settings.login.unit_login_tab == 'text="单位登录"'
     assert settings.login.account_password_tab == 'text="账号密码" >> nth=1'
@@ -99,7 +116,6 @@ def test_single_namespaced_configuration_loads_all_modules(tmp_path: Path) -> No
     )
     assert settings.nocobase.default_page_size == 20
     assert settings.nocobase.request_timeout_ms == 15_000
-    assert settings.nocobase.account_env == "EHRM_NOCOBASE_ACCOUNT"
     assert settings.ai.model == "qwen3.5:9b"
     assert settings.ai.profile_id == "qwen3_5_9b"
     assert settings.ai.default_reasoning_mode == "off"
@@ -153,6 +169,7 @@ def test_configuration_rejects_unknown_rights_print_backend(
         encoding="utf-8",
     )
     copyfile(Path("config/error_messages.toml"), tmp_path / "error_messages.toml")
+    copyfile(Path("config/page_selectors.toml"), tmp_path / "page_selectors.toml")
 
     with pytest.raises(ConfigurationError, match="execution.backend 不受支持"):
         load_settings(config_path, data_root=tmp_path / "runtime")
@@ -164,8 +181,17 @@ def test_missing_module_section_does_not_fall_back_to_python_defaults(
     config_path = tmp_path / "settings.toml"
     config_path.write_text("[common]\naction_timeout_ms = 30000\n", encoding="utf-8")
     copyfile("config/error_messages.toml", tmp_path / "error_messages.toml")
+    copyfile("config/page_selectors.toml", tmp_path / "page_selectors.toml")
 
     with pytest.raises(ConfigurationError, match=r"\[rights_statement\]"):
+        load_settings(config_path, data_root=tmp_path)
+
+
+def test_missing_page_selectors_configuration_is_reported(tmp_path: Path) -> None:
+    config_path = tmp_path / "settings.toml"
+    copyfile("config/settings.toml", config_path)
+
+    with pytest.raises(ConfigurationError, match="页面定位配置文件不存在"):
         load_settings(config_path, data_root=tmp_path)
 
 

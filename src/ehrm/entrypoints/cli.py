@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import os
 import subprocess
 from pathlib import Path
 
 from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_DOWNLOAD
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.error_catalog import display_message
-from ehrm.core.exceptions import EhrmError
+from ehrm.core.exceptions import ConfigurationError, EhrmError
 from ehrm.core.logging import configure_logging
 from ehrm.core.runtime import application_runtime_root, resolve_runtime_path
 from ehrm.core.settings import DEFAULT_SETTINGS_PATH, load_settings
 from ehrm.modules.rights_statement.models import RightsStatementQuery
+from ehrm.web.settings_service import WebSettingsService
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -68,13 +69,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         settings = load_settings(args.config, data_root=runtime_root)
-        username = os.getenv(settings.rights_credentials.credit_code_env)
-        mobile = os.getenv(settings.rights_credentials.mobile_env)
-        password = os.getenv(settings.rights_credentials.password_env)
+        saved_account = AuthenticationRepository(
+            settings.auth_database_path
+        ).get_default_account(SystemType.JSHRSS)
+        settings = WebSettingsService(settings, runtime_root).runtime_settings(
+            rights_account=saved_account,
+        )
+        credentials = settings.rights_credentials
+        username = credentials.credit_code
+        mobile = credentials.mobile
+        password = credentials.password
         if args.ask_password:
             username = username or input("统一信用代码：").strip()
             mobile = mobile or input("移动号码：").strip()
             password = getpass.getpass("登录密码：")
+        elif saved_account is None:
+            raise ConfigurationError(
+                "智慧人社账号未配置",
+                details="请先在“系统设置 → 账户与连接”中保存智慧人社账号。",
+            )
 
         request = RightsStatementQuery(
             start_month=args.start_month,

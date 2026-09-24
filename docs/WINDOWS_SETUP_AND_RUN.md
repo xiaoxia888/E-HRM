@@ -57,6 +57,10 @@ pyodbc、ODBC 驱动和 Chromium。脚本不会启动 Web 服务。
 编辑 `config\settings.toml`，核对智慧人社、ERP、NocoBase、SQL Server、ODBC
 驱动、Ollama 和模型配置。业务账号在 Web 页面“系统设置 → 账户与连接”中维护。
 
+`config\page_selectors.toml` 保存智慧人社和 ERP 的页面定位契约，正常部署时无需
+修改，但必须与 `settings.toml` 一起保留。只有目标网页结构发生变化并重新录制、
+验证定位器后，才调整该文件。
+
 ### 7. 启动 Web 服务
 
 ```powershell

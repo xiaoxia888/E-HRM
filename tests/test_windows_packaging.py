@@ -18,6 +18,7 @@ def _complete_bundle(tmp_path: Path, *, include_pyodbc: bool) -> Path:
     required_files = (
         bundle / "E-HRM.exe",
         resource_root / "config" / "settings.toml",
+        resource_root / "config" / "page_selectors.toml",
         resource_root / "config" / "error_messages.toml",
         resource_root / "config" / "models" / "qwen3_5_9b.toml",
         resource_root / "config" / "models" / "qwen3_8_27b.toml",
