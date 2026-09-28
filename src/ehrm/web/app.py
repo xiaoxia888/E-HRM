@@ -48,6 +48,7 @@ from ehrm.web.schemas import (
     RightsCandidateSelectionRequest,
 )
 from ehrm.web.rights_service import ArtifactRegistry, RightsWebService
+from ehrm.web.task_repository import TaskRepository
 from ehrm.web.settings_service import WebSettingsService
 from ehrm.web.tasks import TaskCoordinator
 
@@ -68,14 +69,18 @@ def create_app(
         data_root=runtime_root,
     )
     resolved_logger = logger or configure_logging(runtime_root / "logs")
-    task_coordinator = coordinator or TaskCoordinator(max_workers=8)
+    task_repository = TaskRepository(runtime_root / "data" / "tasks.sqlite3")
+    task_coordinator = coordinator or TaskCoordinator(
+        max_workers=8,
+        store=task_repository,
+    )
     owns_coordinator = coordinator is None
     query_service = NocoBaseApplicationQueryService(
         resolved_settings,
         resolved_logger,
     )
     settings_service = WebSettingsService(resolved_settings, runtime_root)
-    artifact_registry = ArtifactRegistry()
+    artifact_registry = ArtifactRegistry(task_repository)
     rights_service = RightsWebService(
         settings_service,
         task_coordinator,
@@ -98,6 +103,7 @@ def create_app(
     app.state.runtime_root = runtime_root
     app.state.logger = resolved_logger
     app.state.task_coordinator = task_coordinator
+    app.state.task_repository = task_repository
     app.state.web_settings_service = settings_service
     app.state.rights_service = rights_service
     app.state.nocobase_query_service = query_service
@@ -319,7 +325,7 @@ def create_app(
                 current = task_coordinator.revision
                 if current != revision:
                     revision = current
-                    payload = _task_list(task_coordinator, limit=100)
+                    payload = _task_list(task_coordinator, limit=500)
                     await websocket.send_json(payload.model_dump(mode="json"))
                 try:
                     event = await asyncio.wait_for(

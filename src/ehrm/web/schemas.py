@@ -4,6 +4,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from ehrm.core.preferences import (
+    DEFAULT_DOWNLOAD_TIMEOUT_SECONDS,
+    DEFAULT_NO_RESULT_CONFIRM_SECONDS,
+    DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS,
+)
 from ehrm.web.tasks import TaskKind, TaskSnapshot, TaskStatus
 
 
@@ -75,9 +80,9 @@ class PreferencesUpdateRequest(BaseModel):
     ai_model_profile: str = ""
     ai_reasoning_mode: str = ""
     execution_speed: str = "standard"
-    no_result_confirm_seconds: int = 10
-    preview_download_delay_ms: int = 1500
-    download_timeout_seconds: int = 20
+    no_result_confirm_seconds: int = DEFAULT_NO_RESULT_CONFIRM_SECONDS
+    preview_download_delay_ms: int = DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS
+    download_timeout_seconds: int = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS
 
 
 class RightsTaskRequest(BaseModel):

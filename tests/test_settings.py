@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from ehrm.core.exceptions import ConfigurationError
+from ehrm.core.preferences import UserPreferences
 from ehrm.core.settings import RightsPrintBackend, load_settings, select_ai_model
 from ehrm.modules.ai.models import AiModelProfile
 
@@ -31,9 +32,26 @@ def test_split_configuration_loads_all_modules(tmp_path: Path) -> None:
     assert settings.government_login_selectors.entry_button == (
         configured_selectors["jshrss"]["login"]["government"]["entry_button"]
     )
-    assert settings.rights_statement.download_timeout_ms == configured[
-        "rights_statement"
-    ]["operations"]["rights_bill"]["download_timeout_ms"]
+    rights_operation = configured["rights_statement"]["operations"]["rights_bill"]
+    assert "no_result_confirm_ms" not in rights_operation
+    assert "preview_download_delay_ms" not in rights_operation
+    assert "download_timeout_ms" not in rights_operation
+    preferences = UserPreferences()
+    assert settings.rights_statement.no_result_confirm_ms == (
+        preferences.no_result_confirm_seconds * 1000
+    )
+    assert settings.rights_statement.preview_download_delay_ms == (
+        preferences.preview_download_delay_ms
+    )
+    assert settings.rights_statement.download_timeout_ms == (
+        preferences.download_timeout_seconds * 1000
+    )
+    assert "stable_delay_ms" not in configured["rights_statement"][
+        "employment_termination"
+    ]
+    assert "image_change_timeout_ms" not in configured["rights_statement"][
+        "captcha"
+    ]
 
     assert settings.browser.engine in {"chromium", "firefox", "webkit"}
     assert settings.rights_print_backend is RightsPrintBackend.API

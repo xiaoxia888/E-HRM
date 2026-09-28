@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 import threading
 import time
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from ehrm.core.exceptions import TaskCancelledError
@@ -28,6 +28,7 @@ class TaskStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
     @property
     def terminal(self) -> bool:
@@ -35,6 +36,7 @@ class TaskStatus(StrEnum):
             TaskStatus.SUCCEEDED,
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
+            TaskStatus.INTERRUPTED,
         }
 
 
@@ -58,6 +60,18 @@ class TaskSnapshot:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+class TaskStore(Protocol):
+    """Durable storage contract used by the in-memory task scheduler."""
+
+    def save(self, snapshot: TaskSnapshot) -> None: ...
+
+    def get(self, task_id: str) -> TaskSnapshot | None: ...
+
+    def list(self, *, limit: int) -> tuple[TaskSnapshot, ...]: ...
+
+    def mark_unfinished_interrupted(self) -> int: ...
 
 
 class TaskContext:
@@ -122,7 +136,13 @@ class TaskCoordinator:
     submitted immediately to the shared executor.
     """
 
-    def __init__(self, *, max_workers: int = 8, history_limit: int = 500) -> None:
+    def __init__(
+        self,
+        *,
+        max_workers: int = 8,
+        history_limit: int = 500,
+        store: TaskStore | None = None,
+    ) -> None:
         if max_workers < 1:
             raise ValueError("max_workers 必须大于 0")
         self._executor = ThreadPoolExecutor(
@@ -130,6 +150,7 @@ class TaskCoordinator:
             thread_name_prefix="ehrm-web-task",
         )
         self._history_limit = max(history_limit, 10)
+        self._store = store
         self._tasks: dict[str, _TaskRecord] = {}
         self._order: deque[str] = deque()
         self._resource_queues: dict[str, deque[str]] = {}
@@ -137,6 +158,8 @@ class TaskCoordinator:
         self._changed = threading.Condition(self._lock)
         self._revision = 0
         self._closed = False
+        if self._store is not None:
+            self._store.mark_unfinished_interrupted()
 
     @property
     def revision(self) -> int:
@@ -193,28 +216,46 @@ class TaskCoordinator:
                 else:
                     record.message = self._queued_message(record, len(queue) - 1)
             self._trim_history_locked()
-            self._notify_locked()
+            self._notify_locked(record)
             return self._snapshot_locked(record)
 
     def get(self, task_id: str) -> TaskSnapshot | None:
         with self._lock:
             record = self._tasks.get(task_id)
-            return self._snapshot_locked(record) if record is not None else None
+            if record is not None:
+                return self._snapshot_locked(record)
+        return self._store.get(task_id) if self._store is not None else None
 
     def list(self, *, limit: int = 100) -> tuple[TaskSnapshot, ...]:
         with self._lock:
             task_ids = list(self._order)[: max(1, min(limit, self._history_limit))]
-            return tuple(
+            active = tuple(
                 self._snapshot_locked(self._tasks[task_id])
                 for task_id in task_ids
                 if task_id in self._tasks
             )
+        if self._store is None:
+            return active
+        persisted = self._store.list(limit=min(limit, self._history_limit))
+        merged = {snapshot.task_id: snapshot for snapshot in persisted}
+        merged.update({snapshot.task_id: snapshot for snapshot in active})
+        return tuple(
+            sorted(
+                merged.values(),
+                key=lambda snapshot: snapshot.created_at,
+                reverse=True,
+            )[: min(limit, self._history_limit)]
+        )
 
     def cancel(self, task_id: str) -> TaskSnapshot | None:
         with self._lock:
             record = self._tasks.get(task_id)
             if record is None:
-                return None
+                return (
+                    self._store.get(task_id)
+                    if self._store is not None
+                    else None
+                )
             if record.status.terminal:
                 return self._snapshot_locked(record)
             record.cancel_event.set()
@@ -235,7 +276,7 @@ class TaskCoordinator:
             elif record.status is TaskStatus.RUNNING:
                 record.status = TaskStatus.CANCELLING
                 record.message = "已收到停止请求，正在安全结束当前步骤，请稍候"
-            self._notify_locked()
+            self._notify_locked(record)
             return self._snapshot_locked(record)
 
     def wait_for_change(self, revision: int, *, timeout: float = 15.0) -> int:
@@ -268,7 +309,7 @@ class TaskCoordinator:
             record.status = TaskStatus.RUNNING
             record.started_at = datetime.now(UTC)
             record.message = self._running_message(record)
-            self._notify_locked()
+            self._notify_locked(record)
 
         context = TaskContext(
             task_id,
@@ -289,7 +330,7 @@ class TaskCoordinator:
                 record.status = TaskStatus.CANCELLED
                 record.message = "任务已安全停止，未继续执行后续步骤"
                 record.finished_at = datetime.now(UTC)
-                self._notify_locked()
+                self._notify_locked(record)
         except Exception as exc:
             with self._lock:
                 record.status = TaskStatus.FAILED
@@ -300,7 +341,7 @@ class TaskCoordinator:
                     record.error += f"\n{details}"
                 record.message = "任务执行失败，请查看错误信息后重试"
                 record.finished_at = datetime.now(UTC)
-                self._notify_locked()
+                self._notify_locked(record)
         else:
             with self._lock:
                 record.status = TaskStatus.SUCCEEDED
@@ -311,7 +352,7 @@ class TaskCoordinator:
                 )
                 record.message = "任务已完成，可以查看或下载处理结果"
                 record.finished_at = datetime.now(UTC)
-                self._notify_locked()
+                self._notify_locked(record)
         finally:
             self._release_resource(record)
 
@@ -336,7 +377,7 @@ class TaskCoordinator:
                     0,
                     min(int(current), record.progress_total),
                 )
-            self._notify_locked()
+            self._notify_locked(record)
 
     def _release_resource(self, record: _TaskRecord) -> None:
         token = self._resource_token(record)
@@ -354,7 +395,10 @@ class TaskCoordinator:
                 next_record = self._tasks[queue[0]]
                 next_record.message = "前序任务已结束，正在启动您的任务"
                 self._schedule(next_record)
-            self._notify_locked()
+            changed = [record]
+            if queue:
+                changed.append(self._tasks[queue[0]])
+            self._notify_locked(*changed)
 
     def _snapshot_locked(self, record: _TaskRecord) -> TaskSnapshot:
         queue_position = 0
@@ -434,7 +478,20 @@ class TaskCoordinator:
                 self._order.remove(task_id)
                 self._tasks.pop(task_id, None)
 
-    def _notify_locked(self) -> None:
+    def _notify_locked(self, *records: _TaskRecord) -> None:
+        if self._store is not None:
+            for record in records:
+                try:
+                    self._store.save(self._snapshot_locked(record))
+                except Exception:
+                    # Persistence failure must not turn a completed business
+                    # operation into a failed/repeated operation.
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "无法持久化任务记录 task_id=%s",
+                        record.task_id,
+                    )
         self._revision += 1
         self._changed.notify_all()
 

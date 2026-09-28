@@ -11,6 +11,7 @@ const statusMap: Record<
   succeeded: { color: 'success', text: '已完成' },
   failed: { color: 'error', text: '执行失败' },
   cancelled: { color: 'default', text: '已停止' },
+  interrupted: { color: 'default', text: '已中断' },
 }
 
 export function taskStatusLabel(status: TaskStatus) {

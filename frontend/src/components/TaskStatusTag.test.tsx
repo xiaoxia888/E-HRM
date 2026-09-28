@@ -10,6 +10,7 @@ describe('taskStatusLabel', () => {
     ['succeeded', '已完成'],
     ['failed', '执行失败'],
     ['cancelled', '已停止'],
+    ['interrupted', '已中断'],
   ])('将 %s 显示为友好中文状态', (status, expected) => {
     expect(taskStatusLabel(status)).toBe(expected)
   })

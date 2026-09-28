@@ -19,7 +19,7 @@ export const api = {
       `/api/v1/settings/accounts/${systemType}?account_id=${accountId}`,
     ),
   policy: () => apiRequest<PolicyResponse>('/api/v1/concurrency-policy'),
-  tasks: () => apiRequest<TaskListResponse>('/api/v1/tasks'),
+  tasks: () => apiRequest<TaskListResponse>('/api/v1/tasks?limit=500'),
   task: (taskId: string) => apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}`),
   cancelTask: (taskId: string) =>
     apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}/cancel`, {

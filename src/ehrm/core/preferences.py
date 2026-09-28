@@ -7,6 +7,11 @@ from pathlib import Path
 from ehrm.modules.ai.models import AiModelProfile
 
 
+DEFAULT_NO_RESULT_CONFIRM_SECONDS = 10
+DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS = 1500
+DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 20
+
+
 @dataclass(frozen=True, slots=True)
 class UserPreferences:
     output_path: str = ""
@@ -17,9 +22,9 @@ class UserPreferences:
     ai_model_profile: str = ""
     ai_reasoning_mode: str = ""
     execution_speed: str = "standard"
-    no_result_confirm_seconds: int = 10
-    preview_download_delay_ms: int = 1500
-    download_timeout_seconds: int = 20
+    no_result_confirm_seconds: int = DEFAULT_NO_RESULT_CONFIRM_SECONDS
+    preview_download_delay_ms: int = DEFAULT_PREVIEW_DOWNLOAD_DELAY_MS
+    download_timeout_seconds: int = DEFAULT_DOWNLOAD_TIMEOUT_SECONDS
 
 
 class UserPreferencesStore:

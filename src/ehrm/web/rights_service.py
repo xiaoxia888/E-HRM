@@ -26,6 +26,7 @@ from ehrm.modules.rights_statement.excel_models import (
     ExportMode,
 )
 from ehrm.web.settings_service import WebSettingsService
+from ehrm.web.task_repository import TaskRepository
 from ehrm.web.tasks import TaskContext, TaskCoordinator, TaskKind, TaskSnapshot
 from ehrm.workbench import DesktopWorkbench
 
@@ -34,8 +35,9 @@ _IMPORT_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class ArtifactRegistry:
-    def __init__(self) -> None:
+    def __init__(self, repository: TaskRepository | None = None) -> None:
         self._paths: dict[str, Path] = {}
+        self._repository = repository
         self._lock = RLock()
 
     def register(self, path: Path) -> dict[str, str]:
@@ -43,6 +45,8 @@ class ArtifactRegistry:
         token = uuid4().hex
         with self._lock:
             self._paths[token] = resolved
+        if self._repository is not None:
+            self._repository.save_artifact(token, resolved)
         return {
             "name": resolved.name,
             "url": f"/api/v1/artifacts/{token}",
@@ -51,6 +55,8 @@ class ArtifactRegistry:
     def resolve(self, token: str) -> Path | None:
         with self._lock:
             path = self._paths.get(token)
+        if path is None and self._repository is not None:
+            path = self._repository.resolve_artifact(token)
         return path if path is not None and path.is_file() else None
 
 

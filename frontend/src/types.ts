@@ -6,6 +6,7 @@ export type TaskStatus =
   | 'succeeded'
   | 'failed'
   | 'cancelled'
+  | 'interrupted'
 
 export interface TaskRecord {
   task_id: string
