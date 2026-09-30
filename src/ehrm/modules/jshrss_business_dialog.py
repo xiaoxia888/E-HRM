@@ -25,6 +25,8 @@ _ACTION_SELECTORS = (
     "button.ant-btn-primary",
 )
 _ERROR_TOKENS = (
+    "不符合办理条件",
+    "暂不受理",
     "无法办理",
     "不能办理",
     "核心处理异常",
@@ -32,6 +34,10 @@ _ERROR_TOKENS = (
     "系统异常",
     "操作失败",
     "业务失败",
+    "提交失败",
+    "保存失败",
+    "办理失败",
+    "校验失败",
 )
 _NOT_FOUND_TOKENS = ("未找到", "不存在", "无此人员", "未查询到")
 _INFO_TOKENS = ("当前时间办理人员停保", "发送税务缴费截止时间")
@@ -80,12 +86,53 @@ def topmost_business_dialog(scope: object) -> BusinessDialog | None:
             dialogs = scope.locator(selector)
             for index in range(dialogs.count() - 1, -1, -1):
                 dialog = dialogs.nth(index)
-                if not _visible(dialog):
+                if not is_active_business_dialog(dialog):
                     continue
                 return inspect_business_dialog(dialog)
         except (AttributeError, PlaywrightError):
             continue
     return None
+
+
+def is_active_business_dialog(dialog: Locator) -> bool:
+    """确认弹窗已激活，而不是 Angular 初始化期间有尺寸的告知书模板。
+
+    Playwright 的 is_visible 不检查 opacity、aria-hidden 或 Bootstrap 的
+    打开状态。必须同时检查所属窗口及祖先隐藏状态；不能用“有关闭按钮”
+    作为条件，否则会漏掉需要人工处理、只有打印按钮的真实业务错误。
+    """
+    if not _visible(dialog):
+        return False
+    try:
+        return dialog.evaluate("""element => {
+            if (!element.isConnected) return false;
+            for (let node = element; node; node = node.parentElement) {
+                if (node.matches('[hidden], [aria-hidden="true"], .ng-hide, '
+                    + '.ng-cloak, [ng-cloak], [data-ng-cloak]')) return false;
+                const style = getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden'
+                    || style.visibility === 'collapse'
+                    || Number(style.opacity) === 0) return false;
+            }
+            // Bootstrap / Angular UI Bootstrap 模板必须属于已打开的 modal。
+            if (element.matches('.modal-content')) {
+                const root = element.closest('.modal');
+                return !!root && (root.classList.contains('in')
+                    || root.classList.contains('show')
+                    || root.getAttribute('aria-hidden') === 'false'
+                    || root.getAttribute('aria-modal') === 'true');
+            }
+            if (element.matches('.ant-modal-content')) {
+                return !!element.closest('.ant-modal');
+            }
+            // 这两类窗口已通过 content 检查，不能再从 role 容器绕过检查，
+            // 否则未激活的嵌套模板仍会被误认为弹窗。其余自定义 dialog 保留。
+            return element.matches('[role="dialog"]')
+                && !element.querySelector('.modal-content, .ant-modal-content');
+        }""", timeout=500) is True
+    except PlaywrightError:
+        # 初始化或导航中节点可能刚好卸载，交给下一次条件轮询重新检查。
+        return False
 
 
 def inspect_business_dialog(dialog: Locator) -> BusinessDialog:
@@ -181,9 +228,13 @@ def _dialog_action(dialog: Locator) -> Locator | None:
         pass
     for selector in _ACTION_SELECTORS:
         try:
-            action = _last_visible(dialog.locator(selector))
-            if action is not None:
-                return action
+            actions = dialog.locator(selector)
+            for index in range(actions.count() - 1, -1, -1):
+                action = actions.nth(index)
+                # btn-success / primary 只是样式，不代表关闭动作。
+                # 告知书打印、真实性声明“是”和业务提交不能被通用处理器点击。
+                if _visible(action) and _ACTION_NAME.fullmatch(_safe_text(action)):
+                    return action
         except PlaywrightError:
             continue
     return None

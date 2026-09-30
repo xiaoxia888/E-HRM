@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import os
@@ -22,19 +21,14 @@ from PySide6.QtTest import QTest
 from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.settings import load_settings
 from ehrm.gui import view_model as view_model_module
-from ehrm.gui import nocobase_connection_worker as nocobase_connection_module
 from ehrm.gui.nocobase_connection_worker import NocoBaseConnectionWorker
 from ehrm.gui.view_model import DesktopViewModel
 from ehrm.modules.nocobase.models import (
-    NocoBaseCredentials,
-    NocoBaseLoginResult,
     NocoBasePageMeta,
     NocoBaseRelatedPerson,
     NocoBaseRightsApplication,
     NocoBaseRightsApplicationDetail,
     NocoBaseRightsApplicationPage,
-    NocoBaseTokenClaims,
-    NocoBaseUser,
 )
 from ehrm.modules.rights_statement.excel_models import (
     ExcelRunResult,
@@ -1426,22 +1420,26 @@ def test_rights_password_is_saved_in_sqlite_account_database(
     ) == "rights-secret"
 
 
-def test_nocobase_password_is_saved_in_sqlite_account_database(
+def test_nocobase_api_key_is_saved_without_exposing_secret_to_qml(
     tmp_path: Path,
 ) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     view_model = _view_model(tmp_path)
 
-    view_model.saveNocobaseAccount("nocobase-user", "nocobase-secret")
+    assert view_model.saveNocobaseApiKey("nocobase-user", "nocobase-secret")
 
     assert application is not None
-    assert view_model.nocobaseAccount == "nocobase-user"
-    assert view_model.nocobasePasswordStored
-    assert view_model.loadSavedNocobasePassword("nocobase-user") == (
-        "nocobase-secret"
-    )
-    assert view_model.loadSavedNocobasePassword("another-user") == ""
-    assert view_model.nocobaseConnectionStatus == "账号已保存，尚未测试连接"
+    assert view_model.nocobaseDisplayName == "nocobase-user"
+    assert view_model.nocobaseApiKeyStored
+    saved = view_model._nocobase_credential_store.default_account()
+    assert saved.api_key == "nocobase-secret"
+    assert saved.password == ""
+    assert not hasattr(view_model, "loadSavedNocobasePassword")
+    assert not view_model.saveNocobaseApiKey("改名", "Bearer invalid-key")
+    assert view_model._nocobase_credential_store.default_account().api_key == "nocobase-secret"
+    view_model.saveNocobaseApiKey("改名", "")
+    assert view_model._nocobase_credential_store.default_account().api_key == "nocobase-secret"
+    assert view_model.nocobaseConnectionStatus == "API 密钥已保存，尚未测试连接"
     assert not view_model.nocobaseConnectionSuccess
 
 
@@ -1456,7 +1454,7 @@ def test_saved_accounts_are_restored_from_sqlite_not_preferences(
         "13900000000",
         "rights-sqlite-password",
     )
-    view_model.saveNocobaseAccount(
+    view_model.saveNocobaseApiKey(
         "nocobase-sqlite-user",
         "nocobase-sqlite-password",
     )
@@ -1473,10 +1471,9 @@ def test_saved_accounts_are_restored_from_sqlite_not_preferences(
     assert restored.loadSavedRightsPassword(
         "91320000SQLITE0001", "13900000000"
     ) == "rights-sqlite-password"
-    assert restored.nocobaseAccount == "nocobase-sqlite-user"
-    assert restored.loadSavedNocobasePassword("nocobase-sqlite-user") == (
-        "nocobase-sqlite-password"
-    )
+    assert restored.nocobaseDisplayName == "nocobase-sqlite-user"
+    assert restored.nocobaseApiKeyStored
+    assert restored._nocobase_credential_store.default_account().api_key == "nocobase-sqlite-password"
     preferences_path = (
         restored._settings.browser.user_data_dir.parent / "preferences.json"
     )
@@ -1487,128 +1484,62 @@ def test_saved_accounts_are_restored_from_sqlite_not_preferences(
         assert "nocobase-sqlite-user" not in text
 
 
-def test_clear_nocobase_login_state_keeps_credentials_and_removes_session(
-    tmp_path: Path,
-) -> None:
+def test_reset_nocobase_test_status_keeps_api_key(tmp_path: Path) -> None:
     application = QGuiApplication.instance() or QGuiApplication([])
     view_model = _view_model(tmp_path)
-    view_model.saveNocobaseAccount("nocobase-user", "nocobase-secret")
+    view_model.saveNocobaseApiKey("接口用户", "nocobase-secret")
     account = view_model._nocobase_credential_store.default_account()
-    assert account is not None
-    view_model._nocobase_credential_store.repository.save_session(
-        account.id,
-        "test-nocobase-token",
-        expires_at=2_000_000_000,
-    )
-    notifications: list[tuple[str, str]] = []
-    view_model.notification.connect(
-        lambda title, details: notifications.append((title, details))
-    )
-
-    view_model.clearNocobaseLoginState()
-
+    view_model.resetNocobaseConnectionStatus()
     assert application is not None
-    assert (
-        view_model._nocobase_credential_store.repository.get_session(account.id)
-        is None
-    )
-    assert view_model.loadSavedNocobasePassword("nocobase-user") == (
-        "nocobase-secret"
-    )
-    assert view_model.nocobaseConnectionStatus == "NocoBase 登录状态已清除"
-    assert notifications[-1][0] == "清除成功"
+    assert view_model._nocobase_credential_store.default_account().api_key == "nocobase-secret"
+    assert view_model._nocobase_credential_store.repository.get_session(account.id) is None
+    assert view_model.nocobaseConnectionStatus == "连接测试状态已重置"
 
 
-def test_nocobase_connection_test_persists_verified_token(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_nocobase_connection_test_does_not_persist_key_or_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = load_settings(
-        Path("config/settings.toml"),
-        data_root=tmp_path / "runtime",
-    )
+    from contextlib import contextmanager
+    from types import SimpleNamespace
 
-    def encode(payload: dict[str, object]) -> str:
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path / "runtime")
+    headers: list[dict] = []
 
-    token = ".".join(
-        (
-            encode({"alg": "HS256", "typ": "JWT"}),
-            encode({"userId": 25, "temp": True, "iat": 1, "exp": 2_000_000_000}),
-            "test-signature",
-        )
-    )
-    login_result = NocoBaseLoginResult(
-        user=NocoBaseUser(25, "nocobase-user", "测试用户", "erp-id"),
-        token=token,
-        claims=NocoBaseTokenClaims(25, True, 1, 2_000_000_000),
-    )
+    class FakeResponse:
+        status = 200
 
-    class FakeRequestContext:
-        def dispose(self) -> None:
+        def json(self):
+            return {"data": [], "meta": {"count": 0, "page": 1, "pageSize": 1, "totalPage": 0}}
+
+        def dispose(self):
             pass
 
-    class FakeRequestFactory:
-        def new_context(self) -> FakeRequestContext:
-            return FakeRequestContext()
+    class FakeRequest:
+        def get(self, url, **kwargs):
+            headers.append(kwargs["headers"])
+            return FakeResponse()
 
-    class FakePlaywright:
-        request = FakeRequestFactory()
-
-    class FakePlaywrightContext:
-        def __enter__(self) -> FakePlaywright:
-            return FakePlaywright()
-
-        def __exit__(self, *_args: object) -> None:
+        def dispose(self):
             pass
 
-    class FakeAuthClient:
-        def __init__(self, *_args: object) -> None:
-            pass
-
-        def sign_in(self, credentials: NocoBaseCredentials) -> NocoBaseLoginResult:
-            assert credentials == NocoBaseCredentials(
-                "nocobase-user",
-                "nocobase-secret",
-            )
-            return login_result
+    @contextmanager
+    def fake_playwright():
+        yield SimpleNamespace(request=SimpleNamespace(new_context=lambda: FakeRequest()))
 
     monkeypatch.setattr(
-        nocobase_connection_module,
-        "sync_playwright",
-        lambda: FakePlaywrightContext(),
-    )
-    monkeypatch.setattr(
-        nocobase_connection_module,
-        "NocoBaseAuthClient",
-        FakeAuthClient,
+        "ehrm.modules.nocobase.application_query_service.sync_playwright", fake_playwright,
     )
     worker = NocoBaseConnectionWorker(
-        settings,
-        logging.getLogger("test.nocobase-connection"),
-        NocoBaseCredentials("nocobase-user", "nocobase-secret"),
+        settings, logging.getLogger("test.nocobase-connection"), "nocobase-secret",
     )
     succeeded: list[bool] = []
     worker.succeeded.connect(lambda: succeeded.append(True))
-
     worker.run()
-
-    account = AuthenticationRepository(
-        settings.auth_database_path
-    ).get_default_account(SystemType.NOCOBASE)
     assert succeeded == [True]
-    assert account is not None
-    assert account.account == "nocobase-user"
-    assert account.password == "nocobase-secret"
-    assert account.display_name == "测试用户"
-    session = AuthenticationRepository(
-        settings.auth_database_path
-    ).get_session(account.id)
-    assert session is not None
-    assert session.session_data == token
-    assert session.expires_at == 2_000_000_000
-    assert session.last_verified_at is not None
+    assert len(headers) == 1
+    assert headers[0]["Authorization"] == "Bearer nocobase-secret"
+    assert AuthenticationRepository(settings.auth_database_path).get_default_account(SystemType.NOCOBASE) is None
+    assert worker._api_key == ""
 
 
 def test_clear_rights_login_state_keeps_credentials_and_removes_session(

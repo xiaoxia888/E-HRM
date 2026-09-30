@@ -44,7 +44,6 @@ from ehrm.modules.erp.credential_store import (
 )
 from ehrm.modules.erp.models import ErpCredentials, ErpUploadResult
 from ehrm.modules.nocobase.models import (
-    NocoBaseCredentials,
     NocoBaseRightsApplicationDetail,
     NocoBaseRightsApplicationPage,
 )
@@ -131,7 +130,7 @@ class DesktopViewModel(QObject):
             rights_account.secondary_account if rights_account else ""
         )
         self._nocobase_account = (
-            nocobase_account.account if nocobase_account else ""
+            nocobase_account.display_name if nocobase_account else ""
         )
         self._settings = self._settings_with_preferences(settings)
         self._loader = RightsStatementExcelLoader()
@@ -215,15 +214,11 @@ class DesktopViewModel(QObject):
                 )
             )
         )
-        self._nocobase_password_stored = bool(
-            self._nocobase_credential_store.load_password(
-                self._nocobase_account
-            )
-        )
+        self._nocobase_api_key_stored = bool(nocobase_account and nocobase_account.api_key)
         if self._rights_password_stored:
             self._rights_connection_status = "账号已保存，尚未测试连接"
-        if self._nocobase_password_stored:
-            self._nocobase_connection_status = "账号已保存，尚未测试连接"
+        if self._nocobase_api_key_stored:
+            self._nocobase_connection_status = "API 密钥已保存，尚未测试连接"
         self._worker_enabled = start_worker
         if start_worker:
             self._start_worker()
@@ -522,19 +517,12 @@ class DesktopViewModel(QObject):
         return self._credential_store.load_password(normalized) or ""
 
     @Property(str, notify=nocobaseAccountChanged)
-    def nocobaseAccount(self) -> str:
+    def nocobaseDisplayName(self) -> str:
         return self._nocobase_account
 
     @Property(bool, notify=nocobaseAccountChanged)
-    def nocobasePasswordStored(self) -> bool:
-        return self._nocobase_password_stored
-
-    @Slot(str, result=str)
-    def loadSavedNocobasePassword(self, account: str) -> str:
-        normalized = account.strip()
-        if not normalized or normalized != self._nocobase_account:
-            return ""
-        return self._nocobase_credential_store.load_password(normalized) or ""
+    def nocobaseApiKeyStored(self) -> bool:
+        return self._nocobase_api_key_stored
 
     @Property(str, notify=rightsAccountChanged)
     def rightsCreditCode(self) -> str:
@@ -1487,43 +1475,23 @@ class DesktopViewModel(QObject):
         self.erpConnectionChanged.emit()
         self.notification.emit("保存成功", "ERP 账号已保存到应用数据库")
 
-    @Slot(str, str)
-    def saveNocobaseAccount(self, account: str, password: str) -> None:
-        normalized = account.strip()
-        if not normalized:
-            self.notification.emit("账号不能为空", "请输入 NocoBase 登录账号")
-            return
-        existing = self._nocobase_credential_store.repository.get_account(
-            SystemType.NOCOBASE,
-            normalized,
-        )
-        existing_password = existing.password if existing is not None else ""
-        resolved_password = password or existing_password
-        if not resolved_password:
-            self.notification.emit("密码不能为空", "请输入 NocoBase 登录密码")
-            return
+    @Slot(str, str, result=bool)
+    def saveNocobaseApiKey(self, display_name: str, api_key: str) -> bool:
         try:
-            self._nocobase_credential_store.save_password(
-                normalized,
-                resolved_password,
-            )
-            saved = self._nocobase_credential_store.default_account()
-            if saved is None or saved.password != resolved_password:
-                raise OSError("账号写入应用数据库后无法读取，请重新保存")
-            if existing is not None and existing.password != resolved_password:
-                self._nocobase_credential_store.repository.delete_session(saved.id)
+            saved = self._nocobase_credential_store.save_api_key(display_name, api_key)
         except (EhrmError, OSError, sqlite3.Error, ValueError) as exc:
             message = exc.message if isinstance(exc, EhrmError) else str(exc)
-            self.notification.emit("NocoBase 账号保存失败", message)
-            return
+            self.notification.emit("NocoBase API 密钥保存失败", message)
+            return False
 
-        self._nocobase_account = normalized
-        self._nocobase_password_stored = True
+        self._nocobase_account = saved.display_name
+        self._nocobase_api_key_stored = True
         self._nocobase_connection_success = False
-        self._nocobase_connection_status = "账号已保存，尚未测试连接"
+        self._nocobase_connection_status = "API 密钥已保存，尚未测试连接"
         self.nocobaseAccountChanged.emit()
         self.nocobaseConnectionChanged.emit()
-        self.notification.emit("保存成功", "NocoBase 账号已保存到应用数据库")
+        self.notification.emit("保存成功", "NocoBase API 密钥已保存到应用数据库")
+        return True
 
     @Slot(str, str, str)
     def saveRightsAccount(
@@ -1703,24 +1671,20 @@ class DesktopViewModel(QObject):
         self.erpConnectionChanged.emit()
         worker.start()
 
-    @Slot(str, str)
-    def testNocobaseConnection(self, account: str, password: str) -> None:
+    @Slot(str)
+    def testNocobaseConnection(self, api_key: str) -> None:
         if self._nocobase_connection_worker is not None:
             return
-        normalized = account.strip()
-        resolved_password = password or (
-            self._nocobase_credential_store.load_password(normalized) or ""
-        )
-        if not normalized or not resolved_password:
+        if not api_key.strip() and not self._nocobase_api_key_stored:
             self.notification.emit(
-                "账号信息不完整",
-                "请填写 NocoBase 登录账号和密码",
+                "API 密钥未配置",
+                "请输入 NocoBase API 密钥",
             )
             return
         worker = NocoBaseConnectionWorker(
             self._settings,
             self._logger,
-            NocoBaseCredentials(normalized, resolved_password),
+            api_key,
         )
         worker.status_changed.connect(self._on_nocobase_connection_status)
         worker.succeeded.connect(self._on_nocobase_connection_succeeded)
@@ -1728,31 +1692,24 @@ class DesktopViewModel(QObject):
         worker.finished.connect(self._on_nocobase_connection_finished)
         self._nocobase_connection_worker = worker
         self._nocobase_connection_success = False
-        self._nocobase_connection_status = "正在测试 NocoBase 登录…"
+        self._nocobase_connection_status = "正在测试 NocoBase API 密钥…"
         self.nocobaseConnectionChanged.emit()
         worker.start()
 
     @Slot()
-    def clearNocobaseLoginState(self) -> None:
+    def resetNocobaseConnectionStatus(self) -> None:
         if self._nocobase_connection_worker is not None:
             self.notification.emit(
                 "当前无法清除",
                 "请等待 NocoBase 连接测试结束后重试",
             )
             return
-        try:
-            account = self._nocobase_credential_store.default_account()
-            if account is not None:
-                self._nocobase_credential_store.repository.delete_session(account.id)
-        except sqlite3.Error as exc:
-            self.notification.emit("清除失败", str(exc))
-            return
         self._nocobase_connection_success = False
-        self._nocobase_connection_status = "NocoBase 登录状态已清除"
+        self._nocobase_connection_status = "连接测试状态已重置"
         self.nocobaseConnectionChanged.emit()
         self.notification.emit(
             "清除成功",
-            "账号密码仍保留；下次 NocoBase 操作将重新登录",
+            "API 密钥仍保留，可重新测试连接；不会进行账号密码登录",
         )
 
     @Slot()
@@ -2456,18 +2413,14 @@ class DesktopViewModel(QObject):
     @Slot(str)
     def _on_nocobase_connection_status(self, text: str) -> None:
         self._nocobase_connection_status = (
-            text.strip() or "正在测试 NocoBase 登录…"
+            text.strip() or "正在测试 NocoBase API 密钥…"
         )
         self.nocobaseConnectionChanged.emit()
 
     @Slot()
     def _on_nocobase_connection_succeeded(self) -> None:
-        account = self._nocobase_credential_store.default_account()
-        self._nocobase_account = account.account if account is not None else ""
-        self._nocobase_password_stored = bool(account and account.password)
         self._nocobase_connection_success = True
-        self._nocobase_connection_status = "NocoBase 登录与 Token 正常"
-        self.nocobaseAccountChanged.emit()
+        self._nocobase_connection_status = "API 密钥查询权限正常；测试不保存配置"
         self.nocobaseConnectionChanged.emit()
 
     @Slot(str, str)
@@ -2481,7 +2434,7 @@ class DesktopViewModel(QObject):
         self.nocobaseConnectionChanged.emit()
         self.notification.emit(
             "NocoBase 连接失败",
-            details or summary or "请检查账号、密码、服务地址和网络连接",
+            details or summary or "请检查 API 密钥、查询权限、服务地址和网络连接",
         )
 
     @Slot()

@@ -3,34 +3,26 @@ from __future__ import annotations
 import logging
 from threading import Event
 
-from playwright.sync_api import sync_playwright
 from PySide6.QtCore import QThread, Signal
 
-from ehrm.core.auth_repository import AuthenticationRepository, SystemType
 from ehrm.core.error_catalog import display_message
 from ehrm.core.exceptions import EhrmError
 from ehrm.core.settings import AppSettings
-from ehrm.modules.nocobase import NocoBaseAuthClient, NocoBaseCredentials
-from ehrm.modules.nocobase.token_store import create_nocobase_token_manager
+from ehrm.modules.nocobase.application_query_service import NocoBaseApplicationQueryService
 
 
 class NocoBaseConnectionWorker(QThread):
-    """Authenticates NocoBase and persists the verified JWT off the UI thread."""
+    """Verify API-key read access off the UI thread, without saving credentials."""
 
     status_changed = Signal(str)
     succeeded = Signal()
     failed = Signal(str, str)
 
-    def __init__(
-        self,
-        settings: AppSettings,
-        logger: logging.Logger,
-        credentials: NocoBaseCredentials,
-    ) -> None:
+    def __init__(self, settings: AppSettings, logger: logging.Logger, api_key: str = "") -> None:
         super().__init__()
         self._settings = settings
         self._logger = logger
-        self._credentials = credentials
+        self._api_key = api_key
         self._cancel_requested = Event()
 
     def cancel(self) -> None:
@@ -40,47 +32,16 @@ class NocoBaseConnectionWorker(QThread):
         try:
             if self._cancel_requested.is_set():
                 return
-            self.status_changed.emit("正在调用 NocoBase 登录接口…")
-            with sync_playwright() as playwright:
-                request = playwright.request.new_context()
-                try:
-                    result = NocoBaseAuthClient(
-                        self._settings.nocobase,
-                        request,
-                        self._logger,
-                    ).sign_in(self._credentials)
-                finally:
-                    request.dispose()
-            if self._cancel_requested.is_set():
-                return
-
-            repository = AuthenticationRepository(
-                self._settings.auth_database_path
-            )
-            repository.save_account(
-                SystemType.NOCOBASE,
-                self._credentials.account,
-                self._credentials.password,
-                display_name=result.user.nickname or result.user.username,
-                profile={
-                    "id": result.user.user_id,
-                    "username": result.user.username,
-                    "nickname": result.user.nickname,
-                    "erp_userId": result.user.erp_user_id,
-                },
-            )
-            token_manager = create_nocobase_token_manager(
-                self._settings.auth_database_path,
-                self._credentials.account,
-                password=self._credentials.password,
-            )
-            token_manager.save_token(result.token)
-            token_manager.mark_verified()
-            self.succeeded.emit()
+            self.status_changed.emit("正在使用 API 密钥测试 NocoBase 查询权限…")
+            NocoBaseApplicationQueryService(self._settings, self._logger).test_connection(api_key=self._api_key)
+            if not self._cancel_requested.is_set():
+                self.succeeded.emit()
         except EhrmError as exc:
             summary = display_message(exc.code, exc.message)
-            details = exc.message if exc.message != summary else (exc.details or "")
-            self.failed.emit(summary, details)
+            self.failed.emit(summary, exc.details or "")
         except Exception as exc:
-            self._logger.exception("NocoBase 连接测试发生未知错误")
-            self.failed.emit("NocoBase 连接测试失败", str(exc))
+            # 不记录未知异常的请求栈，以免第三方请求信息包含密钥。
+            self._logger.error("NocoBase 连接测试发生错误：%s", type(exc).__name__)
+            self.failed.emit("NocoBase 连接测试失败", str(exc).replace(self._api_key, "[已隐藏]") if self._api_key else str(exc))
+        finally:
+            self._api_key = ""

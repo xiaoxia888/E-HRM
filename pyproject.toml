@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "E-HRM browser automation"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "APScheduler==3.11.2",
+  "tzlocal==5.3.1",
+  "tzdata==2025.3",
   "defusedxml==0.7.1",
   "ddddocr==1.6.1",
   "numpy==2.2.6",

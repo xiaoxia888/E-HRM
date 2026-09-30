@@ -15,6 +15,17 @@ from ehrm.core.exceptions import (
     ConfigurationError,
 )
 from ehrm.core.settings import AiSamplingSettings, OllamaSettings
+from ehrm.modules.ai.business_classification import (
+    BUSINESS_CLASSIFICATION_JSON_SCHEMA,
+    BusinessIntent,
+    BusinessClassification,
+    validate_business_classification_payload,
+)
+from ehrm.modules.ai.business_people import (
+    BUSINESS_PEOPLE_JSON_SCHEMA,
+    BusinessPeopleExtraction,
+    validate_business_people_payload,
+)
 from ehrm.modules.ai.models import (
     ExtractionResponse,
     ModelMetrics,
@@ -39,6 +50,149 @@ class OllamaTaskExtractionClient:
         self.settings = settings
         self.logger = logger
         self._system_prompt = self._load_prompt(settings.prompt_path)
+        self._classification_prompt = self._load_prompt(
+            settings.classification_prompt_path
+        )
+        self._people_prompts = {
+            BusinessIntent.EMPLOYMENT_ENROLLMENT: self._load_prompt(
+                settings.enrollment_people_prompt_path
+            ),
+            BusinessIntent.EMPLOYMENT_TERMINATION: self._load_prompt(
+                settings.termination_people_prompt_path
+            ),
+        }
+
+    def extract_business_people(
+        self,
+        record: ErpTaskRecord,
+        intent: BusinessIntent,
+        reasoning_mode: str | ReasoningMode,
+    ) -> BusinessPeopleExtraction:
+        """Extracts only source-supported names and identities for one business type."""
+        if intent not in self._people_prompts:
+            raise ValueError("只支持参保和退保人员解析")
+        mode = ReasoningMode.parse(reasoning_mode)
+        request_payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": self._people_prompts[intent]},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "application_date": record.initiated_date,
+                            "title_summary": record.title,
+                            "request_details": record.description,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            "stream": False,
+            "think": mode.ollama_think,
+            "format": BUSINESS_PEOPLE_JSON_SCHEMA,
+            "keep_alive": self.settings.keep_alive,
+            "options": self._options(mode),
+        }
+        last_error: AiRequestFailedError | AiResponseInvalidError | None = None
+        for attempt in range(self.settings.retry_count + 1):
+            if attempt:
+                self.logger.info(
+                    "重试 ERP 人员解析 code=%s type=%s attempt=%s",
+                    record.code,
+                    intent.value,
+                    attempt + 1,
+                )
+                time.sleep(self.settings.retry_delay_ms / 1000)
+            try:
+                response = self._request_json(
+                    "POST",
+                    self._url(self.settings.chat_path),
+                    payload=request_payload,
+                    operation="解析 ERP 参保/停保人员",
+                )
+                message = response.get("message")
+                if not isinstance(message, dict):
+                    raise AiResponseInvalidError("人员解析响应缺少 message")
+                content = message.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise AiResponseInvalidError("模型没有返回人员解析 JSON")
+                try:
+                    raw_people = json.loads(content)
+                except json.JSONDecodeError as exc:
+                    raise AiResponseInvalidError(
+                        "模型返回的人员解析不是合法 JSON", details=str(exc)
+                    ) from exc
+                return validate_business_people_payload(raw_people, record)
+            except (AiRequestFailedError, AiResponseInvalidError) as exc:
+                last_error = exc
+        assert last_error is not None
+        raise last_error
+
+    def classify(
+        self,
+        record: ErpTaskRecord,
+        reasoning_mode: str | ReasoningMode,
+    ) -> BusinessClassification:
+        """Classifies a single ERP application without extracting its people."""
+        mode = ReasoningMode.parse(reasoning_mode)
+        input_payload = {
+            "transaction_type": record.transaction_type,
+            "application_date": record.initiated_date,
+            "title_summary": record.title,
+            "request_details": record.description,
+        }
+        request_payload = {
+            "model": self.settings.model,
+            "messages": [
+                {"role": "system", "content": self._classification_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(input_payload, ensure_ascii=False),
+                },
+            ],
+            "stream": False,
+            "think": mode.ollama_think,
+            "format": BUSINESS_CLASSIFICATION_JSON_SCHEMA,
+            "keep_alive": self.settings.keep_alive,
+            "options": self._options(mode),
+        }
+        last_error: AiRequestFailedError | AiResponseInvalidError | None = None
+        for attempt in range(self.settings.retry_count + 1):
+            if attempt:
+                self.logger.info(
+                    "重试 ERP 业务分类 code=%s attempt=%s",
+                    record.code,
+                    attempt + 1,
+                )
+                time.sleep(self.settings.retry_delay_ms / 1000)
+            try:
+                response = self._request_json(
+                    "POST",
+                    self._url(self.settings.chat_path),
+                    payload=request_payload,
+                    operation="判断 ERP 业务类型",
+                )
+                message = response.get("message")
+                if not isinstance(message, dict):
+                    raise AiResponseInvalidError("业务分类响应缺少 message")
+                content = message.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise AiResponseInvalidError("模型没有返回业务分类 JSON")
+                try:
+                    classification_payload = json.loads(content)
+                except json.JSONDecodeError as exc:
+                    raise AiResponseInvalidError(
+                        "模型返回的业务分类不是合法 JSON", details=str(exc)
+                    ) from exc
+                return validate_business_classification_payload(
+                    classification_payload,
+                    record,
+                )
+            except (AiRequestFailedError, AiResponseInvalidError) as exc:
+                last_error = exc
+        assert last_error is not None
+        raise last_error
 
     def ensure_available(self) -> None:
         payload = self._request_json(

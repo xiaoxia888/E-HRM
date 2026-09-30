@@ -5,6 +5,7 @@
 - [macOS Web 服务器初始化与运行](docs/MACOS_SETUP_AND_RUN.md)
 - [Windows Web 服务器初始化、运行与打包](docs/WINDOWS_SETUP_AND_RUN.md)
 - [Web 端开发与单服务器运行](docs/WEB_SETUP_AND_RUN.md)
+- [ERP 申请定时同步到 NocoBase](docs/ERP_NOCOBASE_SYNC.md)
 
 当前版本实现了单位权益单自动化的通用骨架：
 
@@ -15,6 +16,7 @@
 - 统一异常编码、失败截图和日志；
 - 下载文件重名保护及基础 PDF 校验；
 - Playwright Codegen 录制入口。
+- 独立定时任务工作台：cron 计划、ERP → NocoBase 原始申请同步、手动预览和持久化步骤日志；
 - Excel 批量导入、完整校验和执行结果清单；
 - 每人一个 PDF 与多人合并 PDF 两种模式；
 - 一次性脚本由用户登录；桌面工作台在运行期间保持标签页登录状态。
@@ -77,7 +79,7 @@ playwright install chromium
 
 - `[common]`：自动化模块真正共用的参数；
 - `[rights_statement.*]`：智慧人社及单位权益单配置；
-- `[nocobase.*]`：NocoBase 登录、权益申请分页及详情接口配置；
+- `[nocobase.*]`：NocoBase 服务地址、权益申请分页及详情接口配置；认证使用系统设置中的 API 密钥；
 - `[erp.*]`：ERP 登录、查询和附件上传配置。
 - `[rights_statement.captcha]`：验证码自动化主机白名单、重试和点击间隔。
 - `[ai]`：Ollama 公共连接、提示词与默认模型选择。
@@ -265,7 +267,7 @@ ehrm-login-e2e --check-config
 
 默认使用临时资料以避免旧会话跳过登录。只有排查已有浏览器资料时才使用 `--reuse-profile`。登录失败时页面截图默认保存到 `output/login-e2e-failure.png`。
 
-### 退保录入 E2E 测试
+### 退保录入与提交 E2E 测试
 
 退保测试脚本按照系统设置页面中的“系统”名称选择登录入口。测试原智慧人社直登时可以沿用原命令，不传 `--system`：
 
@@ -285,6 +287,22 @@ ehrm-employment-termination-e2e \
 ```
 
 输入 Excel 需要包含“身份证号”和“退工原因”两列。脚本会从所选系统读取已保存账号，登录成功后进入现有退保录入流程，只填写并核对数据，不点击“确定提交”；`--pause-after-fill` 会在录入完成后保留浏览器，人工检查完毕后按回车关闭。
+
+需要真实提交时，显式添加 `--submit`。此模式会点击“确认提交”并确认真实性声明的“是”，会实际办理退保，请先核对账号、人员和原因。退工日期沿用当前业务页面的默认值（与录制一致），当前 Excel 不支持指定日期。
+
+```bash
+python scripts/run_employment_termination_e2e.py \
+  --system "江苏政务服务平台账号" \
+  --input "/绝对路径/退保测试.xlsx" \
+  --submit \
+  --keep-browser-open
+```
+
+智慧人社直登可省略 `--system`，也可显式选择 `"江苏智慧人社账号"`。`ehrm-employment-termination-e2e` 与上面的 Python 脚本进入同一个 CLI。
+
+提交模式逐人执行“查询 → 填表 → 提交 → 验证”，换人时关闭并重新打开业务窗口，最后一人的成功页保留用于截图和人工检查。只有本次人员的 `dimissionApply` 返回布尔 `ok: true`、办件收尾响应关联同一申请且成功页同时显示“业务办理成功 / 提交成功”，才记录提交成功。录制中 `appcode: 1`、`errmsg: "未提供错误信息"`、`complete: false` 可与成功并存，不将这些字段单独误判为失败。人员未查询到则跳过；提交失败、超时、响应不匹配或未知弹窗会停止后续处理，不自动重复提交。
+
+结果 Excel 区分“录入成功 / 提交成功 / 结果待确认 / 处理失败 / 未执行”。提交模式出现失败或未执行返回非零退出码；“结果待确认”必须人工查询办件后再决定下一步，不能直接重跑整个文件。`--keep-browser-open` 在成功和失败后都等待回车再关闭浏览器，不能与 `--pause-after-fill` 混淆；`--submit` 和 `--pause-after-fill` 互斥。提交成功指平台确认本次提交，不额外推断社保已生效。
 
 正式打开浏览器前，可以只校验账号、配置和 Excel：
 
@@ -321,10 +339,23 @@ ehrm-gui
 - Playwright 在单一常驻线程的任务队列中运行，浏览器创建、连续任务和关闭始终位于同一 Python 执行上下文；
 - 可勾选“下载完成后自动上传至 ERP”，按任务编号匹配申请并静默上传；
 - 独立“上传至 ERP”页面支持选择 PDF、Word、Excel 文件，填写任务编号后确认上传；
-- 系统设置页可维护智慧人社、ERP、NocoBase 账号，以及默认下载规则、自动化节奏及运行数据。
+- 系统设置页可维护智慧人社、ERP 账号及 NocoBase API 密钥，以及默认下载规则、自动化节奏及运行数据。
 
-ERP、江苏智慧人社和 NocoBase 的账号、密码及登录会话统一保存在程序目录下的
-`runtime/data/auth.sqlite3`。账号数据不会写入 `config/settings.toml` 或偏好文件。
+ERP、江苏智慧人社的账号、密码及登录会话，以及 NocoBase API 密钥统一保存在程序目录下的
+`runtime/data/auth.sqlite3`。凭证不会写入 `config/settings.toml` 或偏好文件。
+NocoBase 不再调用账号密码登录接口或维护自动刷新的登录会话。旧账号首次切换时需在
+系统设置中手动保存 API 密钥；保存后替换该连接的旧密码和登录会话，连接 ID 保持不变。
+密钥在编辑接口中仅显示固定掩码，数据库和备份仍包含敏感凭证，须限制读取权限，不得共享或提交到仓库。
+
+配置后可在设置页点击“测试连接”，或运行原测试入口（保留名称兼容，现已改为 API 密钥查询测试）：
+
+```bash
+python scripts/run_nocobase_login_test.py
+# 等价入口：ehrm-nocobase-login-test
+```
+
+测试仅读取一条权益申请，不保存密钥、不发起密码登录。密钥无效（HTTP 401）或权限不足（HTTP 403）
+会明确提示，不自动重试登录。列表测试通过表示申请查询可用，详情关联人员仍需配置相应读取权限。
 
 界面层使用 Qt Quick/QML 组件化实现，Python 仅通过
 `DesktopViewModel` 暴露状态和命令。自动化、Excel 校验和业务规则仍保持在

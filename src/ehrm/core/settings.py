@@ -180,7 +180,7 @@ class RightsStatementSelectors:
 
 @dataclass(frozen=True, slots=True)
 class EmploymentTerminationSettings:
-    """Site contract for preparing an employment-termination form."""
+    """Site contract for preparing and explicitly submitting a termination form."""
 
     home_path: str
     city_code: str
@@ -203,6 +203,13 @@ class EmploymentTerminationSettings:
     person_form: str
     reason_combobox: str
     loading_indicator: str
+    submit_save_path: str = "/api/ehrss-si-enterprise-app/api/changeAndLookController/submitSave"
+    submit_apply_path: str = "/api/ehrss-si-enterprise-app/api/applys/employee/dimissionApply"
+    submit_complete_path: str = "/api/ggfw-affair-base-center/affair/case/commbusiness/complete"
+    submit_button_text: str = "确认提交"
+    submit_declaration_text: str = "本次退工停保填报信息、佐证材料真实有效，虚假申报须承担相应责任。"
+    submit_success_heading: str = "业务办理成功"
+    submit_success_text: str = "提交成功"
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +227,12 @@ class NocoBaseSettings:
     rights_application_detail_path: str
     default_page_size: int
     request_timeout_ms: int
+    application_create_path: str = "/api/NCC_HumProblem:create"
+    application_update_path: str = "/api/NCC_HumProblem:update"
+    users_list_path: str = "/api/users:list"
+    sync_enabled: bool = False
+    sync_cron: str = "0 * * * *"
+    sync_lookback_days: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +284,9 @@ class OllamaSettings:
     chat_path: str
     model: str
     prompt_path: Path
+    classification_prompt_path: Path
+    enrollment_people_prompt_path: Path
+    termination_people_prompt_path: Path
     default_reasoning_mode: str
     request_timeout_seconds: int
     keep_alive: str
@@ -476,6 +492,15 @@ def _load_ai_models(
     base_url = _text(ai_root, "base_url", ai_name).rstrip("/")
     chat_path = _text(ai_root, "chat_path", ai_name)
     prompt_path = _resolved_path(_text(ai_root, "prompt_path", ai_name), config_dir)
+    classification_prompt_path = _resolved_path(
+        _text(ai_root, "classification_prompt_path", ai_name), config_dir
+    )
+    enrollment_people_prompt_path = _resolved_path(
+        _text(ai_root, "enrollment_people_prompt_path", ai_name), config_dir
+    )
+    termination_people_prompt_path = _resolved_path(
+        _text(ai_root, "termination_people_prompt_path", ai_name), config_dir
+    )
     profiles: list[OllamaSettings] = []
     seen_ids: set[AiModelProfile] = set()
 
@@ -550,6 +575,9 @@ def _load_ai_models(
                 chat_path=chat_path,
                 model=_text(model, "ollama_name", section_name),
                 prompt_path=prompt_path,
+                classification_prompt_path=classification_prompt_path,
+                enrollment_people_prompt_path=enrollment_people_prompt_path,
+                termination_people_prompt_path=termination_people_prompt_path,
                 default_reasoning_mode=default_mode,
                 request_timeout_seconds=request_timeout,
                 keep_alive=_text(model, "keep_alive", section_name),
@@ -992,6 +1020,35 @@ def load_settings(
             "配置项 nocobase.site.request_timeout_ms 必须大于 0"
         )
 
+    # 老配置仍可加载；新增同步设置首次默认关闭，防止升级后意外写入。
+    raw_sync_config = nocobase_root.get("sync", {})
+    if not isinstance(raw_sync_config, dict):
+        raise ConfigurationError("配置节 nocobase.sync 必须是表")
+    sync_config = {
+        "application_create_path": "/api/NCC_HumProblem:create",
+        "application_update_path": "/api/NCC_HumProblem:update",
+        "users_list_path": "/api/users:list",
+        "enabled": False, "cron": "0 * * * *", "lookback_days": 2,
+        **raw_sync_config,
+    }
+    for key in ("application_create_path", "application_update_path", "users_list_path"):
+        value = _text(sync_config, key, "nocobase.sync")
+        if not value.startswith("/") or value.startswith("//"):
+            raise ConfigurationError(f"配置项 nocobase.sync.{key} 必须是相对资源路径")
+    sync_enabled = _boolean(sync_config, "enabled", "nocobase.sync")
+    sync_cron = _text(sync_config, "cron", "nocobase.sync")
+    from ehrm.core.cron_schedule import upcoming
+    try:
+        upcoming(sync_cron)
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
+    # 旧配置的间隔语义不是 cron；不未经确认开启升级后的自动写入。
+    if "interval_minutes" in raw_sync_config and "cron" not in raw_sync_config:
+        sync_enabled = False
+    sync_lookback = _integer(sync_config, "lookback_days", "nocobase.sync")
+    if not 1 <= sync_lookback <= 366:
+        raise ConfigurationError("同步回查天数必须在 1–366 天")
+
     ai_models, active_ai_model = _load_ai_models(
         ai_root,
         config_dir=path.parent.resolve(),
@@ -1290,6 +1347,13 @@ def load_settings(
                 "loading_indicator",
                 rights_termination_selectors_name,
             ),
+            submit_save_path=_text(rights_termination, "submit_save_path", rights_termination_name),
+            submit_apply_path=_text(rights_termination, "submit_apply_path", rights_termination_name),
+            submit_complete_path=_text(rights_termination, "submit_complete_path", rights_termination_name),
+            submit_button_text=_text(rights_termination_selectors, "submit_button_text", rights_termination_selectors_name),
+            submit_declaration_text=_text(rights_termination_selectors, "submit_declaration_text", rights_termination_selectors_name),
+            submit_success_heading=_text(rights_termination_selectors, "submit_success_heading", rights_termination_selectors_name),
+            submit_success_text=_text(rights_termination_selectors, "submit_success_text", rights_termination_selectors_name),
         ),
         nocobase=NocoBaseSettings(
             base_url=nocobase_base_url,
@@ -1302,6 +1366,12 @@ def load_settings(
             ),
             default_page_size=nocobase_default_page_size,
             request_timeout_ms=nocobase_request_timeout_ms,
+            application_create_path=sync_config["application_create_path"].strip(),
+            application_update_path=sync_config["application_update_path"].strip(),
+            users_list_path=sync_config["users_list_path"].strip(),
+            sync_enabled=sync_enabled,
+            sync_cron=sync_cron,
+            sync_lookback_days=sync_lookback,
         ),
         erp=ErpSettings(
             base_url=_text(erp_site, "base_url", erp_site_name),

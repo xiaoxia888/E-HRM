@@ -117,7 +117,7 @@ class _ResponseMonitor:
 
 
 class EmploymentTerminationPage:
-    """Prepares the Nanjing termination form without submitting it."""
+    """Prepares the Nanjing form; submission is a separate explicit action."""
 
     def __init__(
         self,
@@ -226,6 +226,32 @@ class EmploymentTerminationPage:
 
         source = f"第 {item.source_index} 行" if item.source_index > 0 else "当前人员"
         self._progress(f"退保：{source}身份证号和退工原因已录入")
+
+    def submit_item(self, frame: Frame, item: EmploymentTerminationItem):
+        from ehrm.modules.employment_termination.submission import TerminationSubmitter
+
+        self._raise_if_cancelled()
+        submitter = TerminationSubmitter(self, frame, item)
+        receipt = submitter.run()
+        # Retain the outer frame even if the success page removes #busiIframe.
+        self._submitted_outer_frame = submitter.outer
+        return receipt
+
+    def close_submitted_form(self, frame: Frame) -> None:
+        """Close this verified success window, never a dialog in another frame."""
+        from ehrm.modules.employment_termination.submission import TerminationSubmissionError
+
+        outer = getattr(self, "_submitted_outer_frame", None) or frame.parent_frame
+        if outer is None:
+            raise TerminationSubmissionError("退保已成功，但无法关闭业务窗口")
+        self.pacer.perform(lambda: outer.get_by_role("button", name="关闭", exact=True).click(
+            timeout=self.settings.browser.action_timeout_ms
+        ))
+        self.waiter.first(
+            [WaitCondition("已提交业务窗口已关闭", lambda: True if outer.is_detached() else None)],
+            timeout_ms=self.settings.browser.action_timeout_ms,
+            description="关闭已提交退保业务窗口",
+        )
 
     def _ensure_nanjing(self) -> None:
         option_selector = self.contract.region_option_template.replace(

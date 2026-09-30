@@ -78,11 +78,14 @@ class EmploymentTerminationResultWorkbookWriter:
                     continue
 
                 if result.success:
-                    status_cell.value = _SUCCESS_TEXT
+                    status_cell.value = "提交成功" if result.status == "submitted" else _SUCCESS_TEXT
                     status_cell.fill = copy(_SUCCESS_FILL)
-                    failure_cell.value = ""
+                    failure_cell.value = result.message if "关闭窗口失败" in result.message else ""
                 else:
-                    status_cell.value = self._failure_status(result.code)
+                    status_cell.value = (
+                        "结果待确认" if result.status == "unknown" else
+                        "未执行" if result.status == "not_processed" else self._failure_status(result.code)
+                    )
                     status_cell.fill = copy(_FAILURE_FILL)
                     failure_cell.value = result.message
                     failure_cell.fill = copy(_FAILURE_FILL)

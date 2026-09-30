@@ -38,7 +38,7 @@ Item {
     }
 
     function resetNocobaseAccountEditor() {
-        nocobaseAccountField.text = appBackend.nocobaseAccount
+        nocobaseAccountField.text = appBackend.nocobaseDisplayName
         nocobasePasswordField.text = ""
         nocobasePasswordField.revealPassword = false
         nocobasePasswordField.inputItem.focus = false
@@ -517,8 +517,8 @@ Item {
                         contentSpacing: 18
 
                             SectionTitle {
-                                title: "账号与密码"
-                                description: "每个网站独立保存账号和密码"
+                                title: "账户与连接"
+                                description: "智慧人社和 ERP 使用账号密码，NocoBase 使用 API 密钥"
                             }
 
                             RowLayout {
@@ -723,8 +723,8 @@ Item {
                         contentSpacing: 18
 
                             SectionTitle {
-                                title: "账号与密码"
-                                description: "每个网站独立保存账号和密码"
+                                title: "账户与连接"
+                                description: "智慧人社和 ERP 使用账号密码，NocoBase 使用 API 密钥"
                             }
 
                             RowLayout {
@@ -859,14 +859,14 @@ Item {
                             }
                     }
 
-                    // NocoBase 账号
+                    // NocoBase API 密钥：只回填显示名称，不回填密钥原文。
                     SettingsPane {
                         objectName: "nocobaseSettingsPane"
                         contentSpacing: 18
 
                             SectionTitle {
-                                title: "账号与密码"
-                                description: "每个网站独立保存账号和密码"
+                                title: "账户与连接"
+                                description: "智慧人社和 ERP 使用账号密码，NocoBase 使用 API 密钥"
                             }
 
                             RowLayout {
@@ -891,7 +891,7 @@ Item {
                             }
 
                             SectionTitle {
-                                title: "NocoBase 账号"
+                                title: "NocoBase API 密钥"
                                 description: "用于读取权益申请、查看详情并发起权益单打印"
                             }
 
@@ -909,33 +909,27 @@ Item {
                                     columnSpacing: 20
                                     rowSpacing: 10
 
-                                    FieldLabel { text: "登录账号" }
-                                    FieldLabel { text: "密码" }
+                                    FieldLabel { text: "显示名称" }
+                                    FieldLabel { text: "API 密钥" }
                                     SettingsInput {
                                         id: nocobaseAccountField
                                         Layout.fillWidth: true
-                                        text: appBackend.nocobaseAccount
-                                        placeholderText: "请输入 NocoBase 登录账号"
+                                        text: appBackend.nocobaseDisplayName
+                                        placeholderText: "例如：NocoBase 接口用户"
                                     }
                                     SettingsInput {
                                         id: nocobasePasswordField
                                         Layout.fillWidth: true
                                         passwordMode: true
-                                        placeholderText: appBackend.nocobasePasswordStored
+                                        placeholderText: appBackend.nocobaseApiKeyStored
                                             ? "••••••••  已保存"
-                                            : "请输入 NocoBase 登录密码"
-                                        onEditingStarted: {
-                                            if (text.length === 0 && appBackend.nocobasePasswordStored)
-                                                text = appBackend.loadSavedNocobasePassword(
-                                                    nocobaseAccountField.text
-                                                )
-                                        }
+                                            : "请输入 NocoBase API 密钥"
                                     }
 
                                     Text {
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        text: "账号和密码保存在应用 SQLite 数据库中；登录 Token 及到期时间由系统自动维护。"
+                                        text: "留空保留已保存密钥；不要添加 Bearer 前缀。密钥保存在应用数据库中，不回填原文。"
                                         color: page.secondaryColor
                                         font.pixelSize: 12
                                     }
@@ -968,37 +962,38 @@ Item {
                                             text: "测试连接"
                                             enabled: !appBackend.nocobaseConnectionBusy
                                             onClicked: appBackend.testNocobaseConnection(
-                                                nocobaseAccountField.text,
                                                 nocobasePasswordField.text
                                             )
                                         }
                                         AppButton {
-                                            text: "保存账号"
+                                            text: "保存配置"
                                             primary: true
                                             enabled: !appBackend.nocobaseConnectionBusy
-                                            onClicked: appBackend.saveNocobaseAccount(
-                                                nocobaseAccountField.text,
-                                                nocobasePasswordField.text
-                                            )
+                                            onClicked: {
+                                                if (appBackend.saveNocobaseApiKey(
+                                                    nocobaseAccountField.text,
+                                                    nocobasePasswordField.text
+                                                )) nocobasePasswordField.text = ""
+                                            }
                                         }
                                     }
                                 }
                             }
 
                             Text {
-                                text: "登录状态"
+                                text: "连接测试状态"
                                 color: page.titleColor
                                 font.pixelSize: 17
                                 font.weight: Font.DemiBold
                             }
                             SettingRow {
                                 Layout.fillWidth: true
-                                title: "清除 NocoBase 登录状态"
-                                description: "账号密码不会被删除；下次读取申请时将重新获取 Token"
+                                title: "重置 NocoBase 连接测试状态"
+                                description: "只重置测试结果，不删除密钥，也不会登录或刷新 Token"
                                 AppButton {
                                     text: "清除"
                                     enabled: !appBackend.nocobaseConnectionBusy
-                                    onClicked: appBackend.clearNocobaseLoginState()
+                                    onClicked: appBackend.resetNocobaseConnectionStatus()
                                 }
                             }
 
@@ -1021,7 +1016,7 @@ Item {
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: "测试连接会直接调用登录接口；验证成功后保存 JWT，Token 到期或被接口拒绝时会自动重新登录。"
+                                        text: "测试连接只查询一条申请，不保存密钥。请点击保存配置；密钥失效或权限不足时需人工处理，不会自动登录。"
                                         color: "#24568f"
                                         font.pixelSize: 13
                                         wrapMode: Text.WordWrap

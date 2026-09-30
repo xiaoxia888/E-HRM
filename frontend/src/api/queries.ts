@@ -1,8 +1,10 @@
 import type {
+  ScheduledJob, ScheduledJobValues, ScheduledRun, ScheduledLog, PagedItems,
   AccountSummary,
   AccountEditDetail,
   PolicyResponse,
   RightsApplicationDetail,
+  ApplicationOperationStates,
   RightsApplicationPage,
   TaskListResponse,
   TaskRecord,
@@ -33,6 +35,15 @@ export const api = {
     apiRequest<RightsApplicationDetail>(
       `/api/v1/nocobase/applications/${applicationId}`,
     ),
+  applicationOperations: (applicationId: number) => apiRequest<ApplicationOperationStates>(
+    `/api/v1/nocobase/applications/${applicationId}/operations`),
+  applicationOperationLogs: (applicationId: number, runId: string) => apiRequest<Array<{ created_at: string; message: string }>>(
+    `/api/v1/nocobase/applications/${applicationId}/operations/${runId}/logs`),
+  terminateApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
+    `/api/v1/nocobase/applications/${applicationId}/termination`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, confirmed: true }),
+    }),
   settings: () => apiRequest<WebPreferences>('/api/v1/settings'),
   savePreferences: (preferences: Omit<WebPreferences, 'ai_model_options' | 'active_ai_model' | 'active_reasoning_mode' | 'runtime_path' | 'logs_path' | 'version'>) =>
     apiRequest<{ message: string }>('/api/v1/settings/preferences', {
@@ -45,12 +56,39 @@ export const api = {
   }),
   saveAccount: (
     systemType: AccountSummary['system_type'],
-    values: { account_id?: number; account: string; secondary_account?: string; password?: string; display_name?: string; login_method?: 'direct' | 'government_sso' },
+    values: { account_id?: number; account?: string; secondary_account?: string; password?: string; api_key?: string; display_name?: string; login_method?: 'direct' | 'government_sso' },
   ) => apiRequest<AccountSummary>(`/api/v1/settings/accounts/${systemType}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(values),
   }),
+  testNocoBaseConnection: (values: { account_id?: number; api_key?: string }) =>
+    apiRequest<{ message: string }>('/api/v1/settings/nocobase/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    }),
+  scheduledTasks: () => apiRequest<{ jobs: ScheduledJob[]; scheduler_running: boolean; timezone: string;
+    task_types: { value: string; label: string }[] }>('/api/v1/scheduled-tasks'),
+  saveScheduledTask: ({ id, values }: { id?: string; values: ScheduledJobValues }) =>
+    apiRequest<ScheduledJob>(`/api/v1/scheduled-tasks${id ? `/${id}` : ''}`, {
+      method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+    }),
+  cronPreview: (cron: string) => apiRequest<{ timezone: string; times: string[] }>(
+    `/api/v1/scheduled-tasks/cron-preview?cron=${encodeURIComponent(cron)}`),
+  runScheduledTask: ({ id, ...values }: { id: string; start_date?: string; end_date?: string; dry_run?: boolean }) =>
+    apiRequest<ScheduledRun>(`/api/v1/scheduled-tasks/${id}/run`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+    }),
+  scheduledRuns: (jobId: string | undefined, page: number, pageSize: number) =>
+    apiRequest<PagedItems<ScheduledRun>>(`/api/v1/scheduled-runs?page=${page}&page_size=${pageSize}${jobId ? `&job_id=${encodeURIComponent(jobId)}` : ''}`),
+  scheduledRun: (id: string) => apiRequest<ScheduledRun>(`/api/v1/scheduled-runs/${id}`),
+  scheduledLogs: (id: string, page: number, pageSize: number) =>
+    apiRequest<PagedItems<ScheduledLog>>(`/api/v1/scheduled-runs/${id}/logs?page=${page}&page_size=${pageSize}`),
+  syncErpToNocoBase: (values: { start_date?: string; end_date?: string; dry_run?: boolean }) =>
+    apiRequest<TaskRecord>('/api/v1/nocobase/sync', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+    }),
   importRights: (file: File) => {
     const form = new FormData()
     form.append('file', file)

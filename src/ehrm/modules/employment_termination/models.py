@@ -36,6 +36,21 @@ class EmploymentTerminationReason(StrEnum):
         return _TERMINATION_REASON_NAMES[self]
 
     @classmethod
+    def display_label(cls, value: object) -> str:
+        """用于展示；兼容编码和中文，不改写实际提交值。
+
+        未识别的编码保留并标注，避免错误地映射为另一种退工原因。
+        提交校验仍使用严格的 parse，不因展示容错而放宽。
+        """
+        text = str(value or '').strip()
+        if not text:
+            return '-'
+        try:
+            return cls.parse(value).display_name
+        except QueryValidationError:
+            return f'未知退工原因（{text}）'
+
+    @classmethod
     def parse(cls, value: object) -> "EmploymentTerminationReason":
         if isinstance(value, cls):
             return value
@@ -102,13 +117,21 @@ class EmploymentTerminationItem:
 
 @dataclass(frozen=True, slots=True)
 class EmploymentTerminationPreparation:
-    """Describes a completed form-fill run. It never implies submission."""
+    """Batch result; submitted is true only if at least one row is verified."""
 
     items: tuple[EmploymentTerminationItem, ...]
     results: tuple["EmploymentTerminationItemResult", ...]
     city_code: str
     city_name: str
     submitted: bool = False
+
+    @property
+    def submitted_count(self) -> int:
+        return sum(result.status == "submitted" for result in self.results)
+
+    @property
+    def unknown_count(self) -> int:
+        return sum(result.status == "unknown" for result in self.results)
 
     @property
     def prepared_count(self) -> int:
@@ -131,6 +154,8 @@ class EmploymentTerminationItemResult:
     success: bool
     code: str
     message: str = ""
+    # Existing callers default to form preparation; submit callers always set it.
+    status: str = "prepared"
 
     @property
     def source_index(self) -> int:

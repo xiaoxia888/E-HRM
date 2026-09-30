@@ -158,6 +158,7 @@ class TaskCoordinator:
         self._changed = threading.Condition(self._lock)
         self._revision = 0
         self._closed = False
+        self._observers: list[Callable[[TaskSnapshot], None]] = []
         if self._store is not None:
             self._store.mark_unfinished_interrupted()
 
@@ -165,6 +166,11 @@ class TaskCoordinator:
     def revision(self) -> int:
         with self._lock:
             return self._revision
+
+    def observe(self, callback: Callable[[TaskSnapshot], None]) -> None:
+        """Observers must only persist snapshots, never call back into the scheduler."""
+        with self._lock:
+            self._observers.append(callback)
 
     def submit(
         self,
@@ -479,6 +485,13 @@ class TaskCoordinator:
                 self._tasks.pop(task_id, None)
 
     def _notify_locked(self, *records: _TaskRecord) -> None:
+        for record in records:
+            for observer in self._observers:
+                try:
+                    observer(self._snapshot_locked(record))
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("无法保存定时任务执行日志")
         if self._store is not None:
             for record in records:
                 try:

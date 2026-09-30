@@ -45,12 +45,14 @@ websocket_datas, websocket_binaries, websocket_hiddenimports = collect_all(
     "websockets"
 )
 ddddocr_datas, ddddocr_binaries, ddddocr_hiddenimports = collect_all("ddddocr")
+aps_datas, aps_binaries, aps_hiddenimports = collect_all("apscheduler")
+tz_datas, tz_binaries, tz_hiddenimports = collect_all("tzdata")
 # Add the browser explicitly so hidden directories are handled consistently.
 pw_datas = [
     item for item in pw_datas if ".local-browsers" not in Path(item[0]).parts
 ]
 
-datas = pw_datas + stealth_datas + websocket_datas + ddddocr_datas + [
+datas = pw_datas + stealth_datas + websocket_datas + ddddocr_datas + aps_datas + tz_datas + [
     (str(PROJECT_ROOT / "config" / "settings.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "page_selectors.toml"), "config"),
     (str(PROJECT_ROOT / "config" / "error_messages.toml"), "config"),
@@ -77,7 +79,7 @@ datas = pw_datas + stealth_datas + websocket_datas + ddddocr_datas + [
     ),
 ]
 
-hiddenimports = pw_hiddenimports + stealth_hiddenimports + websocket_hiddenimports + ddddocr_hiddenimports + [
+hiddenimports = pw_hiddenimports + stealth_hiddenimports + websocket_hiddenimports + ddddocr_hiddenimports + aps_hiddenimports + tz_hiddenimports + [
     "pyodbc",
     "PySide6.QtPdf",
     "PySide6.QtQml",
@@ -93,7 +95,7 @@ console_enabled = os.environ.get("EHRM_BUILD_CONSOLE") == "1"
 a = Analysis(
     [str(PROJECT_ROOT / "scripts" / "run_gui.py")],
     pathex=[str(SOURCE_ROOT)],
-    binaries=pw_binaries + stealth_binaries + websocket_binaries + ddddocr_binaries,
+    binaries=pw_binaries + stealth_binaries + websocket_binaries + ddddocr_binaries + aps_binaries + tz_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

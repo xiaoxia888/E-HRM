@@ -145,6 +145,13 @@ person_form = 'form[name="personinfoForm"]'
 reason_combobox = "role=combobox"
 # 业务页面真实加载遮罩。不要加入 layui-layer-shade，它只是普通弹窗背景层。
 loading_indicator = ".loading-mask:visible, .ant-spin-spinning:visible, .el-loading-mask:visible"
+# 外层业务窗口的最终提交按钮；只有 --submit 模式会点击。
+submit_button_text = "确认提交"
+# 内层真实性声明正文。只允许在此声明中点击明确的“是”，不自动确认其他弹窗。
+submit_declaration_text = "本次退工停保填报信息、佐证材料真实有效，虚假申报须承担相应责任。"
+# 成功页必须同时出现可见的标题和正文，并与本次提交接口响应共同确认。
+submit_success_heading = "业务办理成功"
+submit_success_text = "提交成功"
 
 # -----------------------------------------------------------------------------
 # ERP：账号登录页

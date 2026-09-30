@@ -291,6 +291,18 @@ html, body, #root { min-width: 1024px; width: 100%; height: 100%; margin: 0; ove
 .settings-model-meta .ant-typography { display: block; }
 .settings-action-row { display: flex; margin-top: 24px; justify-content: flex-end; }
 
+/* Drawer 的 footer 独立于滚动内容，操作始终在右下方可见。
+   窄窗口自动换行，不使用绝对定位覆盖正文。 */
+.application-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-block: 8px;
+}
+.application-detail-actions__account { width: 340px; max-width: 100%; }
+
 @media (max-width: 1280px) {
   .rights-workbench-grid { grid-template-columns: minmax(620px, 1fr) 300px; }
   .rights-summary-row { grid-template-columns: repeat(3, minmax(110px, 1fr)); }

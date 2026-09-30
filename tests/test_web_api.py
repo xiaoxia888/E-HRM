@@ -223,6 +223,8 @@ def test_web_settings_can_update_preferences_and_preserve_saved_password(
             "secondary_account": "mobile-id",
             "password_mask": "******",
             "password_saved": True,
+            "api_key_saved": False,
+            "api_key_mask": "",
             "login_method": "direct",
         }
         assert "saved-password" not in edit_detail.text

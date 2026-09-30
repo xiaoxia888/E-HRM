@@ -99,6 +99,8 @@ from importlib.metadata import version
 from pathlib import Path
 
 import fastapi
+import apscheduler
+from zoneinfo import ZoneInfo
 import ddddocr
 import playwright
 import pyodbc
@@ -106,6 +108,7 @@ from playwright.sync_api import sync_playwright
 
 print(f"Python: {sys.executable}")
 print(f"Playwright: {version('playwright')}")
+print(f"APScheduler: {apscheduler.__version__}；调度时区：{ZoneInfo('Asia/Shanghai')}")
 print(f"pyodbc: {pyodbc.version}")
 print(f"ddddocr: {version('ddddocr')}")
 with Path("config/settings.toml").open("rb") as stream:

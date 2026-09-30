@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ehrm.core.preferences import (
     DEFAULT_DOWNLOAD_TIMEOUT_SECONDS,
@@ -60,6 +60,8 @@ class AccountEditDetail(BaseModel):
     password_mask: str
     password_saved: bool
     login_method: str = "direct"
+    api_key_saved: bool = False
+    api_key_mask: str = ""
 
 
 class AccountUpdateRequest(BaseModel):
@@ -69,6 +71,27 @@ class AccountUpdateRequest(BaseModel):
     password: str = ""
     display_name: str = ""
     login_method: str = "direct"
+    api_key: str = ""
+
+
+class NocoBaseConnectionTestRequest(BaseModel):
+    account_id: int | None = Field(default=None, ge=1)
+    api_key: str = ""
+
+
+class ScheduledJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
+    task_type: str = "erp_nocobase_sync"
+    cron: str = Field(min_length=1, max_length=150)
+    enabled: bool = Field(default=False, strict=True)
+    lookback_days: int = Field(default=2, ge=1, le=366, strict=True)
+
+
+class NocoBaseSyncRequest(BaseModel):
+    start_date: str = ""
+    end_date: str = ""
+    dry_run: bool = Field(default=False, strict=True)
 
 
 class PreferencesUpdateRequest(BaseModel):
@@ -135,9 +158,23 @@ class ErpRightsExtractionRequest(BaseModel):
     reasoning_mode: str = ""
 
 
+class ErpBusinessPeopleRequest(BaseModel):
+    application_code: str
+    application_date: str = ""
+    title: str = ""
+    description: str = ""
+    erp_transaction_type: str = ""
+    reasoning_mode: str = ""
+
+
 class NocoBasePrintRequest(BaseModel):
     account_id: int
     upload_to_erp: bool = False
+
+
+class NocoBaseTerminationRequest(BaseModel):
+    account_id: int = Field(ge=1)
+    confirmed: bool = False
 
 
 class ConcurrencyPolicyItem(BaseModel):

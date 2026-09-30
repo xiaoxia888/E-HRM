@@ -59,6 +59,7 @@ export function RightsPage() {
   const [extractionTaskId, setExtractionTaskId] = useState<string | null>(null)
   const [rightsTaskId, setRightsTaskId] = useState<string | null>(null)
   const [rightsProgressOpen, setRightsProgressOpen] = useState(false)
+  const [executionConfirmation, setExecutionConfirmation] = useState<{ values: Parameters<typeof api.startRightsTask>[0]; label: string } | null>(null)
   const [activePreviewTab, setActivePreviewTab] = useState('people')
   const [resolutionIssue, setResolutionIssue] = useState<RightsIssue | null>(null)
   const [editingGroup, setEditingGroup] = useState<RightsPrintGroup | null>(null)
@@ -152,6 +153,7 @@ export function RightsPage() {
   const starter = useMutation({
     mutationFn: api.startRightsTask,
     onSuccess: (task) => {
+      setExecutionConfirmation(null)
       setRightsTaskId(task.task_id)
       setRightsProgressOpen(true)
     },
@@ -283,7 +285,13 @@ export function RightsPage() {
                 <Switch checked={uploadToErp} disabled={preview?.erp_upload_available === false} onChange={setUploadToErp} />
                 <Typography.Text type="secondary">{preview?.erp_upload_available === false ? '存在未填写 ERP申请编号的打印组，不能自动上传 ERP' : uploadToErp ? '下载成功后上传 ERP' : '仅生成并保留权益单文件'}</Typography.Text>
               </Space>
-              <Button type="primary" size="large" block disabled={!canExecute || accountId === undefined} loading={starter.isPending} onClick={() => preview && accountId !== undefined && starter.mutate({ import_id: preview.import_id, account_id: accountId, export_mode: mode, batch_size: batchSize, upload_to_erp: uploadToErp })}>获取权益单</Button>
+              <Button type="primary" size="large" block disabled={!canExecute || accountId === undefined} loading={starter.isPending} onClick={() => {
+                const selected = rightsAccounts.find((item) => item.id === accountId)
+                if (preview && selected) setExecutionConfirmation({
+                  values: { import_id: preview.import_id, account_id: selected.id, export_mode: mode, batch_size: batchSize, upload_to_erp: uploadToErp },
+                  label: `${selected.display_name} · ${selected.masked_account} · ${selected.login_method === 'government_sso' ? '江苏政务服务平台' : '智慧人社直登'}`,
+                })
+              }}>获取权益单</Button>
               {preview && !canExecute && <Typography.Text type="secondary" className="rights-disabled-reason">当前数据存在阻塞问题，暂不能开始获取。</Typography.Text>}
             </div>
           </Form>
@@ -350,6 +358,10 @@ export function RightsPage() {
           setExtractionTaskId(null)
         }}
       />
+      <Modal title="确认执行账号" open={Boolean(executionConfirmation)} onCancel={() => !starter.isPending && setExecutionConfirmation(null)} onOk={() => executionConfirmation && starter.mutate(executionConfirmation.values)} okText="确认执行" cancelText="取消" confirmLoading={starter.isPending} maskClosable={false}>
+        <Typography.Paragraph>确定使用以下账号获取权益单？</Typography.Paragraph>
+        <Typography.Text strong>{executionConfirmation?.label}</Typography.Text>
+      </Modal>
       <RightsTaskProgressModal
         open={rightsProgressOpen}
         task={rightsTask.data}
@@ -821,7 +833,7 @@ interface ResultArtifact {
   url: string
 }
 
-function RightsTaskProgressModal({
+export function RightsTaskProgressModal({
   open,
   task,
   loading,

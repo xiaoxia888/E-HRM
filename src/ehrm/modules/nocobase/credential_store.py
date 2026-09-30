@@ -11,7 +11,11 @@ from ehrm.core.auth_repository import (
 
 
 class NocoBaseCredentialStore:
-    """Stores NocoBase accounts and passwords in the application database."""
+    """Stores NocoBase API keys in the shared application database.
+
+    Password helpers remain for legacy data compatibility only; active queries
+    and settings use the independent API-key field, never a saved password.
+    """
 
     def __init__(
         self,
@@ -25,6 +29,11 @@ class NocoBaseCredentialStore:
         return self.repository.get_default_account(
             SystemType.NOCOBASE,
             owner_id=self.owner_id,
+        )
+
+    def save_api_key(self, display_name: str, api_key: str) -> SystemAccount:
+        return self.repository.save_nocobase_api_key(
+            api_key, display_name=display_name, owner_id=self.owner_id,
         )
 
     def load_password(self, account: str) -> str | None:
@@ -44,4 +53,3 @@ class NocoBaseCredentialStore:
             password,
             owner_id=self.owner_id,
         )
-

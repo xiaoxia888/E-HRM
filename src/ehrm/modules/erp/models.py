@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 
@@ -61,6 +61,8 @@ class ErpTaskRecord:
     status: str
     originator: str
     department: str
+    # 保留接口原始字段用于同步溯源；不参与正常日志表示或记录比较。
+    raw_data: dict[str, object] = field(default_factory=dict, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)

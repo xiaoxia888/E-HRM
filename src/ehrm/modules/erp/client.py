@@ -407,6 +407,7 @@ class ErpTaskClient(_ErpApiBase):
                 item.get("Originator") or item.get("RegHumName") or ""
             ).strip(),
             department=str(item.get("DeptName") or "").strip(),
+            raw_data=dict(item),
         )
 
     @staticmethod

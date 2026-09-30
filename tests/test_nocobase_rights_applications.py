@@ -111,7 +111,7 @@ def test_list_applications_builds_query_and_parses_page(tmp_path: Path) -> None:
     params = call["params"]
     assert isinstance(params, dict)
     assert json.loads(params["filter"])["$and"][0]["$and"][0] == {
-        "prob_type": {"$eq": "social_security_rights"}
+        "prob_type": {"$in": ["social_security_rights", "social_security_enrollment", "social_security_termination"]}
     }
     assert params["appends[]"] == "initiator_name"
     assert params["page"] == "1"
@@ -174,8 +174,8 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
                         "start_month": "2025-05-01",
                         "end_month": "2026-01-01",
                         "id_card_no": "410423199005124058",
-                        "department": "第十六分公司",
-                        "name": "王明明",
+                            "dept_name": "第十六分公司",
+                            "user_name": "王明明",
                         "company": "南京南化建设有限公司",
                         "print_group": "组1",
                     }
@@ -205,6 +205,8 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
     assert person.insurance_type == "elderly_care"
     assert person.identity_number == "410423199005124058"
     assert person.print_group == "组1"
+    assert person.name == "王明明"
+    assert person.department == "第十六分公司"
     assert person.start_month is not None
 
     url, call = request.calls[0]
@@ -216,6 +218,9 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
             "initiator_name",
             "related_persons",
             "attachments",
+            "insurance_person",
+            "termination_person",
+            "termination_person.createdBy",
         ],
         "filterByTk": ["384427705696256"],
     }

@@ -50,6 +50,21 @@ def _immediate_pacer() -> Mock:
     return pacer
 
 
+@pytest.mark.parametrize('reason', list(EmploymentTerminationReason))
+def test_reason_display_uses_existing_enum_labels_without_changing_codes(reason):
+    assert EmploymentTerminationReason.display_label(reason.value) == reason.display_name
+    assert EmploymentTerminationReason.display_label(reason.display_name) == reason.display_name
+    assert EmploymentTerminationReason.parse(reason.value).value == reason.value
+
+
+@pytest.mark.parametrize(('value', 'label'), [
+    ('6304', '双方协商一致解除'), ('string:6304', '双方协商一致解除'),
+    ('未知编码', '未知退工原因（未知编码）'), ('', '-'), (None, '-'),
+])
+def test_reason_display_handles_known_unknown_and_empty_values(value, label):
+    assert EmploymentTerminationReason.display_label(value) == label
+
+
 def test_excel_adapter_converts_rows_to_domain_objects(tmp_path: Path) -> None:
     path = tmp_path / "退保测试.xlsx"
     _workbook(

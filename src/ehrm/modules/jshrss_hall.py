@@ -162,7 +162,12 @@ class JshrssHallNavigator:
                     business = self._content_frame(inner)
                     if (
                         business is not None
-                        and business.locator(required_selector).count() > 0
+                        # 模板节点存在不代表 Angular 业务视图已加载完成。
+                        and self._first_visible(business.locator(required_selector))
+                        is not None
+                        and self._first_visible(
+                            business.locator(contract.loading_indicator)
+                        ) is None
                     ):
                         return business
             return None
@@ -183,6 +188,7 @@ class JshrssHallNavigator:
                         WaitCondition(
                             description,
                             ready_frame,
+                            stable_for_ms=200,
                             transient_exceptions=(PlaywrightError,),
                         ),
                     ],
@@ -194,6 +200,7 @@ class JshrssHallNavigator:
                     f"{description}未加载", details=str(exc)
                 ) from exc
             if state.condition == description:
+                self._progress(f"{description}已加载，人员录入表单已就绪")
                 return state.value
 
             dialog: BusinessDialog = state.value

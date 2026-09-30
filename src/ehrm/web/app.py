@@ -25,19 +25,28 @@ from ehrm.core.settings import (
     AppSettings,
     load_settings,
 )
+from ehrm.modules.ai.business_classification import BusinessIntent
+from ehrm.modules.erp.business_people_service import ErpBusinessPeopleService
+from ehrm.modules.erp.models import ErpTaskRecord
 from ehrm.modules.nocobase.application_query_service import (
     NocoBaseApplicationQueryService,
 )
 from ehrm.gui.template_service import RightsStatementTemplateService
 from ehrm.modules.rights_statement.excel_models import ExportMode
+from ehrm.modules.employment_termination.models import EmploymentTerminationReason
 from ehrm.web.schemas import (
     AccountSummary,
     AccountEditDetail,
     AccountUpdateRequest,
+    NocoBaseConnectionTestRequest,
+    ScheduledJobRequest,
+    NocoBaseSyncRequest,
     ConcurrencyPolicyItem,
     ConcurrencyPolicyResponse,
     ErpRightsExtractionRequest,
+    ErpBusinessPeopleRequest,
     NocoBasePrintRequest,
+    NocoBaseTerminationRequest,
     TaskListResponse,
     TaskResponse,
     PreferencesUpdateRequest,
@@ -51,6 +60,10 @@ from ehrm.web.rights_service import ArtifactRegistry, RightsWebService
 from ehrm.web.task_repository import TaskRepository
 from ehrm.web.settings_service import WebSettingsService
 from ehrm.web.tasks import TaskCoordinator
+from ehrm.web.nocobase_sync import NocoBaseSyncController
+from ehrm.web.scheduled_tasks import ScheduledTaskWorkbench
+from ehrm.core.cron_schedule import upcoming
+from ehrm.web.application_operations import ApplicationOperationService, person_key
 
 
 def create_app(
@@ -87,12 +100,22 @@ def create_app(
         resolved_logger,
         artifact_registry,
     )
+    erp_business_people_service = ErpBusinessPeopleService(
+        resolved_settings, resolved_logger
+    )
+    sync_controller = NocoBaseSyncController(settings_service, task_coordinator, resolved_logger)
+    scheduled_tasks = ScheduledTaskWorkbench(sync_controller)
+    application_operations = ApplicationOperationService(settings_service, task_coordinator, resolved_logger)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        if owns_coordinator:
-            task_coordinator.close(wait=False)
+        scheduled_tasks.start()
+        try:
+            yield
+        finally:
+            scheduled_tasks.close()
+            if owns_coordinator:
+                task_coordinator.close(wait=False)
 
     app = FastAPI(
         title="南化建人力 API",
@@ -106,7 +129,11 @@ def create_app(
     app.state.task_repository = task_repository
     app.state.web_settings_service = settings_service
     app.state.rights_service = rights_service
+    app.state.erp_business_people_service = erp_business_people_service
     app.state.nocobase_query_service = query_service
+    app.state.nocobase_sync = sync_controller
+    app.state.scheduled_tasks = scheduled_tasks
+    app.state.application_operations = application_operations
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -201,7 +228,7 @@ def create_app(
                 id=record.id,
                 system_type=record.system_type.value,
                 display_name=record.display_name or record.system_type.value,
-                masked_account=_mask_account(record.account),
+                masked_account=("******" if record.api_key else "未配置 API 密钥") if record.system_type is SystemType.NOCOBASE else _mask_account(record.account),
                 is_default=record.is_default,
                 ready=_account_ready(record),
                 login_method=str(record.profile.get("login_method") or "direct"),
@@ -212,6 +239,44 @@ def create_app(
     @app.get("/api/v1/settings")
     def web_settings() -> dict[str, object]:
         return {**settings_service.preference_payload(), "version": __version__}
+
+    @app.get("/api/v1/scheduled-tasks")
+    def scheduled_job_list() -> dict:
+        return scheduled_tasks.list()
+
+    @app.get("/api/v1/scheduled-tasks/cron-preview")
+    def cron_preview(cron: str = Query(min_length=1, max_length=150)) -> dict:
+        return {"timezone": "Asia/Shanghai", "times": upcoming(cron)}
+
+    @app.post("/api/v1/scheduled-tasks")
+    def create_scheduled_job(request: ScheduledJobRequest) -> dict:
+        return scheduled_tasks.save(None, request.model_dump())
+
+    @app.put("/api/v1/scheduled-tasks/{job_id}")
+    def save_scheduled_job(job_id: str, request: ScheduledJobRequest) -> dict:
+        return scheduled_tasks.save(job_id, request.model_dump())
+
+    @app.post("/api/v1/scheduled-tasks/{job_id}/run")
+    def run_scheduled_job(job_id: str, request: NocoBaseSyncRequest) -> dict:
+        return scheduled_tasks.trigger(job_id, **request.model_dump())
+
+    @app.get("/api/v1/scheduled-runs")
+    def scheduled_runs(job_id: str | None = None, page: int = Query(default=1, ge=1),
+                       page_size: int = Query(default=20, ge=1, le=100)) -> dict:
+        return scheduled_tasks.repository.runs(job_id, page, page_size)
+
+    @app.get("/api/v1/scheduled-runs/{run_id}")
+    def scheduled_run(run_id: str) -> dict:
+        return scheduled_tasks.repository.run(run_id)
+
+    @app.get("/api/v1/scheduled-runs/{run_id}/logs")
+    def scheduled_logs(run_id: str, page: int = Query(default=1, ge=1),
+                       page_size: int = Query(default=50, ge=1, le=200)) -> dict:
+        return scheduled_tasks.repository.logs(run_id, page, page_size)
+
+    @app.post("/api/v1/nocobase/sync", response_model=TaskResponse)
+    def sync_now(request: NocoBaseSyncRequest) -> TaskResponse:
+        return TaskResponse.from_snapshot(sync_controller.submit(**request.model_dump()))
 
     @app.get(
         "/api/v1/settings/accounts/{system_type}",
@@ -238,10 +303,12 @@ def create_app(
             id=selected.id,
             system_type=selected.system_type.value,
             display_name=selected.display_name or selected.system_type.value,
-            account=selected.account,
-            secondary_account=selected.secondary_account,
-            password_mask="******" if selected.password else "",
-            password_saved=bool(selected.password),
+            account="" if selected.system_type is SystemType.NOCOBASE else selected.account,
+            secondary_account="" if selected.system_type is SystemType.NOCOBASE else selected.secondary_account,
+            password_mask="******" if selected.password and selected.system_type is not SystemType.NOCOBASE else "",
+            password_saved=bool(selected.password) and selected.system_type is not SystemType.NOCOBASE,
+            api_key_saved=bool(selected.api_key) if selected.system_type is SystemType.NOCOBASE else False,
+            api_key_mask="******" if selected.system_type is SystemType.NOCOBASE and selected.api_key else "",
             login_method=str(selected.profile.get("login_method") or "direct"),
         )
 
@@ -287,16 +354,22 @@ def create_app(
             password=request.password,
             display_name=request.display_name,
             login_method=request.login_method,
+            api_key=request.api_key,
         )
         return AccountSummary(
             id=saved.id,
             system_type=saved.system_type.value,
             display_name=saved.display_name or saved.system_type.value,
-            masked_account=_mask_account(saved.account),
+            masked_account="******" if saved.system_type is SystemType.NOCOBASE else _mask_account(saved.account),
             is_default=saved.is_default,
             ready=_account_ready(saved),
             login_method=str(saved.profile.get("login_method") or "direct"),
         )
+
+    @app.post("/api/v1/settings/nocobase/test-connection")
+    def test_nocobase_connection(request: NocoBaseConnectionTestRequest) -> dict[str, str]:
+        query_service.test_connection(api_key=request.api_key, account_id=request.account_id)
+        return {"message": "NocoBase 连接测试成功，API 密钥有效且具有申请查询权限"}
 
     @app.get("/api/v1/tasks", response_model=TaskListResponse)
     def tasks(limit: int = Query(default=100, ge=1, le=500)) -> TaskListResponse:
@@ -350,7 +423,30 @@ def create_app(
     @app.get("/api/v1/nocobase/applications/{application_id}")
     def get_application(application_id: int) -> object:
         result = query_service.get_application(application_id)
-        return jsonable_encoder(asdict(result))
+        payload = asdict(result)
+        for field in ('termination_person', 'insurance_person'):
+            payload[field] = [{**row, 'operation_key': person_key(str(row.get('id_card_no') or ''))} for row in payload[field]]
+        for row in payload['termination_person']:
+            row['termination_reason_label'] = EmploymentTerminationReason.display_label(row.get('termination_reason'))
+        return jsonable_encoder({**payload, 'operation_states': application_operations.repository.state(application_id)})
+
+    @app.get('/api/v1/nocobase/applications/{application_id}/operations')
+    def application_operation_states(application_id: int):
+        return application_operations.repository.state(application_id)
+
+    @app.get('/api/v1/nocobase/applications/{application_id}/operations/{run_id}/logs')
+    def application_operation_logs(application_id: int, run_id: str):
+        state = application_operations.repository.state(application_id)
+        if not any(row['id'] == run_id for row in state['runs']):
+            raise HTTPException(404, '执行记录不存在')
+        return application_operations.repository.logs(run_id)
+
+    @app.post('/api/v1/nocobase/applications/{application_id}/termination', response_model=TaskResponse)
+    def start_application_termination(application_id: int, request: NocoBaseTerminationRequest):
+        if not request.confirmed:
+            raise ValueError('请先确认执行账号及真实退保提交')
+        detail = query_service.get_application(application_id)
+        return TaskResponse.from_snapshot(application_operations.submit_termination(detail, request.account_id))
 
     @app.post("/api/v1/rights/import")
     async def import_rights_excel(
@@ -379,6 +475,48 @@ def create_app(
             reasoning_mode=request.reasoning_mode,
         )
         return TaskResponse.from_snapshot(snapshot)
+
+    def extract_erp_business_people(
+        body: ErpBusinessPeopleRequest,
+        intent: BusinessIntent,
+    ) -> dict[str, object]:
+        application_code = body.application_code.strip()
+        title = body.title.strip()
+        description = body.description.strip()
+        if not application_code:
+            raise ValueError("申请编号不能为空")
+        if not title and not description:
+            raise ValueError("申请标题和内容不能同时为空")
+        record = ErpTaskRecord(
+            id="",
+            code=application_code,
+            initiated_date=body.application_date.strip(),
+            title=title,
+            description=description,
+            transaction_type=body.erp_transaction_type.strip(),
+            status="",
+            originator="",
+            department="",
+        )
+        return erp_business_people_service.extract(
+            record, intent, body.reasoning_mode or None
+        ).as_dict()
+
+    @app.post("/api/v1/erp/enrollment/people-extraction")
+    def extract_erp_enrollment_people(
+        body: ErpBusinessPeopleRequest,
+    ) -> dict[str, object]:
+        return extract_erp_business_people(
+            body, BusinessIntent.EMPLOYMENT_ENROLLMENT
+        )
+
+    @app.post("/api/v1/erp/termination/people-extraction")
+    def extract_erp_termination_people(
+        body: ErpBusinessPeopleRequest,
+    ) -> dict[str, object]:
+        return extract_erp_business_people(
+            body, BusinessIntent.EMPLOYMENT_TERMINATION
+        )
 
     @app.get("/api/v1/rights/imports/{import_id}/records/{row_number}")
     def get_rights_import_record(
@@ -543,6 +681,8 @@ def _mask_account(account: str) -> str:
 
 
 def _account_ready(account: SystemAccount) -> bool:
+    if account.system_type is SystemType.NOCOBASE:
+        return bool(account.api_key)
     if not account.account or not account.password:
         return False
     if account.system_type is not SystemType.JSHRSS:

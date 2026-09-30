@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -74,6 +74,9 @@ class NocoBaseLoginResult:
 
 class NocoBaseProblemType(str, Enum):
     SOCIAL_SECURITY_RIGHTS = "social_security_rights"
+    SOCIAL_SECURITY_ENROLLMENT = "social_security_enrollment"
+    SOCIAL_SECURITY_TERMINATION = "social_security_termination"
+    SOCIAL_SECURITY_CONSULT = "social_security_consult"
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,3 +144,8 @@ class NocoBaseRightsApplicationDetail:
     related_persons: tuple[NocoBaseRelatedPerson, ...]
     attachment_names: tuple[str, ...]
     allowed_actions: dict[str, tuple[int, ...]]
+    key_value: str = ""
+    department: str = ""
+    erp_all_field_value: dict[str, object] | None = field(default=None, repr=False)
+    insurance_person: tuple[dict[str, object], ...] = field(default=(), repr=False)
+    termination_person: tuple[dict[str, object], ...] = field(default=(), repr=False)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import json
 from pathlib import Path
@@ -10,6 +10,16 @@ from typing import Any
 
 
 LOCAL_OWNER_ID = "local-desktop"
+
+
+def normalize_nocobase_api_key(value: str) -> str:
+    """Validate a bare API key without exposing its contents in errors."""
+    key = value.strip()
+    if not key or key == "******":
+        raise ValueError("请输入 NocoBase API 密钥")
+    if any(character.isspace() for character in key):
+        raise ValueError("NocoBase API 密钥不能包含空白字符，请只粘贴密钥，不包含 Bearer 前缀")
+    return key
 
 
 class SystemType(str, Enum):
@@ -31,6 +41,7 @@ class SystemAccount:
     is_default: bool
     created_at: int
     updated_at: int
+    api_key: str = field(default="", repr=False)
 
     @property
     def profile(self) -> dict[str, Any]:
@@ -78,6 +89,7 @@ class AuthenticationRepository:
                     account TEXT NOT NULL,
                     secondary_account TEXT NOT NULL DEFAULT '',
                     password TEXT NOT NULL,
+                    api_key TEXT NOT NULL DEFAULT '',
                     display_name TEXT NOT NULL DEFAULT '',
                     profile_json TEXT NOT NULL DEFAULT '{}',
                     is_default INTEGER NOT NULL DEFAULT 0,
@@ -105,9 +117,15 @@ class AuthenticationRepository:
                         ON DELETE CASCADE
                 );
 
-                PRAGMA user_version = 1;
                 """
             )
+            # 老数据库只新增独立密钥列；绝不把密码或登录 Token 自动当作 API 密钥。
+            # 获取写锁后检查，避免多个请求首次初始化时重复执行 ALTER TABLE。
+            connection.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(system_accounts)")}
+            if "api_key" not in columns:
+                connection.execute("ALTER TABLE system_accounts ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
+            connection.execute("PRAGMA user_version = 2")
         try:
             self.database_path.chmod(0o600)
         except OSError:
@@ -202,6 +220,67 @@ class AuthenticationRepository:
                 ),
             ).fetchone()
         return self._account(row) if row is not None else None
+
+    def save_nocobase_api_key(
+        self,
+        api_key: str = "",
+        *,
+        display_name: str = "",
+        account_id: int | None = None,
+        owner_id: str = LOCAL_OWNER_ID,
+    ) -> SystemAccount:
+        """Save or rotate a key; blank input preserves an already configured key.
+
+        Explicit configuration replaces only this connection's password/session.
+        The independent field and fixed repr mask prevent treating credentials as keys.
+        """
+        now = int(time.time())
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if account_id is None:
+                row = connection.execute(
+                    """SELECT * FROM system_accounts WHERE owner_id = ? AND system_type = ?
+                       ORDER BY is_default DESC, updated_at DESC, id LIMIT 1""",
+                    (owner_id, SystemType.NOCOBASE.value),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT * FROM system_accounts WHERE id = ? AND owner_id = ? AND system_type = ?",
+                    (account_id, owner_id, SystemType.NOCOBASE.value),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("NocoBase 连接不存在，请刷新后重试")
+            key = normalize_nocobase_api_key(api_key) if api_key.strip() else (str(row["api_key"]) if row else "")
+            if not key:
+                raise ValueError("请先配置 NocoBase API 密钥；旧账号密码不能作为 API 密钥使用")
+            name = display_name.strip() or (str(row["display_name"]) if row else "") or "NocoBase"
+            connection.execute(
+                "UPDATE system_accounts SET is_default = 0 WHERE owner_id = ? AND system_type = ?",
+                (owner_id, SystemType.NOCOBASE.value),
+            )
+            if row is None:
+                cursor = connection.execute(
+                    """INSERT INTO system_accounts
+                       (owner_id, system_type, account, password, api_key, display_name,
+                        profile_json, is_default, created_at, updated_at)
+                       VALUES (?, 'NOCOBASE', 'api-key', '', ?, ?, ?, 1, ?, ?)""",
+                    (owner_id, key, name, '{"auth_type":"api_key"}', now, now),
+                )
+                saved_id = int(cursor.lastrowid)
+            else:
+                saved_id = int(row["id"])
+                # 保留连接 ID 和非敏感关联信息，切换后不再保留该连接的登录密码。
+                profile = self._account(row).profile
+                profile["auth_type"] = "api_key"
+                connection.execute(
+                    """UPDATE system_accounts SET password = '', api_key = ?, display_name = ?,
+                       profile_json = ?, is_default = 1, updated_at = ? WHERE id = ?""",
+                    (key, name, json.dumps(profile, ensure_ascii=False), now, saved_id),
+                )
+                connection.execute("DELETE FROM auth_sessions WHERE account_id = ?", (saved_id,))
+        saved = self.get_account_by_id(saved_id, owner_id=owner_id)
+        assert saved is not None
+        return saved
 
     def get_default_account(
         self,
@@ -365,6 +444,7 @@ class AuthenticationRepository:
             is_default=bool(row["is_default"]),
             created_at=int(row["created_at"]),
             updated_at=int(row["updated_at"]),
+            api_key=str(row["api_key"]),
         )
 
 

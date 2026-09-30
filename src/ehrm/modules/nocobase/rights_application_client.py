@@ -9,7 +9,9 @@ from playwright.sync_api import APIRequestContext, APIResponse
 from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.core.settings import NocoBaseSettings
-from ehrm.modules.nocobase.exceptions import NocoBaseRequestError
+from ehrm.modules.nocobase.exceptions import (
+    NocoBaseApiKeyInvalidError, NocoBasePermissionDeniedError, NocoBaseRequestError,
+)
 from ehrm.modules.nocobase.models import (
     NocoBasePageMeta,
     NocoBaseProblemType,
@@ -55,7 +57,11 @@ class NocoBaseRightsApplicationClient:
                     "$and": [
                         {
                             "prob_type": {
-                                "$eq": NocoBaseProblemType.SOCIAL_SECURITY_RIGHTS.value
+                                "$in": [
+                                    NocoBaseProblemType.SOCIAL_SECURITY_RIGHTS.value,
+                                    NocoBaseProblemType.SOCIAL_SECURITY_ENROLLMENT.value,
+                                    NocoBaseProblemType.SOCIAL_SECURITY_TERMINATION.value,
+                                ]
                             }
                         }
                     ]
@@ -85,8 +91,8 @@ class NocoBaseRightsApplicationClient:
         except PlaywrightError as exc:
             raise NocoBaseRequestError(
                 "NocoBase 权益申请分页查询失败",
-                details=str(exc),
-            ) from exc
+                details=str(exc).replace(token, "[已隐藏]"),
+            ) from None
         result = self._parse_response(response)
         self.logger.info(
             "NocoBase 权益申请查询成功 page=%s page_size=%s count=%s returned=%s",
@@ -113,6 +119,9 @@ class NocoBaseRightsApplicationClient:
                 ("appends[]", "initiator_name"),
                 ("appends[]", "related_persons"),
                 ("appends[]", "attachments"),
+                ("appends[]", "insurance_person"),
+                ("appends[]", "termination_person"),
+                ("appends[]", "termination_person.createdBy"),
                 ("filterByTk", str(application_id)),
             ]
         )
@@ -129,8 +138,8 @@ class NocoBaseRightsApplicationClient:
         except PlaywrightError as exc:
             raise NocoBaseRequestError(
                 "NocoBase 权益申请详情查询失败",
-                details=str(exc),
-            ) from exc
+                details=str(exc).replace(token, "[已隐藏]"),
+            ) from None
         result = self._parse_detail_response(response)
         self.logger.info(
             "NocoBase 权益申请详情查询成功 application_id=%s persons=%s",
@@ -144,6 +153,7 @@ class NocoBaseRightsApplicationClient:
         response: APIResponse,
     ) -> NocoBaseRightsApplicationPage:
         try:
+            self._check_access_status(response)
             try:
                 payload: object = response.json()
             except Exception as exc:
@@ -179,6 +189,7 @@ class NocoBaseRightsApplicationClient:
         response: APIResponse,
     ) -> NocoBaseRightsApplicationDetail:
         try:
+            self._check_access_status(response)
             try:
                 payload: object = response.json()
             except Exception as exc:
@@ -205,6 +216,14 @@ class NocoBaseRightsApplicationClient:
             return self._detail(raw_detail, allowed_actions)
         finally:
             response.dispose()
+
+    @staticmethod
+    def _check_access_status(response: APIResponse) -> None:
+        # 在解码响应之前区分认证和权限失败，兼容非 JSON 错误页。
+        if response.status == 401:
+            raise NocoBaseApiKeyInvalidError("NocoBase API 密钥无效或已失效，请在系统设置中更换密钥")
+        if response.status == 403:
+            raise NocoBasePermissionDeniedError("NocoBase API 密钥权限不足，请检查绑定角色的申请及人员查询权限")
 
     @classmethod
     def _record(cls, payload: dict[str, object]) -> NocoBaseRightsApplication:
@@ -279,6 +298,11 @@ class NocoBaseRightsApplicationClient:
                 if (name := cls._attachment_name(item))
             ),
             allowed_actions=allowed_actions,
+            key_value=str(payload.get("key_value") or ""),
+            department=str(payload.get("dept_name") or ""),
+            erp_all_field_value=payload.get("erp_all_field_value") if isinstance(payload.get("erp_all_field_value"), dict) else None,
+            insurance_person=tuple(item for item in (payload.get("insurance_person") or []) if isinstance(item, dict)),
+            termination_person=tuple(item for item in (payload.get("termination_person") or []) if isinstance(item, dict)),
         )
 
     @classmethod
@@ -290,8 +314,8 @@ class NocoBaseRightsApplicationClient:
             start_month=cls._date(payload.get("start_month")),
             end_month=cls._date(payload.get("end_month")),
             identity_number=str(payload.get("id_card_no") or "").strip(),
-            department=str(payload.get("department") or "").strip(),
-            name=str(payload.get("name") or "").strip(),
+            department=str(payload.get("dept_name") or payload.get("department") or "").strip(),
+            name=str(payload.get("user_name") or payload.get("name") or "").strip(),
             company=str(payload.get("company") or "").strip(),
             print_group=str(payload.get("print_group") or "").strip(),
         )

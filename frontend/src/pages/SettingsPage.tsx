@@ -25,7 +25,7 @@ type AccountSlot = {
 }
 
 const SECTION_INFO: Record<SettingsSection, { title: string; description: string }> = {
-  accounts: { title: '账户与连接', description: '维护智慧人社、ERP 与 NocoBase 登录信息' },
+  accounts: { title: '账户与连接', description: '维护智慧人社、ERP 登录信息与 NocoBase API 密钥' },
   downloads: { title: '下载与任务', description: '配置权益单导出规则、保存位置和后续处理方式' },
   automation: { title: '自动化设置', description: '根据网络环境调整页面操作节奏和等待上限' },
   models: { title: '模型配置', description: '选择 ERP 申请解析使用的本地大模型与推理模式' },
@@ -63,12 +63,12 @@ export function SettingsPage() {
       message.success(result.message)
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
     },
-    onError: (error) => message.error(errorMessage(error)),
+    onError: (error) => { message.error(errorMessage(error)) },
   })
   const clearTemporary = useMutation({
     mutationFn: api.clearTemporaryFiles,
     onSuccess: (result) => message.success(result.message),
-    onError: (error) => message.error(errorMessage(error)),
+    onError: (error) => { message.error(errorMessage(error)) },
   })
   const accountRows = useMemo(() => {
     const allAccounts = accounts.data ?? []
@@ -79,7 +79,7 @@ export function SettingsPage() {
       { key: 'jshrss-direct', systemType: 'JSHRSS', systemName: '江苏智慧人社账号', loginMethod: 'direct', current: findAccount('JSHRSS', 'direct') },
       { key: 'jshrss-government', systemType: 'JSHRSS', systemName: '江苏政务服务平台账号', loginMethod: 'government_sso', current: findAccount('JSHRSS', 'government_sso') },
       { key: 'erp', systemType: 'ERP', systemName: 'ERP 账号', loginMethod: 'direct', current: findAccount('ERP', 'direct') },
-      { key: 'nocobase', systemType: 'NOCOBASE', systemName: 'NocoBase 账号', loginMethod: 'direct', current: findAccount('NOCOBASE', 'direct') },
+      { key: 'nocobase', systemType: 'NOCOBASE', systemName: 'NocoBase API 密钥', loginMethod: 'direct', current: findAccount('NOCOBASE', 'direct') },
     ] satisfies AccountSlot[]
   }, [accounts.data])
   const selectedModel = (settings.data?.ai_model_options ?? []).find((item) => item.value === selectedModelId)
@@ -152,17 +152,18 @@ export function SettingsPage() {
   )
 }
 
+
 function AccountsSection({ rows, loading, onEdit }: { rows: AccountSlot[]; loading: boolean; onEdit: (value: AccountSlot) => void }) {
   return (
     <>
-      <Alert type="info" showIcon message="Web 与桌面端共用账户数据库" description="账号和证件信息可以正常回填；密码在浏览器中只显示固定掩码，不能查看之前保存的明文。" style={{ marginBottom: 18 }} />
+      <Alert type="info" showIcon title="Web 与桌面端共用账户数据库" description="NocoBase 使用 API 密钥，无需账号密码登录。已保存的密码和密钥仅显示固定掩码，不能查看原文。" style={{ marginBottom: 18 }} />
       <Table
         rowKey="key" loading={loading} dataSource={rows} pagination={false}
         onRow={(record) => ({ onClick: () => onEdit(record) })}
         columns={[
           { title: '系统', dataIndex: 'systemName', width: 220, render: (value) => <Typography.Text strong>{value}</Typography.Text> },
           { title: '显示名称', render: (_, record) => record.current?.display_name || '-' },
-          { title: '当前账号', width: 220, render: (_, record) => record.current?.masked_account || '尚未维护' },
+          { title: '账号 / 密钥', width: 220, render: (_, record) => record.current?.masked_account || '尚未维护' },
           { title: '状态', width: 120, render: (_, record) => record.current?.ready ? <Tag color="success">已配置</Tag> : <Tag>未配置</Tag> },
           { title: '操作', width: 110, render: (_, record) => <Button type="link" icon={<EditOutlined />} onClick={(event) => { event.stopPropagation(); onEdit(record) }}>编辑</Button> },
         ]}
@@ -191,7 +192,7 @@ function DownloadsSection() {
 function AutomationSection() {
   return (
     <>
-      <Alert type="info" showIcon message="DOM 操作使用智能等待，并在所选节奏区间内随机停顿；接口请求不增加人工延迟。" style={{ marginBottom: 18 }} />
+      <Alert type="info" showIcon title="DOM 操作使用智能等待，并在所选节奏区间内随机停顿；接口请求不增加人工延迟。" style={{ marginBottom: 18 }} />
       <Row gutter={20}>
         <Col xs={24} md={12}><Form.Item name="execution_speed" label="执行节奏"><Select options={[{ label: '快速（0.5–1 秒）', value: 'fast' }, { label: '标准（使用配置文件）', value: 'standard' }, { label: '稳定（1.5–2.5 秒）', value: 'stable' }]} /></Form.Item></Col>
         <Col xs={24} md={12}><Form.Item name="no_result_confirm_seconds" label="无结果确认时间（秒）"><InputNumber min={3} max={60} style={{ width: '100%' }} /></Form.Item></Col>
@@ -276,6 +277,7 @@ function AccountEditorModal({ slot, onClose, onSaved }: { slot: AccountSlot | nu
   const current = slot?.current
   const loginMethod = slot?.loginMethod ?? 'direct'
   const passwordMask = '******'
+  const isApiKey = systemType === 'NOCOBASE'
   const detail = useQuery({
     queryKey: ['account-edit', slot?.key, current?.id],
     queryFn: () => {
@@ -288,33 +290,54 @@ function AccountEditorModal({ slot, onClose, onSaved }: { slot: AccountSlot | nu
   useEffect(() => {
     if (!systemType) return
     if (detail.data) {
-      form.setFieldsValue({ display_name: detail.data.display_name, account: detail.data.account, secondary_account: detail.data.secondary_account, password: detail.data.password_saved ? passwordMask : '' })
-    } else if (!current) form.setFieldsValue({ display_name: '', account: '', secondary_account: '', password: '' })
+      form.setFieldsValue({ display_name: detail.data.display_name, account: detail.data.account, secondary_account: detail.data.secondary_account, password: detail.data.password_saved ? passwordMask : '', api_key: detail.data.api_key_saved ? passwordMask : '' })
+    } else if (!current) form.setFieldsValue({ display_name: '', account: '', secondary_account: '', password: '', api_key: '' })
   }, [current, detail.data, form, slot, systemType])
+  const connectionTest = useMutation({
+    mutationFn: () => {
+      const value = String(form.getFieldValue('api_key') ?? '').trim()
+      return api.testNocoBaseConnection({ account_id: current?.id, api_key: value === passwordMask ? '' : value })
+    },
+    onError: (error) => { message.error(errorMessage(error)) },
+  })
+  const close = () => {
+    form.resetFields()
+    connectionTest.reset()
+    save.reset()
+    onClose()
+  }
   const save = useMutation({
-    mutationFn: (values: { account?: string; secondary_account?: string; password?: string; display_name?: string }) => {
+    mutationFn: (values: { account?: string; secondary_account?: string; password?: string; api_key?: string; display_name?: string }) => {
       if (!systemType) throw new Error('未选择要编辑的系统账号')
+      if (isApiKey) return api.saveAccount(systemType, { account_id: current?.id, api_key: values.api_key === passwordMask ? '' : values.api_key ?? '', display_name: values.display_name ?? '' })
       return api.saveAccount(systemType, { account_id: current?.id, account: values.account ?? '', secondary_account: values.secondary_account ?? '', password: values.password === passwordMask ? '' : values.password ?? '', display_name: values.display_name ?? '', login_method: loginMethod })
     },
     onSuccess: () => {
       message.success(`${slot?.systemName || '系统账号'}已保存`)
       form.resetFields()
       void queryClient.invalidateQueries({ queryKey: ['account-edit', slot?.key] })
-      onSaved(); onClose()
+      onSaved(); close()
     },
-    onError: (error) => message.error(errorMessage(error)),
+    onError: (error) => { message.error(errorMessage(error)) },
   })
   return (
-    <Modal title={slot ? `编辑${slot.systemName}` : '编辑账号'} open={slot !== null} onCancel={onClose} onOk={() => form.submit()} confirmLoading={save.isPending} okButtonProps={{ disabled: detail.isLoading }} okText="保存" cancelText="取消" width={620}>
-      <Alert type="info" showIcon message={`当前账号：${detail.data?.account || current?.masked_account || '尚未维护'}`} description="该入口使用独立账号保存。密码只显示固定掩码，不能查看旧密码；输入新内容后才会替换已保存密码。" style={{ marginBottom: 20 }} />
-      {detail.isError && current && <Alert type="error" showIcon message="账号信息加载失败" description={errorMessage(detail.error)} style={{ marginBottom: 20 }} />}
-      <Form form={form} layout="vertical" disabled={detail.isLoading} onFinish={(values) => save.mutate(values)}>
+    <Modal title={slot ? `编辑${slot.systemName}` : '编辑账号'} open={slot !== null} destroyOnHidden onCancel={close} onOk={() => form.submit()} confirmLoading={save.isPending} okButtonProps={{ disabled: detail.isLoading || detail.isError || connectionTest.isPending }} cancelButtonProps={{ disabled: save.isPending || connectionTest.isPending }} closable={!save.isPending && !connectionTest.isPending} mask={{ closable: !save.isPending && !connectionTest.isPending }} okText="保存" cancelText="取消" width={620}>
+      <Alert type="info" showIcon title={isApiKey ? 'NocoBase 使用 API 密钥认证' : `当前账号：${detail.data?.account || current?.masked_account || '尚未维护'}`} description={isApiKey ? '填写在 NocoBase 中生成的 API 密钥，不需要登录账号或密码。已保存密钥只显示固定掩码；测试连接不会保存密钥，请点击保存。密钥被撤销或权限不足时不会自动登录。' : '该入口使用独立账号保存。密码只显示固定掩码，不能查看旧密码；输入新内容后才会替换已保存密码。'} style={{ marginBottom: 20 }} />
+      {detail.isError && current && <Alert type="error" showIcon title="账号信息加载失败" description={errorMessage(detail.error)} style={{ marginBottom: 20 }} />}
+      <Form form={form} layout="vertical" disabled={detail.isLoading || detail.isError || save.isPending || connectionTest.isPending} onValuesChange={() => connectionTest.reset()} onFinish={(values) => save.mutate(values)}>
         <Form.Item name="display_name" label="显示名称"><Input placeholder={current?.display_name || '例如：南京单位账号'} /></Form.Item>
-        <Form.Item name="account" label={systemType === 'JSHRSS' ? (loginMethod === 'government_sso' ? '政务服务平台登录名' : '单位编号/统一社会信用代码') : '登录账号'}><Input autoComplete="off" placeholder="请输入登录账号" /></Form.Item>
+        {isApiKey ? <>
+          <Form.Item name="api_key" label="API 密钥" extra="保持 ****** 或留空表示保留已保存密钥；替换时粘贴密钥本身，不要添加 Bearer 前缀。" rules={[{ required: !detail.data?.api_key_saved, whitespace: true, message: '请输入 NocoBase API 密钥' }]}>
+            <Input.Password autoComplete="new-password" placeholder="请输入 NocoBase API 密钥" onFocus={(event) => { if (form.getFieldValue('api_key') === passwordMask) event.currentTarget.select() }} />
+          </Form.Item>
+          <Button onClick={() => connectionTest.mutate()} loading={connectionTest.isPending} disabled={detail.isLoading || detail.isError || save.isPending}>测试连接</Button>
+          {connectionTest.isSuccess && <Alert type="success" showIcon title={connectionTest.data.message} description="测试不保存配置，新增或更换密钥后请点击保存。" style={{ marginTop: 12 }} />}
+          {connectionTest.isError && <Alert type="error" showIcon title="连接测试失败" description={errorMessage(connectionTest.error)} style={{ marginTop: 12 }} />}
+        </> : <Form.Item name="account" label={systemType === 'JSHRSS' ? (loginMethod === 'government_sso' ? '政务服务平台登录名' : '单位编号/统一社会信用代码') : '登录账号'}><Input autoComplete="off" placeholder="请输入登录账号" /></Form.Item>}
         {systemType === 'JSHRSS' && loginMethod === 'direct' && <Form.Item name="secondary_account" label="证件号码/移动电话"><Input autoComplete="off" placeholder="请输入证件号码或移动电话" /></Form.Item>}
-        <Form.Item name="password" label="密码" extra="保持 ****** 表示不修改；输入新内容后才会更新密码。">
+        {!isApiKey && <Form.Item name="password" label="密码" extra="保持 ****** 表示不修改；输入新内容后才会更新密码。">
           <Input.Password autoComplete="new-password" placeholder="请输入密码" onFocus={(event) => { if (form.getFieldValue('password') === passwordMask) event.currentTarget.select() }} onClick={(event) => { if (form.getFieldValue('password') === passwordMask) event.currentTarget.select() }} />
-        </Form.Item>
+        </Form.Item>}
       </Form>
     </Modal>
   )

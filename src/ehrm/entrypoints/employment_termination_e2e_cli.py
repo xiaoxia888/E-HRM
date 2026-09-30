@@ -36,7 +36,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="ehrm-employment-termination-e2e",
         description=(
             "从 Excel 读取退保测试数据，复用 SQLite 智慧人社账号完成登录并"
-            "录入表单；不会点击“确定提交”。"
+            "录入表单；默认不提交，只有显式 --submit 才办理真实退保。"
         ),
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_SETTINGS_PATH)
@@ -65,10 +65,19 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="仅用于自签名证书测试环境",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--submit", action="store_true",
+        help="真实提交退保并核对接口和成功页；每人一次，结果待确认时停止且不重试",
+    )
+    mode.add_argument(
         "--pause-after-fill",
         action="store_true",
         help="录入完成后等待按回车，便于人工检查页面；仍不会提交",
+    )
+    parser.add_argument(
+        "--keep-browser-open", action="store_true",
+        help="成功或失败后均等待回车再关闭浏览器，便于检查结果（可与 --submit 一起使用）",
     )
     parser.add_argument(
         "--diagnostic",
@@ -113,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         f"ID={account.id}，{account.display_name or account.account}，"
         f"方式={method_label}"
     )
-    print("安全边界：只录入数据，不点击“确定提交”")
+    print("执行模式：真实退保提交（含真实性声明确认），请确认所选账号和输入数据" if args.submit
+          else "安全边界：只录入数据，不点击“确定提交”")
     if args.check_input:
         print("退保 E2E 配置、账号和 Excel 检查通过")
         return 0
@@ -139,36 +149,43 @@ def main(argv: list[str] | None = None) -> int:
                 login.ensure_authenticated()
                 page = login.page
 
-                print("阶段 2/2：正在确保南京地区并录入退保数据……")
-                result = EmploymentTerminationService(
+                print("阶段 2/2：正在确保南京地区并处理退保数据……")
+                service = EmploymentTerminationService(
                     settings,
                     logger,
                     progress_callback=print,
-                ).prepare_with_page(page, items)
+                )
+                result = (service.submit_with_page(page, items) if args.submit
+                          else service.prepare_with_page(page, items))
                 result_workbook = EmploymentTerminationResultWorkbookWriter().write(
                     input_path,
                     output_dir,
                     result.results,
                 )
                 _save_screenshot(page, diagnostic)
-                print(
-                    "退保数据录入测试完成："
-                    f"总计 {result.total_count} 条，"
-                    f"录入成功 {result.prepared_count} 条，"
-                    f"未查询到 {result.failed_count} 条，"
-                    f"地区={result.city_name}，submitted={str(result.submitted).lower()}"
-                )
+                if args.submit:
+                    print(f"退保提交结束：总计 {result.total_count} 条，提交成功 {result.submitted_count} 条，"
+                          f"结果待确认 {result.unknown_count} 条，失败或未执行 {result.failed_count - result.unknown_count} 条")
+                else:
+                    print("退保数据录入测试完成："
+                          f"总计 {result.total_count} 条，录入成功 {result.prepared_count} 条，"
+                          f"未查询到 {result.failed_count} 条，"
+                          f"地区={result.city_name}，submitted={str(result.submitted).lower()}")
                 print(f"结果 Excel：{result_workbook.resolve()}")
-                if args.pause_after_fill:
+                if args.keep_browser_open:
+                    input("浏览器保持打开，检查完毕后按回车关闭浏览器：")
+                elif args.pause_after_fill:
                     input("页面已停在提交前，检查完毕后按回车关闭浏览器：")
-                return 0
+                return 1 if args.submit and result.failed_count else 0
             except (EhrmError, OSError, PlaywrightError, ValueError):
                 # The screenshot must be taken before BrowserManager.__exit__ closes
                 # Playwright and its event loop.
                 _save_screenshot(page, diagnostic)
+                if args.keep_browser_open:
+                    input("处理失败，浏览器保持打开，检查完毕后按回车关闭浏览器：")
                 raise
     except (EhrmError, OSError, PlaywrightError, ValueError) as exc:
-        _print_failure("完整退保数据录入 E2E 失败", exc)
+        _print_failure("退保 E2E 失败", exc)
         return 1
 
 

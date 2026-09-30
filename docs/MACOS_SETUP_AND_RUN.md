@@ -92,7 +92,7 @@ chmod +x scripts/setup_server_macos.sh scripts/run_server_macos.sh
 3. 将 Playwright Chromium 安装到项目自己的
    `runtime/playwright-browsers/`；
 4. 执行 `npm ci` 并构建 Web 页面；
-5. 检查 FastAPI、Playwright、ddddocr、pyodbc、ODBC 驱动列表；
+5. 检查 FastAPI、Playwright、ddddocr、APScheduler、上海调度时区、pyodbc 和 ODBC 驱动列表；
 6. 临时启动并立即关闭无界面 Chromium，确认浏览器确实可用。
 
 初始化脚本不会启动 Web 服务。
@@ -118,6 +118,8 @@ chmod +x scripts/setup_server_macos.sh scripts/run_server_macos.sh
 验证定位器后，才调整该文件。
 
 业务账号在 Web 页面“系统设置 → 账户与连接”中维护，不要写入部署文档。
+NocoBase 配置 API 密钥，无需账号密码登录。自动同步在独立的“定时任务”菜单维护，
+默认关闭；先只读预览再启用。操作说明见 [ERP 申请同步到 NocoBase](ERP_NOCOBASE_SYNC.md)。
 
 ## 7. 启动 Web 服务
 

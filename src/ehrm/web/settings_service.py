@@ -75,12 +75,21 @@ class WebSettingsService:
         system_type: SystemType,
         *,
         account_id: int | None = None,
-        account: str,
+        account: str = "",
         secondary_account: str = "",
         password: str = "",
         display_name: str = "",
         login_method: str = "direct",
+        api_key: str = "",
     ) -> SystemAccount:
+        if system_type is SystemType.NOCOBASE:
+            if password or secondary_account:
+                raise ValueError("NocoBase 只支持 API 密钥配置，不再使用账号密码登录")
+            return self.repository.save_nocobase_api_key(
+                api_key, display_name=display_name, account_id=account_id
+            )
+        if api_key:
+            raise ValueError("API 密钥配置仅适用于 NocoBase")
         selected = None
         if account_id is not None:
             selected = next(
@@ -166,6 +175,10 @@ class WebSettingsService:
         )
         if account is None:
             raise ValueError("所选账号不存在，请刷新系统设置后重试")
+        if system_type is SystemType.NOCOBASE:
+            if not account.api_key:
+                raise ValueError("请先在系统设置中配置 NocoBase API 密钥")
+            return account
         if not account.account or not account.password:
             raise ValueError("所选账号信息不完整，请先在系统设置中补充")
         login_method = str(account.profile.get("login_method") or "direct")

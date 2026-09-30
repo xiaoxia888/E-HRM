@@ -103,7 +103,12 @@ city_code = "320100"
 city_name = "南京"
 # 人员查询响应必须同时匹配此路径和当前身份证请求，不再兜底匹配其他接口。
 person_query_path = "/api/ehrss-si-enterprise-app/api/simis/persons/employees"
-# 人员查询接口和页面遮罩的异常保护上限。
+# 显式启用提交后观察的接口；仅监听浏览器真实请求，不直接重放接口。
+# submitSave 空响应可正常；dimissionApply 以布尔 ok 判断；complete 按办件关联校验。
+submit_save_path = "/api/ehrss-si-enterprise-app/api/changeAndLookController/submitSave"
+submit_apply_path = "/api/ehrss-si-enterprise-app/api/applys/employee/dimissionApply"
+submit_complete_path = "/api/ggfw-affair-base-center/affair/case/commbusiness/complete"
+# 人员查询/提交接口响应和页面遮罩的异常保护上限；提交复用同一响应等待配置。
 response_timeout_ms = 15000
 loading_timeout_ms = 30000
 
@@ -140,7 +145,8 @@ verify_timeout_ms = 15000
 
 [nocobase.site]
 # NocoBase 服务地址集中配置，业务代码和测试中不写死主机、端口。
-base_url = "http://211.138.201.5:443"
+base_url = "http://cloud.njncc.com:443"
+# 仅供旧认证模块兼容；当前页面、查询服务和测试入口使用 API 密钥，不调用此路径。
 sign_in_path = "/api/auth:signIn"
 # 权益申请分页查询资源路径；主机和端口统一继承 base_url。
 rights_application_list_path = "/api/NCC_HumProblem:list"
@@ -149,6 +155,23 @@ rights_application_detail_path = "/api/NCC_HumProblem:get"
 # 分页列表默认每页数量。
 default_page_size = 20
 request_timeout_ms = 15000
+
+[nocobase.sync]
+# 同步仅搬运 ERP 原始申请，不调用模型，不写人员、附件或人工办理字段。
+application_create_path = "/api/NCC_HumProblem:create"
+application_update_path = "/api/NCC_HumProblem:update"
+# 发起人按 users.nickname 精确匹配；查不到或重名时留空。
+users_list_path = "/api/users:list"
+# 以下是首次初始化的默认值；在“定时任务”页面保存后，以数据库中的设置为准。
+# 默认关闭，配置好 ERP 账号、NocoBase API 密钥和写入权限后手动开启。
+enabled = false
+# 五段 Unix cron：分 时 日 月 星期，时区 Asia/Shanghai；0/7 表示周日。
+# 默认每小时整点；例如每天 08:00 为 "0 8 * * *"。
+# 仅决定触发时间，不决定回查范围。手动执行不改变下一次计划时间。
+cron = "0 * * * *"
+# 按 ERP 申请日期回查的自然日数，包含今天；2 表示今天和昨天。
+# 不代表按更新时间查询，较早申请的修改需手动指定日期范围回查。
+lookback_days = 2
 
 # -----------------------------------------------------------------------------
 # ERP 附件模块
@@ -198,3 +221,6 @@ models_dir = "models"
 base_url = "http://192.168.31.201:11434"
 chat_path = "/api/chat"
 prompt_path = "prompts/erp_task_extraction_v2_system.txt"
+classification_prompt_path = "prompts/erp_business_classification_system.txt"
+enrollment_people_prompt_path = "prompts/erp_enrollment_people_system.txt"
+termination_people_prompt_path = "prompts/erp_termination_people_system.txt"

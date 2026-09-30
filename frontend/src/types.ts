@@ -49,6 +49,8 @@ export interface AccountEditDetail {
   secondary_account: string
   password_mask: string
   password_saved: boolean
+  api_key_saved: boolean
+  api_key_mask: string
   login_method: 'direct' | 'government_sso'
 }
 
@@ -255,4 +257,35 @@ export interface RightsApplicationDetail {
   related_persons: RelatedPerson[]
   attachment_names: string[]
   allowed_actions: Record<string, number[]>
+  termination_person?: BusinessPerson[]
+  insurance_person?: BusinessPerson[]
+  operation_states?: ApplicationOperationStates
 }
+
+export interface BusinessPerson {
+  id: number; user_name: string; id_card_no: string; operation_key: string
+  termination_reason?: string; termination_reason_label?: string; phone?: string; household_type?: string
+  contract_type?: string; contract_start_date?: string; contract_end_date?: string
+  ethnicity?: string; job_type?: string; administrative_division_id?: number
+  contract_add_reason?: string; insurance_identity?: string; monthly_contribution_salary?: number; is_technology?: string
+}
+export interface ApplicationOperationStates {
+  people: Array<{ person_key: string; name: string; operation: string; status: string; message: string;
+    updated_at: string; task_id: string; account_label: string }>
+  runs: Array<{ id: string; operation: string; active: number; task_id: string; account_label: string }>
+}
+export type ScheduledJob = {
+  id: string; name: string; task_type: string; cron: string; enabled: boolean;
+  lookback_days: number; timezone: string; next_run: string | null; notice: string;
+  last_run?: ScheduledRun | null;
+}
+export type ScheduledJobValues = Pick<ScheduledJob, 'name' | 'task_type' | 'cron' | 'enabled' | 'lookback_days'>
+export type ScheduledRun = {
+  id: string; job_id: string; trigger_kind: string; status: string; task_id: string | null;
+  created_at: string; started_at: string | null; finished_at: string | null;
+  message: string; error: string;
+  parameters: { start_date: string; end_date: string; dry_run: boolean };
+  result: { summary?: Record<string, number>; items?: Record<string, unknown>[] } | null;
+}
+export type ScheduledLog = { id: number; created_at: string; level: string; message: string }
+export type PagedItems<T> = { items: T[]; total: number; page: number; page_size: number }
