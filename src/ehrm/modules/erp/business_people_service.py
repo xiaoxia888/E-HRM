@@ -23,6 +23,7 @@ class BusinessPerson:
     department: str = ""
     employee_code: str = ""
     match_status: str = "not_found"
+    phone: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,21 @@ class ErpBusinessPeopleService:
             intent,
             reasoning_mode or self._settings.ai.default_reasoning_mode,
         )
+        return self.resolve_people(record, extraction, intent)
+
+    def resolve_people(
+        self,
+        record: ErpTaskRecord,
+        extraction: BusinessPeopleExtraction,
+        intent: BusinessIntent,
+    ) -> BusinessPeopleResult:
+        """Enriches people already extracted by a business-specific AI prompt."""
+        if intent not in (
+            BusinessIntent.RIGHTS_STATEMENT,
+            BusinessIntent.EMPLOYMENT_ENROLLMENT,
+            BusinessIntent.EMPLOYMENT_TERMINATION,
+        ):
+            raise ValueError("不支持的人员解析业务类型")
         if not extraction.people:
             return BusinessPeopleResult(
                 record.code,
@@ -185,6 +201,7 @@ class ErpBusinessPeopleService:
                 company=match.company,
                 department=match.department,
                 employee_code=match.employee_code,
+                phone=match.phone,
                 match_status=(
                     "matched_by_identity" if source_identity else "matched_by_name"
                 ),

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 import logging
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.encoders import jsonable_encoder
@@ -28,6 +29,7 @@ from ehrm.core.settings import (
 from ehrm.modules.ai.business_classification import BusinessIntent
 from ehrm.modules.erp.business_people_service import ErpBusinessPeopleService
 from ehrm.modules.erp.models import ErpTaskRecord
+from ehrm.web.nocobase_form_analysis import NocoBaseFormAnalysisService
 from ehrm.modules.nocobase.application_query_service import (
     NocoBaseApplicationQueryService,
 )
@@ -45,6 +47,7 @@ from ehrm.web.schemas import (
     ConcurrencyPolicyResponse,
     ErpRightsExtractionRequest,
     ErpBusinessPeopleRequest,
+    NocoBaseFormAnalysisRequest,
     NocoBasePrintRequest,
     NocoBaseTerminationRequest,
     TaskListResponse,
@@ -103,6 +106,9 @@ def create_app(
     erp_business_people_service = ErpBusinessPeopleService(
         resolved_settings, resolved_logger
     )
+    nocobase_form_analysis_service = NocoBaseFormAnalysisService(
+        resolved_settings, resolved_logger
+    )
     sync_controller = NocoBaseSyncController(settings_service, task_coordinator, resolved_logger)
     scheduled_tasks = ScheduledTaskWorkbench(sync_controller)
     application_operations = ApplicationOperationService(settings_service, task_coordinator, resolved_logger)
@@ -130,15 +136,19 @@ def create_app(
     app.state.web_settings_service = settings_service
     app.state.rights_service = rights_service
     app.state.erp_business_people_service = erp_business_people_service
+    app.state.nocobase_form_analysis_service = nocobase_form_analysis_service
     app.state.nocobase_query_service = query_service
     app.state.nocobase_sync = sync_controller
     app.state.scheduled_tasks = scheduled_tasks
     app.state.application_operations = application_operations
+    nocobase_url = urlsplit(resolved_settings.nocobase.base_url)
+    nocobase_origin = f"{nocobase_url.scheme}://{nocobase_url.netloc}"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
             "http://127.0.0.1:5173",
             "http://localhost:5173",
+            nocobase_origin,
         ],
         allow_credentials=True,
         allow_methods=["*"],
@@ -516,6 +526,29 @@ def create_app(
     ) -> dict[str, object]:
         return extract_erp_business_people(
             body, BusinessIntent.EMPLOYMENT_TERMINATION
+        )
+
+    @app.post("/api/v1/nocobase/form-analysis")
+    def analyze_nocobase_form(
+        body: NocoBaseFormAnalysisRequest,
+    ) -> dict[str, object]:
+        title = body.title.strip()
+        description = body.description.strip()
+        if not title and not description:
+            raise ValueError("申请标题和内容不能同时为空")
+        record = ErpTaskRecord(
+            id="",
+            code=body.application_code.strip(),
+            initiated_date=body.application_date.strip(),
+            title=title,
+            description=description,
+            transaction_type=body.erp_transaction_type.strip() or "社保咨询",
+            status="",
+            originator="",
+            department="",
+        )
+        return nocobase_form_analysis_service.analyze(
+            record, body.reasoning_mode or None
         )
 
     @app.get("/api/v1/rights/imports/{import_id}/records/{row_number}")

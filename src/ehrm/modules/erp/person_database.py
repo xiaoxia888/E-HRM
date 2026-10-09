@@ -114,6 +114,7 @@ class ErpPersonDatabaseClient:
             company=_text(row.get("company")) or _DEFAULT_COMPANY,
             status=_text(row.get("status")),
             is_quit=_text(row.get("is_quit")),
+            phone=_text(row.get("phone")),
         )
 
 
@@ -270,6 +271,7 @@ SELECT
     a.Code AS employee_code,
     a.Name AS name,
     a.IdCard AS identity_number,
+    a.Phone AS phone,
     a.DeptName AS department,
     ISNULL(NULLIF(LTRIM(RTRIM(b.ZUnit)), ''), N'南京南化建设有限公司') AS company,
     '' AS status,

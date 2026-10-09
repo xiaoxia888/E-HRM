@@ -30,7 +30,7 @@ def _record(title: str, description: str = "") -> ErpTaskRecord:
     )
 
 
-def _person(name: str, identity: str, *, company: str = "甲公司") -> ErpPersonRecord:
+def _person(name: str, identity: str, *, company: str = "甲公司", phone: str = "") -> ErpPersonRecord:
     return ErpPersonRecord(
         id=identity,
         employee_code="E-1",
@@ -40,6 +40,7 @@ def _person(name: str, identity: str, *, company: str = "甲公司") -> ErpPerso
         department="项目部",
         status="在职",
         is_quit="否",
+        phone=phone,
     )
 
 
@@ -85,7 +86,7 @@ def test_explicit_identity_enriches_enrollment_person(tmp_path: Path) -> None:
     identity = "142725199612061613"
     record = _record("请为苏兆瑞办理参保", f"苏兆瑞 {identity} 从10月开始缴纳社保")
     people = _model_people(record, "苏兆瑞", identity)
-    lookup = _Lookup(by_identity={identity: (_person("苏兆瑞", identity),)})
+    lookup = _Lookup(by_identity={identity: (_person("苏兆瑞", identity, phone="13800138000"),)})
 
     result = _service(tmp_path, people, lookup).extract(
         record, BusinessIntent.EMPLOYMENT_ENROLLMENT
@@ -95,6 +96,7 @@ def test_explicit_identity_enriches_enrollment_person(tmp_path: Path) -> None:
     assert result.people[0].identity_number == identity
     assert result.people[0].company == "甲公司"
     assert result.people[0].department == "项目部"
+    assert result.people[0].phone == "13800138000"
     assert result.people[0].match_status == "matched_by_identity"
     assert result.issues == ()
 
@@ -147,6 +149,23 @@ def test_unique_name_enriches_termination_person(tmp_path: Path) -> None:
     assert result.people[0].company == "甲公司"
     assert result.people[0].match_status == "matched_by_name"
     assert result.issues == ()
+
+
+def test_existing_rights_extraction_can_reuse_person_enrichment(tmp_path: Path) -> None:
+    record = _record("请开具赵佳男社保证明")
+    identity = "320482198706114614"
+    result = _service(
+        tmp_path,
+        _model_people(record, "赵佳男"),
+        _Lookup(by_name={"赵佳男": (_person("赵佳男", identity),)}),
+    ).resolve_people(
+        record,
+        _model_people(record, "赵佳男"),
+        BusinessIntent.RIGHTS_STATEMENT,
+    )
+
+    assert result.people[0].identity_number == identity
+    assert result.business_type == "rights_statement"
 
 
 def test_name_match_with_invalid_erp_identity_is_reported(tmp_path: Path) -> None:

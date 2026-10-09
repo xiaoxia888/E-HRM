@@ -167,6 +167,18 @@ class ErpBusinessPeopleRequest(BaseModel):
     reasoning_mode: str = ""
 
 
+class NocoBaseFormAnalysisRequest(BaseModel):
+    """Current NocoBase form values; no NocoBase API credential is required."""
+
+    model_config = ConfigDict(extra="forbid")
+    application_code: str = ""
+    application_date: str = ""
+    title: str = ""
+    description: str = ""
+    erp_transaction_type: str = "社保咨询"
+    reasoning_mode: str = ""
+
+
 class NocoBasePrintRequest(BaseModel):
     account_id: int
     upload_to_erp: bool = False

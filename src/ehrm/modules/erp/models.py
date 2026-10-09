@@ -90,6 +90,7 @@ class ErpPersonRecord:
     company: str
     status: str
     is_quit: str
+    phone: str = ""
 
 
 @dataclass(frozen=True, slots=True)

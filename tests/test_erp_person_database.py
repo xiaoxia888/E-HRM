@@ -160,8 +160,14 @@ def test_database_person_query_uses_identity_condition_and_default_company(
                 "",
                 "",
                 "在职",
+                "13800138000",
             )
-        ]
+        ],
+        description=[
+            ("id",), ("employee_code",), ("name",), ("identity_number",),
+            ("department",), ("company",), ("status",), ("is_quit",),
+            ("phone",),
+        ],
     )
     connection = FakeConnection(cursor)
     client = ErpPersonDatabaseClient(
@@ -180,6 +186,8 @@ def test_database_person_query_uses_identity_condition_and_default_company(
     assert result[0].department == "技术中心"
     assert result[0].company == "南京南化建设有限公司"
     assert result[0].is_quit == "在职"
+    assert result[0].phone == "13800138000"
+    assert "a.Phone AS phone" in cursor.sql
     assert "a.IdCard = ?" in cursor.sql
     assert "WHERE a.IsQuit = 0" in cursor.sql
     assert "b.FormType IN" in cursor.sql

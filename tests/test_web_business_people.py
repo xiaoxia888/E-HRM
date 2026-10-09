@@ -83,3 +83,73 @@ def test_business_people_endpoint_rejects_missing_application_text(tmp_path: Pat
         assert "标题" in response.json()["message"]
     finally:
         coordinator.close()
+
+
+def test_nocobase_form_analysis_accepts_current_form_without_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    coordinator = TaskCoordinator(max_workers=1)
+    app = create_app(settings=settings, logger=Mock(), coordinator=coordinator)
+    observed = {}
+
+    def fake_analyze(record, reasoning_mode=None):
+        observed["record"] = record
+        return {
+            "classification": {"classified": False, "reason": "意图不明"},
+            "business_type": "社保咨询", "prob_type": "", "people": [],
+            "issues": [{"code": "BUSINESS_TYPE_UNCLEAR", "message": "意图不明"}],
+            "needs_review": True, "form_values": {},
+        }
+
+    monkeypatch.setattr(app.state.nocobase_form_analysis_service, "analyze", fake_analyze)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/nocobase/form-analysis",
+            json={
+                "application_code": "",
+                "application_date": "2026-09-29",
+                "title": "申请社保事项",
+                "description": "请处理",
+                "erp_transaction_type": "社保咨询",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["form_values"] == {}
+        assert observed["record"].title == "申请社保事项"
+        assert observed["record"].transaction_type == "社保咨询"
+    finally:
+        coordinator.close()
+
+
+def test_nocobase_form_analysis_rejects_empty_text(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    coordinator = TaskCoordinator(max_workers=1)
+    app = create_app(settings=settings, logger=Mock(), coordinator=coordinator)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/nocobase/form-analysis", json={"title": "", "description": ""},
+        )
+        assert response.status_code == 400
+        assert "标题" in response.json()["message"]
+    finally:
+        coordinator.close()
+
+
+def test_nocobase_origin_is_allowed_for_form_analysis_preflight(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    coordinator = TaskCoordinator(max_workers=1)
+    app = create_app(settings=settings, logger=Mock(), coordinator=coordinator)
+    try:
+        response = TestClient(app).options(
+            "/api/v1/nocobase/form-analysis",
+            headers={
+                "Origin": "http://cloud.njncc.com:443",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "http://cloud.njncc.com:443"
+    finally:
+        coordinator.close()
