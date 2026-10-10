@@ -76,7 +76,7 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
         patch(
             "ehrm.entrypoints.login_e2e_cli.LoginService",
             return_value=service,
-        ),
+        ) as login_service_type,
         patch(
             "ehrm.entrypoints.login_e2e_cli.create_rights_access_token_manager",
             return_value=access_tokens,
@@ -87,9 +87,10 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
         ),
         patch("builtins.input", return_value="") as wait_for_inspection,
     ):
-        result = main([])
+        result = main(["--captcha-max-attempts", "1"])
 
     assert result == 0
+    assert browser_manager.call_args is not None
     runtime_browser = browser_manager.call_args.args[0]
     assert runtime_browser.user_data_dir != settings.browser.user_data_dir
     assert runtime_browser.headless is settings.browser.headless
@@ -102,6 +103,7 @@ def test_login_e2e_runs_complete_login_service_with_isolated_profile(
         )
     )
     assert browser_manager.call_args.kwargs["stealth_enabled"] is expected_stealth
+    assert login_service_type.call_args.args[1].captcha.max_attempts == 1
     service.ensure_authenticated.assert_called_once_with(
         username=account.account,
         mobile=account.secondary_account,

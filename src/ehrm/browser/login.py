@@ -33,7 +33,7 @@ _LOGGER = logging.getLogger("ehrm")
 
 
 class LoginService:
-    """Automates credentials and supports local-test CAPTCHA verification."""
+    """Automates credentials and supported CAPTCHA flows for unit login."""
 
     def __init__(
         self,
@@ -885,7 +885,7 @@ class LoginService:
         return False
 
     def _try_automated_captcha(self) -> bool:
-        """Runs automatic clicking only for an explicitly allowed host."""
+        """Runs the detected CAPTCHA flow only on explicitly allowed hosts."""
         if not self.settings.captcha.enabled:
             self._manual_login_status = (
                 "人工验证：验证码自动验证未启用，请在浏览器中完成安全验证"
@@ -934,9 +934,14 @@ class LoginService:
         except (CaptchaAutomationError, PlaywrightError, ValueError) as exc:
             _LOGGER.warning("验证码自动验证失败，已停止登录流程：%s", exc)
             self._progress(f"自动验证：失败，已停止登录流程：{exc}")
+            message = (
+                f"验证码自动验证失败：{exc}"
+                if isinstance(exc, CaptchaAutomationError)
+                else "验证码自动验证失败"
+            )
             raise AuthenticationFailedError(
-                "验证码自动验证失败",
-                details=str(exc),
+                message,
+                details=str(exc) if message == "验证码自动验证失败" else None,
             ) from exc
         if not solved:
             self._progress("自动验证：未通过，已停止登录流程")

@@ -61,6 +61,11 @@ def _parser() -> argparse.ArgumentParser:
         help="测试结束后自动关闭浏览器；默认保留浏览器供人工检查",
     )
     parser.add_argument(
+        "--captcha-max-attempts",
+        type=int,
+        help="仅本次登录测试使用的验证码最多尝试次数；首次排查建议设为 1",
+    )
+    parser.add_argument(
         "--diagnostic",
         type=Path,
         default=Path("output/login-e2e-failure.png"),
@@ -185,6 +190,9 @@ def _selected_account(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.captcha_max_attempts is not None and args.captcha_max_attempts < 1:
+        print("验证码最多尝试次数必须大于 0")
+        return 2
     try:
         runtime_root = application_runtime_root(args.config)
         settings = load_settings(args.config, data_root=runtime_root)
@@ -206,6 +214,14 @@ def main(argv: list[str] | None = None) -> int:
     settings = WebSettingsService(settings, runtime_root).runtime_settings(
         rights_account=selected_account,
     )
+    if args.captcha_max_attempts is not None:
+        settings = replace(
+            settings,
+            captcha=replace(
+                settings.captcha,
+                max_attempts=args.captcha_max_attempts,
+            ),
+        )
 
     if args.check_config:
         print("登录 E2E 配置检查通过")

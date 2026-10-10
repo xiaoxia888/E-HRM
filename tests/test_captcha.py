@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from ehrm.browser.captcha import (
+    CaptchaAutomationError,
     CaptchaRateLimitedError,
     CaptchaSolver,
     image_point_to_page,
@@ -266,6 +267,33 @@ def test_login_service_uses_solver_on_allowed_page(tmp_path) -> None:
     assert solved is True
     assert solver_class.call_args.kwargs["pacer"] is service.pacer
     solver.solve.assert_called_once_with()
+
+
+def test_formal_login_exposes_unknown_verification_error(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    page = SimpleNamespace(url=settings.site.login_url)
+    updates: list[str] = []
+    service = LoginService(  # type: ignore[arg-type]
+        page, settings, progress_callback=updates.append
+    )
+    service._open_login_entry = Mock()  # type: ignore[method-assign]
+    service.is_authenticated = Mock(return_value=False)  # type: ignore[method-assign]
+    service._autofill_and_submit = Mock(return_value=True)  # type: ignore[method-assign]
+    solver = Mock()
+    solver.solve.side_effect = CaptchaAutomationError("检测到新的或未识别的安全验证方式")
+
+    with (
+        patch("ehrm.browser.captcha.CaptchaSolver", return_value=solver),
+        pytest.raises(AuthenticationFailedError) as error,
+    ):
+        service.ensure_authenticated(
+            username="test-credit-code",
+            mobile="test-mobile",
+            password="test-password",
+        )
+
+    assert "未识别的安全验证方式" in error.value.message
+    assert any("未识别的安全验证方式" in message for message in updates)
 
 
 def test_login_service_skips_solver_on_unlisted_page(tmp_path) -> None:

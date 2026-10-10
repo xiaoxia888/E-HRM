@@ -35,6 +35,7 @@ _VERIFY_SUCCESS_CODE = "0"
 _VERIFY_RETRY_CODE = "50"
 _VERIFY_RATE_LIMIT_CODE = "12"
 _CLICK_BOUNDARY_MARGIN_PX = 1.0
+_MAX_AUTOMATED_ATTEMPTS = 3
 
 
 class CaptchaAutomationError(RuntimeError):
@@ -82,7 +83,7 @@ def image_point_to_page(
 
 
 class CaptchaSolver:
-    """Solves click challenges only for explicitly configured test hosts."""
+    """Selects the supported CAPTCHA flow on explicitly allowed login hosts."""
 
     def __init__(
         self,
@@ -114,11 +115,25 @@ class CaptchaSolver:
                 "当前页面主机不在 rights_statement.captcha.allowed_hosts 中"
             )
 
+        challenge_kind, slider_frame = self._wait_for_challenge_kind()
+        if challenge_kind == "yidun":
+            from ehrm.browser.slider_captcha import YidunSliderSolver
+
+            assert slider_frame is not None
+            return YidunSliderSolver(
+                self.page,
+                slider_frame,
+                self.settings,
+                pacer=self.pacer,
+                progress_callback=self._progress_callback,
+            ).solve()
+
+        max_attempts = min(self.settings.max_attempts, _MAX_AUTOMATED_ATTEMPTS)
         previous_sources: tuple[str, str] | None = None
-        for attempt in range(1, self.settings.max_attempts + 1):
+        for attempt in range(1, max_attempts + 1):
             self._progress(
                 f"自动验证：正在等待验证码加载（第 {attempt}/"
-                f"{self.settings.max_attempts} 次），请勿手动点击"
+                f"{max_attempts} 次），请勿手动点击"
             )
             frame = self._find_frame()
             if previous_sources is not None:
@@ -131,7 +146,7 @@ class CaptchaSolver:
             )
             self._progress(
                 f"自动验证：验证码已加载，正在识别图形符号（第 {attempt}/"
-                f"{self.settings.max_attempts} 次）"
+                f"{max_attempts} 次）"
             )
             recognition_started = time.monotonic()
             try:
@@ -194,16 +209,75 @@ class CaptchaSolver:
             )
 
         raise CaptchaAutomationError(
-            f"验证码连续 {self.settings.max_attempts} 次验证失败"
+            f"验证码连续 {max_attempts} 次验证失败"
         )
+
+    def _wait_for_challenge_kind(self) -> tuple[str, Frame | None]:
+        # A few unit-test doubles intentionally provide only the old frame API.
+        if not hasattr(self.page, "frames"):
+            return "click", None
+        deadline = time.monotonic() + self.settings.frame_timeout_ms / 1000.0
+        saw_drag_shell = False
+        saw_other_challenge = False
+        while time.monotonic() < deadline:
+            frames = list(self.page.frames)
+            # Some login pages keep a visible Tencent drag shell alongside the
+            # actual Yidun puzzle. Search every frame for the active puzzle
+            # before considering any legacy click challenge.
+            for frame in frames:
+                try:
+                    slider = frame.locator(".yidun_modal .yidun--jigsaw").first
+                    if slider.count() and slider.is_visible():
+                        return "yidun", frame
+                except PlaywrightError:
+                    continue
+            for frame in frames:
+                try:
+                    target = frame.locator(".tc-instruction-icon img").first
+                    background = frame.locator("#slideBg").first
+                    if (
+                        target.count() and target.is_visible()
+                        and background.count() and background.is_visible()
+                    ):
+                        return "click", None
+                    drag = frame.locator("#tcWrap.tc-drag").first
+                    saw_drag_shell |= bool(drag.count() and drag.is_visible())
+                    for selector in (
+                        ".yidun_modal",
+                        "#tcWrap",
+                        "[class*='geetest_']",
+                        "[role='dialog'][aria-label*='验证']",
+                    ):
+                        marker = frame.locator(selector).first
+                        saw_other_challenge |= bool(
+                            marker.count() and marker.is_visible()
+                        )
+                except PlaywrightError:
+                    continue
+            self.page.wait_for_timeout(100)
+        if saw_drag_shell:
+            raise CaptchaAutomationError(
+                "检测到拖动验证码外壳，但未找到已加载的拼图；"
+                "当前验证方式未识别或加载失败，已停止自动验证"
+            )
+        if saw_other_challenge:
+            raise CaptchaAutomationError(
+                "检测到新的或未识别的安全验证方式，或验证码未完整加载；"
+                "已停止自动登录，请联系管理员适配"
+            )
+        raise CaptchaAutomationError("等待受支持的验证码窗口超时")
 
     def _find_frame(self) -> Frame:
         deadline = time.monotonic() + self.settings.frame_timeout_ms / 1000.0
         while time.monotonic() < deadline:
             for frame in self.page.frames:
                 try:
-                    root = frame.locator("#tcWrap").first
-                    if root.count() > 0 and root.is_visible():
+                    target = frame.locator(".tc-instruction-icon img").first
+                    background = frame.locator("#slideBg").first
+                    if (
+                        target.count() and target.is_visible()
+                        and background.count() and background.is_visible()
+                    ):
                         self._report_frame_features(frame)
                         return frame
                 except PlaywrightError:

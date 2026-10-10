@@ -58,7 +58,7 @@ configure_odbc_registry() {
 configure_odbc_registry
 
 HOST="${EHRM_HOST:-0.0.0.0}"
-PORT="${EHRM_PORT:-8000}"
+PORT="${EHRM_PORT:-8080}"
 echo "服务监听：$HOST:$PORT"
 echo "本机访问：http://127.0.0.1:$PORT/rights"
 echo "内网访问：http://<这台 Mac 的内网 IP>:$PORT/rights"

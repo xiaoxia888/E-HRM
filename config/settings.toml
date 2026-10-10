@@ -125,11 +125,16 @@ allowed_hosts = [
   "127.0.0.1",
   "localhost",
   "rs.jshrss.jiangsu.gov.cn",
-  "turing.captcha.qcloud.com"
+  "turing.captcha.qcloud.com",
+  # 网易易盾拼图图片 CDN 和校验接口；只允许已知域名，不能使用泛域名。
+  "necaptcha.nosdn.127.net",
+  "c.dun.163.com"
 ]
+# 原有图形点击验证码的校验路径；易盾滑块固定监听其 /api/v3/check 响应。
 verify_path = "/cap_union_new_verify"
 max_attempts = 3
-# 每个识别点在网页 CSS 像素范围内随机偏移；实际偏移仍限制在匹配框内部。
+# 仅用于原有图形点击验证码：每个识别点在网页 CSS 像素范围内随机偏移，
+# 实际偏移仍限制在匹配框内部。滑块使用图片宽度和元素位置换算拖动距离。
 click_offset_max_px = 3
 # 是否保存验证码识别诊断图片；正常运行建议关闭。
 diagnostic_images_enabled = false
