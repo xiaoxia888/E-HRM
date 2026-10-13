@@ -40,6 +40,9 @@ from ehrm.web.schemas import (
     AccountSummary,
     AccountEditDetail,
     AccountUpdateRequest,
+    GovernmentIdentitySummary,
+    GovernmentIdentityDetail,
+    GovernmentIdentityUpdateRequest,
     NocoBaseConnectionTestRequest,
     ScheduledJobRequest,
     NocoBaseSyncRequest,
@@ -246,6 +249,74 @@ def create_app(
             for record in records
         ]
 
+    def government_identity_summary(identity_id: int) -> GovernmentIdentitySummary:
+        repository = settings_service.repository
+        identity = repository.get_government_identity(identity_id)
+        if identity is None:
+            raise HTTPException(status_code=404, detail="政务网账号不存在")
+        bindings = repository.government_bindings(identity_id)
+        social = next((item for item in bindings if item.system_type is SystemType.JSHRSS), None)
+        medical = next((item for item in bindings if item.system_type is SystemType.MEDICAL), None)
+        return GovernmentIdentitySummary(
+            id=identity.id,
+            display_name=identity.display_name or identity.account,
+            masked_account=_mask_account(identity.account),
+            social_account_id=social.id if social else None,
+            social_default=social.is_default if social else False,
+            medical_account_id=medical.id if medical else None,
+            medical_default=medical.is_default if medical else False,
+        )
+
+    @app.get("/api/v1/government-identities", response_model=list[GovernmentIdentitySummary])
+    def government_identities() -> list[GovernmentIdentitySummary]:
+        return [
+            government_identity_summary(item.id)
+            for item in settings_service.repository.list_government_identities()
+        ]
+
+    @app.get("/api/v1/government-identities/{identity_id}", response_model=GovernmentIdentityDetail)
+    def government_identity_detail(identity_id: int) -> GovernmentIdentityDetail:
+        identity = settings_service.repository.get_government_identity(identity_id)
+        if identity is None:
+            raise HTTPException(status_code=404, detail="政务网账号不存在")
+        return GovernmentIdentityDetail(
+            id=identity.id, account=identity.account,
+            display_name=identity.display_name, password_saved=bool(identity.password),
+        )
+
+    @app.put("/api/v1/government-identities", response_model=GovernmentIdentitySummary)
+    def update_government_identity(request: GovernmentIdentityUpdateRequest) -> GovernmentIdentitySummary:
+        saved = settings_service.repository.save_government_identity(
+            request.account, request.password,
+            display_name=request.display_name, identity_id=request.identity_id,
+            social_enabled=request.social_enabled, medical_enabled=request.medical_enabled,
+        )
+        return government_identity_summary(saved.id)
+
+    @app.post("/api/v1/government-identities/{identity_id}/bind/{purpose}", response_model=GovernmentIdentitySummary)
+    def bind_government_identity(identity_id: int, purpose: str) -> GovernmentIdentitySummary:
+        if purpose not in {"social", "medical"}:
+            raise ValueError("业务类型只能是社保或医保")
+        settings_service.repository.bind_government_identity(
+            identity_id, SystemType.JSHRSS if purpose == "social" else SystemType.MEDICAL,
+        )
+        return government_identity_summary(identity_id)
+
+    @app.post("/api/v1/government-identities/{identity_id}/default/{purpose}", response_model=GovernmentIdentitySummary)
+    def default_government_identity(identity_id: int, purpose: str) -> GovernmentIdentitySummary:
+        if purpose not in {"social", "medical"}:
+            raise ValueError("业务类型只能是社保或医保")
+        system_type = SystemType.JSHRSS if purpose == "social" else SystemType.MEDICAL
+        bound = next(
+            (item for item in settings_service.repository.government_bindings(identity_id)
+             if item.system_type is system_type),
+            None,
+        )
+        if bound is None:
+            raise ValueError("请先将该账号绑定到对应业务")
+        settings_service.repository.set_default_account(system_type, bound.id)
+        return government_identity_summary(identity_id)
+
     @app.get("/api/v1/settings")
     def web_settings() -> dict[str, object]:
         return {**settings_service.preference_payload(), "version": __version__}
@@ -376,6 +447,24 @@ def create_app(
             login_method=str(saved.profile.get("login_method") or "direct"),
         )
 
+    @app.post(
+        "/api/v1/settings/accounts/MEDICAL/{account_id}/default",
+        response_model=AccountSummary,
+    )
+    def set_default_medical_account(account_id: int) -> AccountSummary:
+        saved = settings_service.repository.set_default_account(
+            SystemType.MEDICAL, account_id
+        )
+        return AccountSummary(
+            id=saved.id,
+            system_type=saved.system_type.value,
+            display_name=saved.display_name or "医保政务平台账号",
+            masked_account=_mask_account(saved.account),
+            is_default=True,
+            ready=_account_ready(saved),
+            login_method="government_sso",
+        )
+
     @app.post("/api/v1/settings/nocobase/test-connection")
     def test_nocobase_connection(request: NocoBaseConnectionTestRequest) -> dict[str, str]:
         query_service.test_connection(api_key=request.api_key, account_id=request.account_id)
@@ -434,7 +523,7 @@ def create_app(
     def get_application(application_id: int) -> object:
         result = query_service.get_application(application_id)
         payload = asdict(result)
-        for field in ('termination_person', 'insurance_person'):
+        for field in ('termination_person', 'insurance_person', 'med_ins_withdrawal_record', 'med_ins_enrollee'):
             payload[field] = [{**row, 'operation_key': person_key(str(row.get('id_card_no') or ''))} for row in payload[field]]
         for row in payload['termination_person']:
             row['termination_reason_label'] = EmploymentTerminationReason.display_label(row.get('termination_reason'))
@@ -457,6 +546,20 @@ def create_app(
             raise ValueError('请先确认执行账号及真实退保提交')
         detail = query_service.get_application(application_id)
         return TaskResponse.from_snapshot(application_operations.submit_termination(detail, request.account_id))
+
+    @app.post('/api/v1/nocobase/applications/{application_id}/medical-termination', response_model=TaskResponse)
+    def start_application_medical_termination(application_id: int, request: NocoBaseTerminationRequest):
+        if not request.confirmed:
+            raise ValueError('请先确认医保执行账号、本次人员未在平台办理及真实提交')
+        detail = query_service.get_application(application_id)
+        return TaskResponse.from_snapshot(application_operations.submit_medical_termination(detail, request.account_id))
+
+    @app.post('/api/v1/nocobase/applications/{application_id}/medical-enrollment', response_model=TaskResponse)
+    def start_application_medical_enrollment(application_id: int, request: NocoBaseTerminationRequest):
+        if not request.confirmed:
+            raise ValueError('请先确认医保执行账号及真实参保提交')
+        detail = query_service.get_application(application_id)
+        return TaskResponse.from_snapshot(application_operations.submit_medical_enrollment(detail, request.account_id))
 
     @app.post("/api/v1/rights/import")
     async def import_rights_excel(
@@ -718,6 +821,8 @@ def _account_ready(account: SystemAccount) -> bool:
         return bool(account.api_key)
     if not account.account or not account.password:
         return False
+    if account.system_type is SystemType.MEDICAL:
+        return account.profile.get("login_method") == "government_sso"
     if account.system_type is not SystemType.JSHRSS:
         return True
     login_method = str(account.profile.get("login_method") or "direct")

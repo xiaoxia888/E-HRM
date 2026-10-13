@@ -4,9 +4,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from ehrm.core.settings import load_settings
-from ehrm.modules.nocobase.exceptions import NocoBaseInvalidTokenError
+from ehrm.modules.nocobase.exceptions import NocoBaseInvalidTokenError, NocoBaseRequestError
 from ehrm.modules.nocobase.rights_application_client import (
     NocoBaseRightsApplicationClient,
 )
@@ -33,6 +34,14 @@ class FakeRequest:
     def get(self, url: str, **kwargs: object) -> FakeResponse:
         self.calls.append((url, kwargs))
         return self.response
+
+
+class FailingRequest:
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def get(self, url: str, **kwargs: object) -> FakeResponse:
+        raise PlaywrightError(f"APIRequestContext.get: {self.reason}\nAuthorization: Bearer secret-token")
 
 
 def _payload() -> dict[str, object]:
@@ -111,7 +120,7 @@ def test_list_applications_builds_query_and_parses_page(tmp_path: Path) -> None:
     params = call["params"]
     assert isinstance(params, dict)
     assert json.loads(params["filter"])["$and"][0]["$and"][0] == {
-        "prob_type": {"$in": ["social_security_rights", "social_security_enrollment", "social_security_termination"]}
+        "prob_type": {"$in": ["social_security_rights", "social_security_enrollment", "social_security_termination", "medical_enrollment", "medical_termination"]}
     }
     assert params["appends[]"] == "initiator_name"
     assert params["page"] == "1"
@@ -144,6 +153,34 @@ def test_list_applications_forwards_invalid_token_for_session_retry(
         client.list_applications("expired-token", page=1, page_size=20)
 
     assert response.disposed
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("getaddrinfo ENOTFOUND cloud.njncc.com", "无法解析 NocoBase 域名 cloud.njncc.com"),
+        ("Request timed out after 15000ms", "连接 NocoBase 超时"),
+        ("Timeout 15000ms exceeded", "连接 NocoBase 超时"),
+        ("connect ECONNREFUSED", "无法连接 NocoBase 服务器 cloud.njncc.com"),
+    ],
+)
+def test_list_applications_explains_transport_errors_without_leaking_key(
+    tmp_path: Path, reason: str, expected: str,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    client = NocoBaseRightsApplicationClient(
+        settings.nocobase,
+        FailingRequest(reason),  # type: ignore[arg-type]
+        logging.getLogger("test.nocobase-rights-network"),
+    )
+
+    with pytest.raises(NocoBaseRequestError) as caught:
+        client.list_applications("secret-token", page=1, page_size=20)
+
+    assert expected in caught.value.message
+    assert "secret-token" not in caught.value.message
+    assert "secret-token" not in (caught.value.details or "")
+    assert "[已隐藏]" in (caught.value.details or "")
 
 
 def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
@@ -221,6 +258,8 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
             "insurance_person",
             "termination_person",
             "termination_person.createdBy",
+            "med_ins_withdrawal_record",
+            "med_ins_enrollee",
         ],
         "filterByTk": ["384427705696256"],
     }
@@ -228,4 +267,27 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
         "Accept": "application/json",
         "Authorization": "Bearer authorization-token",
     }
+    assert response.disposed
+
+
+def test_medical_application_detail_uses_confirmed_association_names(tmp_path: Path) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path)
+    response = FakeResponse({"data": {
+        "id": 1, "prob_type": "medical_termination", "code": "MED-001",
+        "med_ins_withdrawal_record": [{
+            "id": 11, "user_name": "测试甲", "id_card_no": "123456789012345678",
+            "med_ins_stop_reason": "在职人员解除/终止劳动合同",
+            "med_stop_date": "2026-10-12", "med_ins_stop_month_fee": "否",
+        }],
+        "med_ins_enrollee": [{
+            "id": 12, "user_name": "测试乙", "id_card_no": "123456789012345679",
+            "ethnicity": "汉族", "phone": "13800000000", "arrive_unit_time": "2026-10-12",
+        }],
+    }})
+    client = NocoBaseRightsApplicationClient(
+        settings.nocobase, FakeRequest(response), logging.getLogger("test.medical-associations"),
+    )
+    detail = client.get_application("authorization-token", 1)
+    assert detail.med_ins_withdrawal_record[0]["med_ins_stop_month_fee"] == "否"
+    assert detail.med_ins_enrollee[0]["phone"] == "13800000000"
     assert response.disposed

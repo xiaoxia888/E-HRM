@@ -183,7 +183,7 @@ def _selected_account(
     if account_id is None:
         return repository.get_default_account(SystemType.JSHRSS)
     account = repository.get_account_by_id(account_id)
-    if account is None or account.system_type is not SystemType.JSHRSS:
+    if account is None or account.system_type is not SystemType.JSHRSS or not account.is_enabled:
         raise ValueError(f"智慧人社账号 ID={account_id} 不存在")
     return account
 

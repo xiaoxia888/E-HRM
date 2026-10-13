@@ -61,6 +61,8 @@ class NocoBaseRightsApplicationClient:
                                     NocoBaseProblemType.SOCIAL_SECURITY_RIGHTS.value,
                                     NocoBaseProblemType.SOCIAL_SECURITY_ENROLLMENT.value,
                                     NocoBaseProblemType.SOCIAL_SECURITY_TERMINATION.value,
+                                    NocoBaseProblemType.MEDICAL_ENROLLMENT.value,
+                                    NocoBaseProblemType.MEDICAL_TERMINATION.value,
                                 ]
                             }
                         }
@@ -89,10 +91,7 @@ class NocoBaseRightsApplicationClient:
                 timeout=self.settings.request_timeout_ms,
             )
         except PlaywrightError as exc:
-            raise NocoBaseRequestError(
-                "NocoBase 权益申请分页查询失败",
-                details=str(exc).replace(token, "[已隐藏]"),
-            ) from None
+            raise self._transport_error(exc, token, "NocoBase 权益申请分页查询失败") from None
         result = self._parse_response(response)
         self.logger.info(
             "NocoBase 权益申请查询成功 page=%s page_size=%s count=%s returned=%s",
@@ -122,6 +121,8 @@ class NocoBaseRightsApplicationClient:
                 ("appends[]", "insurance_person"),
                 ("appends[]", "termination_person"),
                 ("appends[]", "termination_person.createdBy"),
+                ("appends[]", "med_ins_withdrawal_record"),
+                ("appends[]", "med_ins_enrollee"),
                 ("filterByTk", str(application_id)),
             ]
         )
@@ -136,10 +137,7 @@ class NocoBaseRightsApplicationClient:
                 timeout=self.settings.request_timeout_ms,
             )
         except PlaywrightError as exc:
-            raise NocoBaseRequestError(
-                "NocoBase 权益申请详情查询失败",
-                details=str(exc).replace(token, "[已隐藏]"),
-            ) from None
+            raise self._transport_error(exc, token, "NocoBase 权益申请详情查询失败") from None
         result = self._parse_detail_response(response)
         self.logger.info(
             "NocoBase 权益申请详情查询成功 application_id=%s persons=%s",
@@ -225,6 +223,26 @@ class NocoBaseRightsApplicationClient:
         if response.status == 403:
             raise NocoBasePermissionDeniedError("NocoBase API 密钥权限不足，请检查绑定角色的申请及人员查询权限")
 
+    def _transport_error(
+        self,
+        exc: PlaywrightError,
+        token: str,
+        fallback_message: str,
+    ) -> NocoBaseRequestError:
+        details = str(exc).replace(token, "[已隐藏]")
+        diagnostic = details.casefold()
+        host = urlsplit(self.settings.base_url).hostname or "NocoBase 服务器"
+        if "enotfound" in diagnostic or "name_not_resolved" in diagnostic:
+            message = f"无法解析 NocoBase 域名 {host}，请检查运行 E-HRM 的主机 DNS 或网络"
+        elif "timeout" in diagnostic or "timed out" in diagnostic or "etimedout" in diagnostic:
+            message = "连接 NocoBase 超时，请检查网络后重试"
+        elif "econnrefused" in diagnostic or "connection refused" in diagnostic:
+            message = f"无法连接 NocoBase 服务器 {host}，请检查服务地址和网络"
+        else:
+            message = fallback_message
+        self.logger.warning("%s: %s", fallback_message, details.partition("\n")[0])
+        return NocoBaseRequestError(message, details=details)
+
     @classmethod
     def _record(cls, payload: dict[str, object]) -> NocoBaseRightsApplication:
         application_id = cls._integer(payload.get("id"), "记录 id")
@@ -303,6 +321,8 @@ class NocoBaseRightsApplicationClient:
             erp_all_field_value=payload.get("erp_all_field_value") if isinstance(payload.get("erp_all_field_value"), dict) else None,
             insurance_person=tuple(item for item in (payload.get("insurance_person") or []) if isinstance(item, dict)),
             termination_person=tuple(item for item in (payload.get("termination_person") or []) if isinstance(item, dict)),
+            med_ins_withdrawal_record=tuple(item for item in (payload.get("med_ins_withdrawal_record") or []) if isinstance(item, dict)),
+            med_ins_enrollee=tuple(item for item in (payload.get("med_ins_enrollee") or []) if isinstance(item, dict)),
         )
 
     @classmethod

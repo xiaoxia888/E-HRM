@@ -76,6 +76,8 @@ class NocoBaseProblemType(str, Enum):
     SOCIAL_SECURITY_RIGHTS = "social_security_rights"
     SOCIAL_SECURITY_ENROLLMENT = "social_security_enrollment"
     SOCIAL_SECURITY_TERMINATION = "social_security_termination"
+    MEDICAL_ENROLLMENT = "medical_enrollment"
+    MEDICAL_TERMINATION = "medical_termination"
     SOCIAL_SECURITY_CONSULT = "social_security_consult"
 
 
@@ -149,3 +151,5 @@ class NocoBaseRightsApplicationDetail:
     erp_all_field_value: dict[str, object] | None = field(default=None, repr=False)
     insurance_person: tuple[dict[str, object], ...] = field(default=(), repr=False)
     termination_person: tuple[dict[str, object], ...] = field(default=(), repr=False)
+    med_ins_withdrawal_record: tuple[dict[str, object], ...] = field(default=(), repr=False)
+    med_ins_enrollee: tuple[dict[str, object], ...] = field(default=(), repr=False)

@@ -74,6 +74,32 @@ class AccountUpdateRequest(BaseModel):
     api_key: str = ""
 
 
+class GovernmentIdentitySummary(BaseModel):
+    id: int
+    display_name: str
+    masked_account: str
+    social_account_id: int | None = None
+    social_default: bool = False
+    medical_account_id: int | None = None
+    medical_default: bool = False
+
+
+class GovernmentIdentityDetail(BaseModel):
+    id: int
+    display_name: str
+    account: str
+    password_saved: bool
+
+
+class GovernmentIdentityUpdateRequest(BaseModel):
+    identity_id: int | None = Field(default=None, ge=1)
+    account: str
+    password: str = ""
+    display_name: str = ""
+    social_enabled: bool | None = None
+    medical_enabled: bool | None = None
+
+
 class NocoBaseConnectionTestRequest(BaseModel):
     account_id: int | None = Field(default=None, ge=1)
     api_key: str = ""

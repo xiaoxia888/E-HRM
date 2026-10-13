@@ -53,6 +53,7 @@ class LoginService:
         self._login_succeeded = False
         self._government_result: str | None = None
         self._government_message = ""
+        self._external_excluded_page_ids: set[int] = set()
         self._response_listener_page_ids: set[int] = set()
         self._context = getattr(page, "context", None)
         self.pacer = BrowserInteractionPacer(
@@ -147,7 +148,7 @@ class LoginService:
         elif success_value is True:
             self._government_result = "success"
             self._government_message = message
-            self._progress("江苏政务服务平台账号验证通过，正在进入智慧人社……")
+            self._progress("江苏政务服务平台账号验证通过，正在进入业务系统……")
         elif "验证码" in message:
             self._government_result = "captcha_error"
             self._government_message = message or "验证码输入有误"
@@ -160,9 +161,7 @@ class LoginService:
             # not proof of failure; the final JSHRSS token is authoritative.
             self._government_result = "redirecting"
             self._government_message = message
-            self._progress(
-                "政务服务平台登录接口已返回，正在等待跳转至智慧人社……"
-            )
+            self._progress("政务服务平台登录接口已返回，正在等待业务系统跳转……")
         if self._government_result == "fatal":
             self._login_failure = AuthenticationFailedError(
                 self._government_message,
@@ -438,6 +437,167 @@ class LoginService:
             if self.is_government_target_reached():
                 self._finish_reused_government_session()
             return
+        self._submit_government_login(
+            page, username=username, password=password,
+            target_reached=self.is_government_target_reached,
+            wait_for_target=self._finish_reused_government_session,
+        )
+
+    def ensure_external_government_authenticated(
+        self,
+        *,
+        entry_url: str,
+        username: str,
+        password: str,
+        target_matches: Callable[[str], bool],
+        target_ready: Callable[[Page], bool] | None = None,
+        existing_session_ready: Callable[[Page], bool] | None = None,
+    ) -> Page:
+        """Check open target pages before falling back to the government SSO entry."""
+        if not username or not password:
+            raise AuthenticationFailedError("江苏政务服务平台登录信息不完整")
+        self._login_failure = None
+        self._government_result = None
+        self._government_message = ""
+        page = self._active_page()
+        session_ready = existing_session_ready or target_ready
+        for candidate in reversed(self._open_pages()):
+            try:
+                if session_ready is None or not target_matches(candidate.url):
+                    continue
+                if not session_ready(candidate):
+                    continue
+            except (PlaywrightError, ValueError):
+                continue
+            self._progress("已有业务页面会话有效，跳过政务平台登录")
+            self.page = candidate
+            return candidate
+        self._external_excluded_page_ids = {
+            id(candidate) for candidate in self._open_pages() if candidate is not page
+        }
+        try:
+            page.goto(entry_url, wait_until="domcontentloaded")
+        except PlaywrightError:
+            replacement = self._active_page(prefer_latest=True)
+            if replacement is page:
+                raise
+            page = replacement
+        target, landing = self._wait_for_external_entry_resolution(
+            target_matches, target_ready
+        )
+        if target is not None:
+            self._progress("医保会话仍有效，直接进入业务页面")
+            self.page = target
+            return target
+        if landing is None:
+            raise AuthenticationFailedError("未找到政务平台登录页或目标业务页面")
+        page = landing
+        self._progress("医保会话未生效，正在使用政务平台账号登录")
+
+        def target_reached() -> bool:
+            return self._external_target_page(target_matches, target_ready) is not None
+
+        def wait_for_target() -> None:
+            self._wait_for_external_target(target_matches, target_ready)
+
+        self._submit_government_login(
+            page, username=username, password=password,
+            target_reached=target_reached, wait_for_target=wait_for_target,
+        )
+        target = self._external_target_page(target_matches, target_ready)
+        if target is None:
+            raise AuthenticationFailedError("政务平台已登录，但未进入目标业务系统")
+        self.page = target
+        return target
+
+    def _external_target_page(
+        self,
+        target_matches: Callable[[str], bool],
+        target_ready: Callable[[Page], bool] | None = None,
+    ) -> Page | None:
+        for candidate in reversed(self._open_pages()):
+            try:
+                if (
+                    id(candidate) not in self._external_excluded_page_ids
+                    and target_matches(candidate.url)
+                    and (target_ready is None or target_ready(candidate))
+                ):
+                    return candidate
+            except (PlaywrightError, ValueError):
+                continue
+        return None
+
+    def _wait_for_external_entry_resolution(
+        self,
+        target_matches: Callable[[str], bool],
+        target_ready: Callable[[Page], bool] | None,
+    ) -> tuple[Page | None, Page | None]:
+        """Allow an existing SSO session to redirect before touching the form."""
+        deadline = time.monotonic() + (
+            self.settings.government_login.response_timeout_ms / 1000.0
+        )
+        stable_form_polls = 0
+        while time.monotonic() < deadline:
+            target = self._external_target_page(target_matches, target_ready)
+            if target is not None:
+                return target, None
+            landing = next(
+                (
+                    candidate for candidate in reversed(self._open_pages())
+                    if id(candidate) not in self._external_excluded_page_ids
+                    and self._is_government_landing_url(candidate.url)
+                ),
+                None,
+            )
+            if landing is not None:
+                try:
+                    form_visible = landing.locator(
+                        self.settings.government_login_selectors.corporate_tab
+                    ).first.is_visible()
+                except PlaywrightError:
+                    form_visible = False
+                stable_form_polls = stable_form_polls + 1 if form_visible else 0
+                if stable_form_polls >= 15:
+                    return None, landing
+            else:
+                stable_form_polls = 0
+            if self.cancel_check is not None and self.cancel_check():
+                raise TaskCancelledError("用户在登录阶段停止任务")
+            self._wait_for_timeout(200)
+        raise AuthenticationFailedError(
+            "医保入口未进入有效业务页面，也未显示政务平台登录表单",
+            details="可能是登录跳转超时或页面结构变化",
+        )
+
+    def _wait_for_external_target(
+        self,
+        target_matches: Callable[[str], bool],
+        target_ready: Callable[[Page], bool] | None = None,
+    ) -> None:
+        deadline = time.monotonic() + (
+            self.settings.government_login.response_timeout_ms / 1000.0
+        )
+        while time.monotonic() < deadline:
+            self._raise_login_failure()
+            if self._external_target_page(target_matches, target_ready) is not None:
+                return
+            if self.cancel_check is not None and self.cancel_check():
+                raise TaskCancelledError("用户在登录阶段停止任务")
+            self._wait_for_timeout(200)
+        raise AuthenticationFailedError(
+            "政务平台账号验证后未进入目标业务系统",
+            details="请检查入口地址是否仍有效，以及页面是否显示业务错误",
+        )
+
+    def _submit_government_login(
+        self,
+        page: Page,
+        *,
+        username: str,
+        password: str,
+        target_reached: Callable[[], bool],
+        wait_for_target: Callable[[], None],
+    ) -> None:
         selectors = self.settings.government_login_selectors
         timeout = self.settings.browser.action_timeout_ms
         corporate_tab = page.locator(selectors.corporate_tab).first
@@ -447,8 +607,8 @@ class LoginService:
                 page
             )
         except (AuthenticationFailedError, PlaywrightError) as exc:
-            if self.is_government_target_reached():
-                self._finish_reused_government_session()
+            if target_reached():
+                wait_for_target()
                 return
             if isinstance(exc, AuthenticationFailedError):
                 raise
@@ -501,8 +661,7 @@ class LoginService:
                 continue
             self._raise_login_failure()
             if result in {"success", "redirecting"}:
-                self._wait_for_government_sso_token()
-                self._wait_for_government_target()
+                wait_for_target()
                 return
         raise AuthenticationFailedError("江苏政务服务平台登录失败")
 

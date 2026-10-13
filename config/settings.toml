@@ -47,7 +47,7 @@ user_data_dir = "data/browser-profile"
 storage_state_path = "data/session-state.json"
 
 [rights_statement.browser.pacing]
-# 智慧人社页面的 DOM 交互节奏。仅作用于点击、填写、选择等浏览器动作；
+# 社保及医保业务页面的 DOM 交互节奏。仅作用于点击、填写、选择等浏览器动作；
 # 页面状态轮询和 HTTP API 请求不会使用这里的等待时间。
 enabled = true
 min_delay_ms = 1000

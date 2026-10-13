@@ -319,6 +319,95 @@ ehrm-employment-termination-e2e \
   --check-input
 ```
 
+### 医保停保填表 E2E 测试（不提交）
+
+测试脚本直接打开医保专用的江苏政务服务网入口 `https://www.jszwfw.gov.cn/jsjis/front/login.do?uuid=Q5mxXFYhCnUh`，先等待已有会话跳转到南京医保单位大厅并确认业务菜单加载；若会话失效、停留在政务网登录表单，才用“系统设置 → 账户与连接 → 医保政务平台账号”中保存的账号登录。医保与社保账号分别维护，不会自动复制；八化建、南化建等单位可分别新增医保账号并设置默认账号，也可在命令中用 `--account-id` 指定。修改登录名或密码后，旧医保浏览器会话不会沿用。脚本不先登录智慧人社，也不使用录制中含临时 `accessToken` 的医保地址。`uuid` 的服务端含义尚未证实；若官方入口变更，可用 `--login-url` 指定新的官方医保入口，不要使用携带 `accessToken` 的页面地址。
+
+医保停保、基础信息采集和参保预填的点击、填写、选择操作均使用“系统设置 → 自动化设置 → 执行节奏”；页面加载和查询结果仍按实际状态等待，不额外套用操作间隔。
+
+需要补录医保停保的真实提交与提交后状态时，使用独立的录制浏览器目录，同时保存操作脚本和 HAR：
+
+```bash
+PYTHONPATH=src python -m ehrm.entrypoints.cli record \
+  --url "https://www.jszwfw.gov.cn/jsjis/front/login.do?uuid=Q5mxXFYhCnUh" \
+  --profile "data/medical-termination-codegen-profile" \
+  --output "artifacts/medical_termination_submit_full_flow.py" \
+  --har "artifacts/medical_termination_submit_full_flow.har"
+```
+
+录制窗口中先暂停 Inspector，人工输入账号并完成验证码，登录后恢复录制。完整记录“进入退工停保登记 → 查询并等待加载 → 填表 → 核对账号和人员 → 手动提交 → 确认弹窗 → 最终结果”；若平台有办件记录或状态查询，再查看该笔结果及其刷新后的状态，不要重复提交。最终结果页面另存一张截图，便于把页面文字与接口响应对照。最后正常关闭录制窗口，让 HAR 写入磁盘。路径相对于 `runtime/`；HAR 可能包含密码、Cookie、令牌、身份证号和提交数据，已被 Git 忽略，但分享前仍须脱敏。录制命令不会替你点击提交，真实办理只由你在核对后手动执行。
+
+输入 Excel 目前每次只接受一名人员，必填列为“身份证号（文本）｜停保原因｜停保日期｜停保当月缴费”。停保日期填写 `YYYY-MM-DD` 或 Excel 日期；当月缴费填“是”或“否”；停保原因需与医保页面选项中文名称一致，不使用社保退工原因编码。先列出账号：
+
+```bash
+PYTHONPATH=src python scripts/run_medical_termination_e2e.py --list-accounts
+```
+
+下列命令中的 `123` 替换为对应单位的医保账号 ID；省略 `--account-id` 时使用设置页选定的医保默认账号。先检查输入：
+
+```bash
+PYTHONPATH=src python scripts/run_medical_termination_e2e.py \
+  --account-id 123 --input "/绝对路径/医保停保测试.xlsx" --check-input
+```
+
+实际填表测试：
+
+```bash
+PYTHONPATH=src python scripts/run_medical_termination_e2e.py \
+  --account-id 123 --input "/绝对路径/医保停保测试.xlsx" --keep-browser-open
+```
+
+脚本会等待身份证查询后的加载遮罩消失，检查页面错误提示，填写日期、原因与当月缴费选项，输出结果 Excel 和截图。此诊断脚本不调用正式提交，也没有 `--submit` 参数；成功只表示“录入成功（未提交）”。
+
+正式办理入口在 Web「权益申请 → 医保退工停保登记」。选择医保政务平台账号，在确认弹窗检查本次待办的全部人员、停保日期、原因和当月缴费选项后发起任务。任务按申请人员顺序逐人提交；每人明确显示“提交成功”后立即持久记录，再刷新并验证医保会话及空白表单，然后办理下一人。提交失败、结果不明或无法安全打开下一人表单时停止后续办理，未执行人员可在排除故障后重新发起；已办理或结果待确认者不会重复提交。平台提示成功不等于最终业务办结，仍应以医保平台结果为准。
+
+### 医保参保正式办理与预填测试
+
+正式办理入口为 Web「权益申请 → 医保人员参保登记 → 医保参保」。选择医保政务平台账号并确认后，系统按申请人员顺序逐人查询参保；只有平台明确提示“请先给该人员建档!”时，才填写并提交人员基础信息采集，再重新查询并提交参保。平台提示“该人员已经建档”时不重复建档。参保提交提示成功后还会查询办理结果，核对本人结果行。成功办理、平台已参保和结果待确认均有持久状态，结果不明时停止后续人员、禁止自动重试。建档步骤和参保步骤分别记录状态。申请人员须提供身份证号、联系电话和到单位时间；若需要建档，还须有姓名和民族，出生日期与性别从身份证号校验并补全。正式提交后的结果应结合医保平台核对。
+
+下述 Excel 脚本只用于预填诊断，不保存、不提交：
+
+两步使用同一医保政务网入口和按账号隔离的医保浏览器会话，但必须分别运行：未保存的“基础信息采集”不会建立档案，因此不能紧接着用同一人测试参保登记。两个步骤均每次只读取 Excel 中一名人员，身份证号须为文本。
+
+如需为「人员基础信息采集」录制**包括真实保存/提交和提交后结果查询**的完整证据，使用专用手工录制器（不会自动点击提交）：
+
+```bash
+PYTHONPATH=src python -m ehrm.entrypoints.medical_collection_record_cli
+```
+
+在浏览器中登录、进入采集表单并填写资料；**最终确认/提交前**回终端按一次 Enter，录制器会保存表单快照。然后在浏览器中亲自完成确认、提交、成功/失败提示和后续结果查询，页面稳定后再按一次 Enter。每次录制创建独立的 `runtime/artifacts/medical-collection-full-时间戳/`，包含 `actions.jsonl`、`medical-network.jsonl`（医保接口请求与响应正文）、`all-network.har`、`trace.zip`、提交前后截图/DOM/字段快照以及 `summary.json`。`summary.json` 会跨录制阶段检查医保建档和参保提交接口，即使人工在首次按 Enter 前完成提交，也不会被菜单日志误导。捕获到请求不代表提交成功，仍须分析接口正文及页面状态。文件包含个人信息、Cookie、令牌和可能的密码，请仅在本机保管，不要直接发送原始文件；分析前须脱敏。
+
+如需单独补录医保参保登记，可指定参保流程；也可以在一次录制中完成采集和参保，但两步操作会共用提交前后快照，分析时应以时间线与接口路径区分：
+
+```bash
+PYTHONPATH=src python -m ehrm.entrypoints.medical_collection_record_cli --flow enrollment
+```
+
+八化建社保人员信息维护、用工参保登记也分别使用同样的完整录制方式，默认从智慧人社登录页进入；在浏览器里选择江苏政务服务网登录并确认使用八化建账号：
+
+```bash
+PYTHONPATH=src python -m ehrm.entrypoints.social_flow_record_cli --flow information
+PYTHONPATH=src python -m ehrm.entrypoints.social_flow_record_cli --flow enrollment
+```
+
+社保录制分别保存到 `runtime/artifacts/bhj-social-information-full-时间戳/` 和 `runtime/artifacts/bhj-social-enrollment-full-时间戳/`；各自使用独立浏览器目录，并额外生成 `social-network.jsonl`。录制器只观察你在浏览器中的操作，不会自动提交。最终确认/提交前按一次 Enter，人工提交并查看结果后再按一次 Enter；如果没有捕获到提交阶段的社保写入请求，命令会以非零状态结束，需核对录制是否完整。
+
+- `collection`（人员基础信息采集）：必填列“身份证号｜姓名”；可选列“联系电话｜民族｜证件有效期起始日期｜证件有效期截止日期”。
+- `enrollment`（人员参保登记）：必填列“身份证号｜参保日期｜联系电话”。日期使用 `YYYY-MM-DD` 或 Excel 日期，手机号为 11 位。
+
+先在设置页维护医保账号，再用 `scripts/run_medical_termination_e2e.py --list-accounts` 查看账号 ID 和默认账号，分别检查并运行：
+
+```bash
+PYTHONPATH=src python scripts/run_medical_enrollment_e2e.py \
+  --stage collection --account-id 123 --input "/绝对路径/医保基础信息采集.xlsx" --check-input
+PYTHONPATH=src python scripts/run_medical_enrollment_e2e.py \
+  --stage collection --account-id 123 --input "/绝对路径/医保基础信息采集.xlsx" --keep-browser-open
+PYTHONPATH=src python scripts/run_medical_enrollment_e2e.py \
+  --stage enrollment --account-id 123 --input "/绝对路径/医保参保登记.xlsx" --keep-browser-open
+```
+
+这些诊断脚本只填写录制能确认的字段，不点击保存、提交或确认办理。“请先给该人员建档”“该人员已经参保”“请输入正确的手机号”等提示会阻断预填流程并写入结果 Excel；“已填写待核对（未提交）”不代表业务成功。真实提交流程仅由上述 Web 权益申请按钮发起。
+
 ## 4. 桌面前端（Qt Quick/QML）
 
 启动“南化建人力”：

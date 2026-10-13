@@ -16,6 +16,7 @@ from ehrm.core.exceptions import TaskCancelledError
 
 class TaskKind(StrEnum):
     JSHRSS_BROWSER = "jshrss_browser"
+    MEDICAL_BROWSER = "medical_browser"
     ERP_BROWSER = "erp_browser"
     API_QUERY = "api_query"
     ERP_WRITE = "erp_write"
@@ -189,6 +190,7 @@ class TaskCoordinator:
             raise ValueError("任务标题和操作类型不能为空")
         if kind in {
             TaskKind.JSHRSS_BROWSER,
+            TaskKind.MEDICAL_BROWSER,
             TaskKind.ERP_BROWSER,
             TaskKind.ERP_WRITE,
         } and not normalized_key:
@@ -441,6 +443,8 @@ class TaskCoordinator:
 
     @staticmethod
     def _queued_message(record: _TaskRecord, ahead: int) -> str:
+        if record.kind is TaskKind.MEDICAL_BROWSER:
+            return f"同一医保账号“{record.resource_label}”正在办理其他任务，已安全排队，前方还有 {ahead} 个任务。"
         if record.kind is TaskKind.JSHRSS_BROWSER:
             return (
                 f"同一智慧人社账号“{record.resource_label}”正在处理其他任务，"
@@ -458,6 +462,8 @@ class TaskCoordinator:
 
     @staticmethod
     def _running_message(record: _TaskRecord) -> str:
+        if record.kind is TaskKind.MEDICAL_BROWSER:
+            return f"正在使用医保账号“{record.resource_label}”办理任务；请勿重复发起。"
         if record.kind is TaskKind.JSHRSS_BROWSER:
             return (
                 f"正在使用智慧人社账号“{record.resource_label}”执行任务。"

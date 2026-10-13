@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  ApiOutlined, ClearOutlined, ClockCircleOutlined, EditOutlined,
+  ApiOutlined, ClearOutlined, ClockCircleOutlined, EditOutlined, PlusOutlined,
   FolderOpenOutlined, InfoCircleOutlined, RobotOutlined, SaveOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
 import {
-  Alert, Button, Card, Col, Descriptions, Form, Input, InputNumber, Menu,
+  Alert, Button, Card, Checkbox, Col, Descriptions, Form, Input, InputNumber, Menu,
   Modal, Radio, Row, Select, Space, Switch, Table, Tag, Typography, message,
 } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
-import type { AccountSummary, WebPreferences } from '../types'
+import type { AccountSummary, GovernmentIdentitySummary, WebPreferences } from '../types'
 
 type EditablePreferences = Omit<WebPreferences, 'ai_model_options' | 'active_ai_model' | 'active_reasoning_mode' | 'runtime_path' | 'logs_path' | 'version'>
 type SettingsSection = 'accounts' | 'downloads' | 'automation' | 'models' | 'maintenance' | 'about'
@@ -25,7 +25,7 @@ type AccountSlot = {
 }
 
 const SECTION_INFO: Record<SettingsSection, { title: string; description: string }> = {
-  accounts: { title: '账户与连接', description: '维护智慧人社、ERP 登录信息与 NocoBase API 密钥' },
+  accounts: { title: '账户与连接', description: '统一维护政务网登录身份，并选择账号用于哪些业务' },
   downloads: { title: '下载与任务', description: '配置权益单导出规则、保存位置和后续处理方式' },
   automation: { title: '自动化设置', description: '根据网络环境调整页面操作节奏和等待上限' },
   models: { title: '模型配置', description: '选择 ERP 申请解析使用的本地大模型与推理模式' },
@@ -37,9 +37,11 @@ export function SettingsPage() {
   const [form] = Form.useForm<EditablePreferences>()
   const [activeSection, setActiveSection] = useState<SettingsSection>('accounts')
   const [editingSlot, setEditingSlot] = useState<AccountSlot | null>(null)
+  const [editingGovernment, setEditingGovernment] = useState<GovernmentIdentitySummary | 'new' | null>(null)
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
   const accounts = useQuery({ queryKey: ['accounts'], queryFn: api.accounts })
+  const governmentIdentities = useQuery({ queryKey: ['government-identities'], queryFn: api.governmentIdentities })
   const selectedModelId = Form.useWatch('ai_model_profile', form)
 
   useEffect(() => {
@@ -77,7 +79,6 @@ export function SettingsPage() {
     )
     return [
       { key: 'jshrss-direct', systemType: 'JSHRSS', systemName: '江苏智慧人社账号', loginMethod: 'direct', current: findAccount('JSHRSS', 'direct') },
-      { key: 'jshrss-government', systemType: 'JSHRSS', systemName: '江苏政务服务平台账号', loginMethod: 'government_sso', current: findAccount('JSHRSS', 'government_sso') },
       { key: 'erp', systemType: 'ERP', systemName: 'ERP 账号', loginMethod: 'direct', current: findAccount('ERP', 'direct') },
       { key: 'nocobase', systemType: 'NOCOBASE', systemName: 'NocoBase API 密钥', loginMethod: 'direct', current: findAccount('NOCOBASE', 'direct') },
     ] satisfies AccountSlot[]
@@ -114,7 +115,18 @@ export function SettingsPage() {
             </div>
             <Form form={form} layout="vertical">
               {activeSection === 'accounts' && (
-                <AccountsSection rows={accountRows} loading={accounts.isLoading} onEdit={setEditingSlot} />
+                <>
+                  <GovernmentAccountsSection
+                    identities={governmentIdentities.data ?? []}
+                    loading={governmentIdentities.isLoading}
+                    error={governmentIdentities.isError ? errorMessage(governmentIdentities.error) : null}
+                    onAdd={() => setEditingGovernment('new')}
+                    onEdit={setEditingGovernment}
+                  />
+                  <Card size="small" title="其他连接" style={{ marginTop: 20 }}>
+                    <AccountsSection rows={accountRows} loading={accounts.isLoading} onEdit={setEditingSlot} />
+                  </Card>
+                </>
               )}
               {activeSection === 'downloads' && <DownloadsSection />}
               {activeSection === 'automation' && <AutomationSection />}
@@ -148,6 +160,14 @@ export function SettingsPage() {
         onClose={() => setEditingSlot(null)}
         onSaved={() => void queryClient.invalidateQueries({ queryKey: ['accounts'] })}
       />
+      <GovernmentIdentityEditorModal
+        identity={editingGovernment}
+        onClose={() => setEditingGovernment(null)}
+        onSaved={() => {
+          void queryClient.invalidateQueries({ queryKey: ['government-identities'] })
+          void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+        }}
+      />
     </div>
   )
 }
@@ -156,7 +176,7 @@ export function SettingsPage() {
 function AccountsSection({ rows, loading, onEdit }: { rows: AccountSlot[]; loading: boolean; onEdit: (value: AccountSlot) => void }) {
   return (
     <>
-      <Alert type="info" showIcon title="Web 与桌面端共用账户数据库" description="NocoBase 使用 API 密钥，无需账号密码登录。已保存的密码和密钥仅显示固定掩码，不能查看原文。" style={{ marginBottom: 18 }} />
+      <Typography.Paragraph type="secondary">智慧人社直登、ERP 和 NocoBase API 密钥在此维护；Web 与桌面端共用账户数据库。</Typography.Paragraph>
       <Table
         rowKey="key" loading={loading} dataSource={rows} pagination={false}
         onRow={(record) => ({ onClick: () => onEdit(record) })}
@@ -169,6 +189,142 @@ function AccountsSection({ rows, loading, onEdit }: { rows: AccountSlot[]; loadi
         ]}
       />
     </>
+  )
+}
+
+function GovernmentAccountsSection({
+  identities, loading, error, onAdd, onEdit,
+}: {
+  identities: GovernmentIdentitySummary[]
+  loading: boolean
+  error: string | null
+  onAdd: () => void
+  onEdit: (identity: GovernmentIdentitySummary) => void
+}) {
+  const queryClient = useQueryClient()
+  const setDefault = useMutation({
+    mutationFn: ({ id, purpose }: { id: number; purpose: 'social' | 'medical' }) => api.defaultGovernmentIdentity(id, purpose),
+    onSuccess: () => {
+      message.success('默认业务账号已更新')
+      void queryClient.invalidateQueries({ queryKey: ['government-identities'] })
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+    },
+    onError: (error) => { message.error(errorMessage(error)) },
+  })
+  const serviceCell = (record: GovernmentIdentitySummary, purpose: 'social' | 'medical') => {
+    const bound = purpose === 'social' ? record.social_account_id : record.medical_account_id
+    const isDefault = purpose === 'social' ? record.social_default : record.medical_default
+    if (!bound) return <Tag>未启用</Tag>
+    return <Space size="small"><Tag color="success">已启用</Tag>{isDefault ? <Tag color="blue">默认</Tag> : <Button type="link" disabled={setDefault.isPending} onClick={() => setDefault.mutate({ id: record.id, purpose })}>设为默认</Button>}</Space>
+  }
+  return (
+    <Card
+      size="small"
+      title="江苏政务服务网登录身份"
+      extra={<Button type="primary" icon={<PlusOutlined />} onClick={onAdd}>新增账号</Button>}
+    >
+      <Typography.Paragraph type="secondary">
+        编辑账号时选择“用于社保 / 用于医保”。各业务只会列出已启用的账号，取消用途不会删除账号或历史记录。两项业务的登录会话各自独立。
+      </Typography.Paragraph>
+      {error && <Alert type="error" showIcon title="政务网账号加载失败" description={error} style={{ marginBottom: 16 }} />}
+      <Table
+        rowKey="id"
+        loading={loading}
+        dataSource={identities}
+        pagination={false}
+        scroll={{ x: 760 }}
+        locale={{ emptyText: '尚未配置政务网账号，请点击“新增账号”' }}
+        columns={[
+          { title: '单位/显示名称', dataIndex: 'display_name', render: (value: string) => <Typography.Text strong>{value || '-'}</Typography.Text> },
+          { title: '政务平台账号', dataIndex: 'masked_account' },
+          { title: '社保', render: (_: unknown, record: GovernmentIdentitySummary) => serviceCell(record, 'social') },
+          { title: '医保', render: (_: unknown, record: GovernmentIdentitySummary) => serviceCell(record, 'medical') },
+          {
+            title: '操作', width: 100,
+            render: (_: unknown, record: GovernmentIdentitySummary) => <Button type="link" icon={<EditOutlined />} onClick={() => onEdit(record)}>编辑</Button>,
+          },
+        ]}
+      />
+    </Card>
+  )
+}
+
+function GovernmentIdentityEditorModal({
+  identity, onClose, onSaved,
+}: {
+  identity: GovernmentIdentitySummary | 'new' | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [form] = Form.useForm<{ display_name: string; account: string; password: string; platforms: Array<'social' | 'medical'> }>()
+  const identityId = identity && identity !== 'new' ? identity.id : null
+  const detail = useQuery({
+    queryKey: ['government-identity-detail', identityId],
+    queryFn: () => api.governmentIdentityDetail(identityId!),
+    enabled: identityId !== null,
+    refetchOnMount: 'always',
+  })
+  useEffect(() => {
+    if (identity === 'new') form.setFieldsValue({ display_name: '', account: '', password: '', platforms: [] })
+    else if (detail.data && identityId === detail.data.id) {
+      form.setFieldsValue({
+        display_name: detail.data.display_name,
+        account: detail.data.account,
+        password: detail.data.password_saved ? '******' : '',
+        platforms: identity ? [
+          ...(identity.social_account_id ? ['social' as const] : []),
+          ...(identity.medical_account_id ? ['medical' as const] : []),
+        ] : [],
+      })
+    }
+  }, [detail.data, form, identity, identityId])
+  const save = useMutation({
+    mutationFn: (values: { display_name: string; account: string; password: string; platforms: Array<'social' | 'medical'> }) => api.saveGovernmentIdentity({
+      identity_id: identityId ?? undefined,
+      display_name: values.display_name,
+      account: values.account,
+      password: values.password === '******' ? '' : values.password,
+      social_enabled: values.platforms.includes('social'),
+      medical_enabled: values.platforms.includes('medical'),
+    }),
+    onSuccess: () => {
+      message.success('政务网账号已保存')
+      onSaved()
+      form.resetFields()
+      onClose()
+    },
+    onError: (error) => { message.error(errorMessage(error)) },
+  })
+  const close = () => {
+    form.resetFields()
+    save.reset()
+    onClose()
+  }
+  return (
+    <Modal
+      title={identityId === null ? '新增政务网账号' : '编辑政务网账号'}
+      open={identity !== null}
+      destroyOnHidden
+      onCancel={close}
+      onOk={() => form.submit()}
+      confirmLoading={save.isPending}
+      okButtonProps={{ disabled: (detail.isLoading && identityId !== null) || detail.isError }}
+      okText="保存"
+      cancelText="取消"
+    >
+      <Alert type="info" showIcon title="选择此账号用于哪些业务" description="取消用途后，该业务不再列出这个账号；重新启用时仍使用原业务账号 ID。修改登录名或密码后，已启用的业务需要重新登录。" style={{ marginBottom: 20 }} />
+      {detail.isError && identityId !== null && <Alert type="error" showIcon title="账号信息加载失败" description={errorMessage(detail.error)} style={{ marginBottom: 16 }} />}
+      <Form form={form} layout="vertical" disabled={save.isPending || (identityId !== null && (detail.isLoading || detail.isError))} onFinish={(values) => save.mutate(values)}>
+        <Form.Item name="display_name" label="单位/显示名称" rules={[{ required: true, whitespace: true, message: '请输入单位或显示名称' }]}><Input placeholder="例如：八化建" /></Form.Item>
+        <Form.Item name="account" label="政务服务网登录名" rules={[{ required: true, whitespace: true, message: '请输入登录名' }]}><Input autoComplete="off" /></Form.Item>
+        <Form.Item name="password" label="密码" extra="保持 ****** 表示不修改；更换登录名时需填写新密码。" rules={[{ required: identityId === null, message: '请输入密码' }]}>
+          <Input.Password autoComplete="new-password" onFocus={(event) => { if (form.getFieldValue('password') === '******') event.currentTarget.select() }} />
+        </Form.Item>
+        <Form.Item name="platforms" label="使用平台" extra="社保可使用智慧人社直登或此政务网账号；医保仅使用政务网账号。取消当前默认账号的用途后，请为该业务重新设置默认账号。">
+          <Checkbox.Group options={[{ label: '用于社保', value: 'social' }, { label: '用于医保', value: 'medical' }]} />
+        </Form.Item>
+      </Form>
+    </Modal>
   )
 }
 
@@ -321,8 +477,8 @@ function AccountEditorModal({ slot, onClose, onSaved }: { slot: AccountSlot | nu
     onError: (error) => { message.error(errorMessage(error)) },
   })
   return (
-    <Modal title={slot ? `编辑${slot.systemName}` : '编辑账号'} open={slot !== null} destroyOnHidden onCancel={close} onOk={() => form.submit()} confirmLoading={save.isPending} okButtonProps={{ disabled: detail.isLoading || detail.isError || connectionTest.isPending }} cancelButtonProps={{ disabled: save.isPending || connectionTest.isPending }} closable={!save.isPending && !connectionTest.isPending} mask={{ closable: !save.isPending && !connectionTest.isPending }} okText="保存" cancelText="取消" width={620}>
-      <Alert type="info" showIcon title={isApiKey ? 'NocoBase 使用 API 密钥认证' : `当前账号：${detail.data?.account || current?.masked_account || '尚未维护'}`} description={isApiKey ? '填写在 NocoBase 中生成的 API 密钥，不需要登录账号或密码。已保存密钥只显示固定掩码；测试连接不会保存密钥，请点击保存。密钥被撤销或权限不足时不会自动登录。' : '该入口使用独立账号保存。密码只显示固定掩码，不能查看旧密码；输入新内容后才会替换已保存密码。'} style={{ marginBottom: 20 }} />
+    <Modal title={slot ? `${slot.systemType === 'MEDICAL' && !slot.current ? '新增' : '编辑'}${slot.systemName}` : '编辑账号'} open={slot !== null} destroyOnHidden onCancel={close} onOk={() => form.submit()} confirmLoading={save.isPending} okButtonProps={{ disabled: detail.isLoading || detail.isError || connectionTest.isPending }} cancelButtonProps={{ disabled: save.isPending || connectionTest.isPending }} closable={!save.isPending && !connectionTest.isPending} mask={{ closable: !save.isPending && !connectionTest.isPending }} okText="保存" cancelText="取消" width={620}>
+      <Alert type="info" showIcon title={isApiKey ? 'NocoBase 使用 API 密钥认证' : `当前账号：${detail.data?.account || current?.masked_account || '尚未维护'}`} description={isApiKey ? '填写在 NocoBase 中生成的 API 密钥，不需要登录账号或密码。已保存密钥只显示固定掩码；测试连接不会保存密钥，请点击保存。密钥被撤销或权限不足时不会自动登录。' : systemType === 'MEDICAL' ? '医保与社保账号分开保存。密码只显示固定掩码；更换登录名时必须填写新账号的密码，旧登录会话不会继续使用。' : '该入口使用独立账号保存。密码只显示固定掩码，不能查看旧密码；输入新内容后才会替换已保存密码。'} style={{ marginBottom: 20 }} />
       {detail.isError && current && <Alert type="error" showIcon title="账号信息加载失败" description={errorMessage(detail.error)} style={{ marginBottom: 20 }} />}
       <Form form={form} layout="vertical" disabled={detail.isLoading || detail.isError || save.isPending || connectionTest.isPending} onValuesChange={() => connectionTest.reset()} onFinish={(values) => save.mutate(values)}>
         <Form.Item name="display_name" label="显示名称"><Input placeholder={current?.display_name || '例如：南京单位账号'} /></Form.Item>
@@ -333,7 +489,7 @@ function AccountEditorModal({ slot, onClose, onSaved }: { slot: AccountSlot | nu
           <Button onClick={() => connectionTest.mutate()} loading={connectionTest.isPending} disabled={detail.isLoading || detail.isError || save.isPending}>测试连接</Button>
           {connectionTest.isSuccess && <Alert type="success" showIcon title={connectionTest.data.message} description="测试不保存配置，新增或更换密钥后请点击保存。" style={{ marginTop: 12 }} />}
           {connectionTest.isError && <Alert type="error" showIcon title="连接测试失败" description={errorMessage(connectionTest.error)} style={{ marginTop: 12 }} />}
-        </> : <Form.Item name="account" label={systemType === 'JSHRSS' ? (loginMethod === 'government_sso' ? '政务服务平台登录名' : '单位编号/统一社会信用代码') : '登录账号'}><Input autoComplete="off" placeholder="请输入登录账号" /></Form.Item>}
+        </> : <Form.Item name="account" label={systemType === 'MEDICAL' || (systemType === 'JSHRSS' && loginMethod === 'government_sso') ? '政务服务平台登录名' : systemType === 'JSHRSS' ? '单位编号/统一社会信用代码' : '登录账号'}><Input autoComplete="off" placeholder="请输入登录账号" /></Form.Item>}
         {systemType === 'JSHRSS' && loginMethod === 'direct' && <Form.Item name="secondary_account" label="证件号码/移动电话"><Input autoComplete="off" placeholder="请输入证件号码或移动电话" /></Form.Item>}
         {!isApiKey && <Form.Item name="password" label="密码" extra="保持 ****** 表示不修改；输入新内容后才会更新密码。">
           <Input.Password autoComplete="new-password" placeholder="请输入密码" onFocus={(event) => { if (form.getFieldValue('password') === passwordMask) event.currentTarget.select() }} onClick={(event) => { if (form.getFieldValue('password') === passwordMask) event.currentTarget.select() }} />

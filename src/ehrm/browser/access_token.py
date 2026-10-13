@@ -115,7 +115,7 @@ class AccountIdSessionStore:
             self.account_id,
             owner_id=self.owner_id,
         )
-        if account is None or account.system_type is not SystemType.JSHRSS:
+        if account is None or account.system_type is not SystemType.JSHRSS or not account.is_enabled:
             raise ValueError("所选智慧人社账号不存在")
         return account
 

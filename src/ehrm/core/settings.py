@@ -46,7 +46,7 @@ class RightsPrintBackend(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class BrowserInteractionPacingSettings:
-    """Random delay applied before Jiangsu HRSS DOM interactions only."""
+    """Random delay applied before supported business-site DOM interactions."""
 
     enabled: bool
     min_delay_ms: int

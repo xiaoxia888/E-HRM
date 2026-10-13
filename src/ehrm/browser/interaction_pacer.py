@@ -51,7 +51,7 @@ class BrowserInteractionPacer:
             self.settings.max_delay_ms,
         )
         remaining_ms = max(0, int(delay_ms))
-        _LOGGER.debug("智慧人社 DOM 操作前随机等待 %dms", remaining_ms)
+        _LOGGER.debug("业务页面 DOM 操作前随机等待 %dms", remaining_ms)
         while remaining_ms > 0:
             self._raise_if_cancelled()
             current_ms = min(self._cancellation_poll_ms, remaining_ms)

@@ -2,6 +2,8 @@ import type {
   ScheduledJob, ScheduledJobValues, ScheduledRun, ScheduledLog, PagedItems,
   AccountSummary,
   AccountEditDetail,
+  GovernmentIdentitySummary,
+  GovernmentIdentityDetail,
   PolicyResponse,
   RightsApplicationDetail,
   ApplicationOperationStates,
@@ -16,6 +18,16 @@ import { apiRequest } from './client'
 
 export const api = {
   accounts: () => apiRequest<AccountSummary[]>('/api/v1/accounts'),
+  governmentIdentities: () => apiRequest<GovernmentIdentitySummary[]>('/api/v1/government-identities'),
+  governmentIdentityDetail: (id: number) => apiRequest<GovernmentIdentityDetail>(`/api/v1/government-identities/${id}`),
+  saveGovernmentIdentity: (values: { identity_id?: number; account: string; password?: string; display_name?: string; social_enabled: boolean; medical_enabled: boolean }) =>
+    apiRequest<GovernmentIdentitySummary>('/api/v1/government-identities', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
+    }),
+  bindGovernmentIdentity: (id: number, purpose: 'social' | 'medical') =>
+    apiRequest<GovernmentIdentitySummary>(`/api/v1/government-identities/${id}/bind/${purpose}`, { method: 'POST' }),
+  defaultGovernmentIdentity: (id: number, purpose: 'social' | 'medical') =>
+    apiRequest<GovernmentIdentitySummary>(`/api/v1/government-identities/${id}/default/${purpose}`, { method: 'POST' }),
   accountDetail: (systemType: AccountSummary['system_type'], accountId: number) =>
     apiRequest<AccountEditDetail>(
       `/api/v1/settings/accounts/${systemType}?account_id=${accountId}`,
@@ -44,6 +56,16 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ account_id: accountId, confirmed: true }),
     }),
+  terminateMedicalApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
+    `/api/v1/nocobase/applications/${applicationId}/medical-termination`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, confirmed: true }),
+    }),
+  enrollMedicalApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
+    `/api/v1/nocobase/applications/${applicationId}/medical-enrollment`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, confirmed: true }),
+    }),
   settings: () => apiRequest<WebPreferences>('/api/v1/settings'),
   savePreferences: (preferences: Omit<WebPreferences, 'ai_model_options' | 'active_ai_model' | 'active_reasoning_mode' | 'runtime_path' | 'logs_path' | 'version'>) =>
     apiRequest<{ message: string }>('/api/v1/settings/preferences', {
@@ -62,6 +84,10 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(values),
   }),
+  setDefaultMedicalAccount: (accountId: number) =>
+    apiRequest<AccountSummary>(`/api/v1/settings/accounts/MEDICAL/${accountId}/default`, {
+      method: 'POST',
+    }),
   testNocoBaseConnection: (values: { account_id?: number; api_key?: string }) =>
     apiRequest<{ message: string }>('/api/v1/settings/nocobase/test-connection', {
       method: 'POST',

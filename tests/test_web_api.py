@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
-from ehrm.core.auth_repository import AuthenticationRepository, SystemType
+from ehrm.core.auth_repository import AuthenticationRepository, SystemType, medical_browser_profile_name
 from ehrm.core.settings import load_settings
 from ehrm.gui.template_service import RightsStatementTemplateService
 from ehrm.modules.rights_statement.excel_models import (
@@ -354,6 +354,164 @@ def test_jshrss_login_entries_are_saved_as_independent_accounts(
         assert government_saved.password == "government-password"
         assert government_saved.display_name == "政务服务平台账号（更新）"
         assert government_saved.profile["login_method"] == "government_sso"
+    finally:
+        coordinator.close()
+
+
+def test_medical_accounts_can_be_maintained_independently_in_settings(
+    tmp_path: Path,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    social = repository.save_account(
+        SystemType.JSHRSS, "shared-name", "social-password",
+        profile={"login_method": "government_sso"},
+    )
+    try:
+        first = client.put("/api/v1/settings/accounts/MEDICAL", json={
+            "account": "shared-name", "password": "medical-password",
+            "display_name": "南化建", "login_method": "government_sso",
+        })
+        second = client.put("/api/v1/settings/accounts/MEDICAL", json={
+            "account": "bahua-user", "password": "other-password",
+            "display_name": "八化建", "login_method": "government_sso",
+        })
+        assert first.status_code == second.status_code == 200
+        first_id, second_id = first.json()["id"], second.json()["id"]
+        assert first_id != second_id != social.id
+        assert repository.get_default_account(SystemType.MEDICAL).id == first_id  # type: ignore[union-attr]
+        medical = [item for item in client.get("/api/v1/accounts").json()
+                   if item["system_type"] == "MEDICAL"]
+        assert len(medical) == 2
+        assert {item["display_name"] for item in medical} == {"南化建", "八化建"}
+        assert all(item["ready"] and item["login_method"] == "government_sso"
+                   for item in medical)
+        assert "medical-password" not in str(medical)
+
+        default = client.post(f"/api/v1/settings/accounts/MEDICAL/{first_id}/default")
+        assert default.status_code == 200
+        assert default.json()["is_default"] is True
+        assert repository.get_default_account(SystemType.MEDICAL).id == first_id  # type: ignore[union-attr]
+        assert repository.get_default_account(SystemType.JSHRSS).id == social.id  # type: ignore[union-attr]
+
+        repository.save_session(first_id, "old-medical-session", verified=True)
+        missing_password = client.put("/api/v1/settings/accounts/MEDICAL", json={
+            "account_id": first_id, "account": "nanhua-new", "password": "",
+            "display_name": "南化建（更名）", "login_method": "government_sso",
+        })
+        assert missing_password.status_code == 400
+        assert repository.get_session(first_id) is not None
+        edited = client.put("/api/v1/settings/accounts/MEDICAL", json={
+            "account_id": first_id, "account": "nanhua-new", "password": "new-medical-password",
+            "display_name": "南化建（更名）", "login_method": "government_sso",
+        })
+        assert edited.status_code == 200
+        assert edited.json()["id"] == first_id
+        updated = repository.get_account_by_id(first_id)
+        assert updated is not None
+        assert updated.account == "nanhua-new"
+        assert updated.password == "new-medical-password"
+        assert updated.profile["session_generation"] == 1
+        assert medical_browser_profile_name(updated) == f"medical-{first_id}-v1"
+        assert repository.get_session(first_id) is None
+        assert repository.get_account_by_id(second_id) is not None
+    finally:
+        coordinator.close()
+
+
+def test_government_identity_api_reuses_credentials_with_separate_business_bindings(tmp_path: Path) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    try:
+        created = client.put("/api/v1/government-identities", json={
+            "account": "gov-user", "password": "gov-password", "display_name": "八化建",
+        })
+        assert created.status_code == 200
+        identity_id = created.json()["id"]
+        assert "gov-password" not in str(created.json())
+        assert created.json()["social_account_id"] is None
+
+        social = client.post(f"/api/v1/government-identities/{identity_id}/bind/social")
+        medical = client.post(f"/api/v1/government-identities/{identity_id}/bind/medical")
+        assert social.status_code == medical.status_code == 200
+        social_id = medical.json()["social_account_id"]
+        medical_id = medical.json()["medical_account_id"]
+        assert social_id != medical_id
+        assert repository.get_account_by_id(social_id).credential_id == identity_id  # type: ignore[union-attr]
+        assert repository.get_account_by_id(medical_id).credential_id == identity_id  # type: ignore[union-attr]
+
+        repository.save_session(social_id, "social-session")
+        repository.save_session(medical_id, "medical-session")
+        edited = client.put("/api/v1/government-identities", json={
+            "identity_id": identity_id, "account": "gov-user", "password": "new-password",
+            "display_name": "八化建",
+        })
+        assert edited.status_code == 200
+        assert repository.get_account_by_id(social_id).password == "new-password"  # type: ignore[union-attr]
+        assert repository.get_account_by_id(medical_id).password == "new-password"  # type: ignore[union-attr]
+        assert repository.get_session(social_id) is None
+        assert repository.get_session(medical_id) is None
+        legacy_edit = client.put("/api/v1/settings/accounts/MEDICAL", json={
+            "account_id": medical_id, "account": "gov-user", "password": "final-password",
+            "display_name": "八化建", "login_method": "government_sso",
+        })
+        assert legacy_edit.status_code == 200
+        assert repository.get_account_by_id(social_id).password == "final-password"  # type: ignore[union-attr]
+        assert repository.get_account_by_id(medical_id).password == "final-password"  # type: ignore[union-attr]
+        listed = client.get("/api/v1/government-identities")
+        assert listed.status_code == 200
+        assert "final-password" not in listed.text
+        assert len(listed.json()) == 1
+
+        second = client.put("/api/v1/government-identities", json={
+            "account": "other-user", "password": "other-password", "display_name": "南化建",
+        })
+        second_id = second.json()["id"]
+        assert client.post(f"/api/v1/government-identities/{second_id}/bind/medical").status_code == 200
+        selected = client.post(f"/api/v1/government-identities/{second_id}/default/medical")
+        assert selected.status_code == 200
+        assert selected.json()["medical_default"] is True
+        assert repository.get_default_account(SystemType.MEDICAL).credential_id == second_id  # type: ignore[union-attr]
+        assert repository.get_default_account(SystemType.JSHRSS).credential_id == identity_id  # type: ignore[union-attr]
+    finally:
+        coordinator.close()
+
+
+def test_government_identity_platform_selection_filters_business_accounts(tmp_path: Path) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    try:
+        direct = repository.save_account(
+            SystemType.JSHRSS, "nanhua-direct", "password",
+            secondary_account="mobile", profile={"login_method": "direct"},
+        )
+        nanhua = client.put("/api/v1/government-identities", json={
+            "account": "nanhua-gov", "password": "password", "display_name": "南化建",
+            "social_enabled": False, "medical_enabled": True,
+        })
+        bahua = client.put("/api/v1/government-identities", json={
+            "account": "bahua-gov", "password": "password", "display_name": "八化建",
+            "social_enabled": True, "medical_enabled": True,
+        })
+        assert nanhua.status_code == bahua.status_code == 200
+        assert nanhua.json()["social_account_id"] is None
+        assert nanhua.json()["medical_account_id"] is not None
+        assert bahua.json()["social_account_id"] is not None
+        accounts = client.get("/api/v1/accounts").json()
+        social_ids = {item["id"] for item in accounts if item["system_type"] == "JSHRSS"}
+        medical_ids = {item["id"] for item in accounts if item["system_type"] == "MEDICAL"}
+        assert social_ids == {direct.id, bahua.json()["social_account_id"]}
+        assert medical_ids == {nanhua.json()["medical_account_id"], bahua.json()["medical_account_id"]}
+
+        disabled = client.put("/api/v1/government-identities", json={
+            "identity_id": bahua.json()["id"], "account": "bahua-gov", "display_name": "八化建",
+            "social_enabled": False, "medical_enabled": True,
+        })
+        assert disabled.status_code == 200
+        assert disabled.json()["social_account_id"] is None
+        assert client.post(f"/api/v1/government-identities/{bahua.json()['id']}/default/social").status_code == 400
+        social_ids = {item["id"] for item in client.get("/api/v1/accounts").json() if item["system_type"] == "JSHRSS"}
+        assert social_ids == {direct.id}
     finally:
         coordinator.close()
 

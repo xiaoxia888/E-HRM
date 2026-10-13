@@ -1,4 +1,4 @@
-export type TaskKind = 'jshrss_browser' | 'erp_browser' | 'api_query' | 'erp_write'
+export type TaskKind = 'jshrss_browser' | 'medical_browser' | 'erp_browser' | 'api_query' | 'erp_write'
 export type TaskStatus =
   | 'queued'
   | 'running'
@@ -33,7 +33,7 @@ export interface TaskListResponse {
 
 export interface AccountSummary {
   id: number
-  system_type: 'JSHRSS' | 'NOCOBASE' | 'ERP'
+  system_type: 'JSHRSS' | 'MEDICAL' | 'NOCOBASE' | 'ERP'
   display_name: string
   masked_account: string
   is_default: boolean
@@ -52,6 +52,23 @@ export interface AccountEditDetail {
   api_key_saved: boolean
   api_key_mask: string
   login_method: 'direct' | 'government_sso'
+}
+
+export interface GovernmentIdentitySummary {
+  id: number
+  display_name: string
+  masked_account: string
+  social_account_id: number | null
+  social_default: boolean
+  medical_account_id: number | null
+  medical_default: boolean
+}
+
+export interface GovernmentIdentityDetail {
+  id: number
+  display_name: string
+  account: string
+  password_saved: boolean
 }
 
 export interface WebPreferences {
@@ -259,6 +276,8 @@ export interface RightsApplicationDetail {
   allowed_actions: Record<string, number[]>
   termination_person?: BusinessPerson[]
   insurance_person?: BusinessPerson[]
+  med_ins_withdrawal_record?: BusinessPerson[]
+  med_ins_enrollee?: BusinessPerson[]
   operation_states?: ApplicationOperationStates
 }
 
@@ -268,6 +287,8 @@ export interface BusinessPerson {
   contract_type?: string; contract_start_date?: string; contract_end_date?: string
   ethnicity?: string; job_type?: string; administrative_division_id?: number
   contract_add_reason?: string; insurance_identity?: string; monthly_contribution_salary?: number; is_technology?: string
+  status?: string; med_ins_stop_reason?: string; med_stop_date?: string; med_ins_stop_month_fee?: string
+  cert_valid_from?: string; cert_valid_to?: string; arrive_unit_time?: string
 }
 export interface ApplicationOperationStates {
   people: Array<{ person_key: string; name: string; operation: string; status: string; message: string;

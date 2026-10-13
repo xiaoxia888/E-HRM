@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import subprocess
+import sys
 from pathlib import Path
 
 from ehrm.application import EhrmApplication, RIGHTS_STATEMENT_DOWNLOAD
@@ -39,22 +40,38 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument(
         "--output", type=Path, default=Path("artifacts/recorded_flow.py")
     )
+    record.add_argument(
+        "--har", type=Path,
+        help="录制完整网络请求与响应；关闭录制窗口后保存 HAR",
+    )
     return parser
 
 
-def _record(url: str, profile: Path, output: Path) -> int:
+def _record(url: str, profile: Path, output: Path, har: Path | None = None) -> int:
+    if har is not None and output.resolve() == har.resolve():
+        print("录制脚本与 HAR 不能使用同一个文件路径")
+        return 2
     profile.mkdir(parents=True, exist_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if har is not None:
+        har.parent.mkdir(parents=True, exist_ok=True)
     command = [
+        sys.executable,
+        "-m",
         "playwright",
         "codegen",
         "--target=python",
         f"--user-data-dir={profile.resolve()}",
         f"--output={output.resolve()}",
-        url,
     ]
-    print("录制窗口已启动。请完成登录、验证码、查询、生成和下载全流程。")
+    if har is not None:
+        command.append(f"--save-har={har.resolve()}")
+    command.append(url)
+    print("录制窗口已启动。请完成需要分析的流程，结束后正常关闭录制窗口。")
     print("关闭录制窗口后，生成代码将保存到：", output.resolve())
+    if har is not None:
+        print("完整网络请求与响应将保存到：", har.resolve())
+        print("HAR 可能含账号、令牌和人员信息；请勿直接分享原文件。")
     return subprocess.run(command, check=False).returncode
 
 
@@ -65,7 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "record":
         profile = resolve_runtime_path(args.profile, runtime_root)
         output = resolve_runtime_path(args.output, runtime_root)
-        return _record(args.url, profile, output)
+        har = resolve_runtime_path(args.har, runtime_root) if args.har else None
+        return _record(args.url, profile, output, har)
 
     try:
         settings = load_settings(args.config, data_root=runtime_root)

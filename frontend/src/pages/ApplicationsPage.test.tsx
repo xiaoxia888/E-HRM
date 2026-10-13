@@ -11,6 +11,7 @@ import type { RightsApplicationDetail, TaskRecord } from '../types'
 vi.mock('../api/queries', () => ({ api: {
   applications: vi.fn(), applicationDetail: vi.fn(), accounts: vi.fn(), settings: vi.fn(),
   applicationOperations: vi.fn(), applicationOperationLogs: vi.fn(), terminateApplication: vi.fn(),
+  terminateMedicalApplication: vi.fn(), enrollMedicalApplication: vi.fn(),
   printApplication: vi.fn(), task: vi.fn(), cancelTask: vi.fn(),
 } }))
 const nativeGetComputedStyle = window.getComputedStyle.bind(window)
@@ -32,6 +33,8 @@ beforeEach(() => {
   vi.mocked(api.applicationOperations).mockResolvedValue({ people: [], runs: [] })
   vi.mocked(api.applicationOperationLogs).mockResolvedValue([{ created_at: '2026-09-29T02:00:00Z', message: '日志：正在进入单位办理' }])
   vi.mocked(api.terminateApplication).mockResolvedValue(task)
+  vi.mocked(api.terminateMedicalApplication).mockResolvedValue({ ...task, operation: 'application.medical_termination:run1' })
+  vi.mocked(api.enrollMedicalApplication).mockResolvedValue({ ...task, operation: 'application.medical_enrollment:run1' })
   vi.mocked(api.task).mockResolvedValue(task)
   vi.mocked(api.printApplication).mockResolvedValue({ ...task, operation: 'rights_statement.acquire' })
 })
@@ -134,5 +137,101 @@ describe('权益申请分类执行', () => {
     fireEvent.click(within(await dialog('确认执行账号')).getByRole('button', { name: '确认执行' }))
     await dialog('退保执行结果')
     await screen.findByText(/提交成功 0 人，结果待确认 1 人/)
+  })
+
+  it('医保停保选择独立医保账号，确认后发起真实提交流程', async () => {
+    vi.mocked(api.accounts).mockResolvedValue([
+      { id: 10, display_name: '社保单位', masked_account: 'zw***z7', system_type: 'JSHRSS', ready: true, is_default: true, login_method: 'government_sso' },
+      { id: 20, display_name: '医保单位', masked_account: 'yb***01', system_type: 'MEDICAL', ready: true, is_default: true, login_method: 'government_sso' },
+    ])
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'medical_termination', med_ins_withdrawal_record: [
+      { id: 20, user_name: '医保停保人员', id_card_no: '320101199001011234', med_ins_stop_reason: '在职人员解除/终止劳动合同', med_stop_date: '2026-10-12', med_ins_stop_month_fee: '否', operation_key: 'm1' },
+      { id: 21, user_name: '第二位停保人员', id_card_no: '320101199002021235', med_ins_stop_reason: '单位调动', med_stop_date: '2026-10-12', med_ins_stop_month_fee: '是', operation_key: 'm2' },
+    ] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><ApplicationsPage /></MemoryRouter></QueryClientProvider></ConfigProvider>)
+    fireEvent.click(await screen.findByText('TEST-001'))
+    await screen.findByText(/医保停保将按申请人员顺序逐人真实提交/)
+    await screen.findByText('在职人员解除/终止劳动合同')
+    expect(screen.getByText('医保单位 · yb***01 · 政务服务平台')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '核实已办理' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '医保停保' }))
+    const confirmation = await dialog('确认执行账号')
+    expect(within(confirmation).getByText(/本次将按顺序办理 2 名待办人员/)).toBeTruthy()
+    expect(within(confirmation).getByText('第二位停保人员')).toBeTruthy()
+    expect(api.terminateMedicalApplication).not.toHaveBeenCalled()
+    fireEvent.click(within(confirmation).getByRole('button', { name: '确认执行' }))
+    await waitFor(() => expect(api.terminateMedicalApplication).toHaveBeenCalledWith(1, 20))
+    expect(api.terminateApplication).not.toHaveBeenCalled()
+    await dialog('退保执行进度')
+  })
+
+  it('历史已办理状态不显示核实入口，也不允许重复提交', async () => {
+    vi.mocked(api.accounts).mockResolvedValue([
+      { id: 20, display_name: '医保单位', masked_account: 'yb***01', system_type: 'MEDICAL', ready: true, is_default: true, login_method: 'government_sso' },
+    ])
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'medical_termination', med_ins_withdrawal_record: [
+      { id: 20, user_name: '历史人员', id_card_no: '320101199001011234', med_ins_stop_reason: '单位调动', operation_key: 'm1' },
+    ] })
+    vi.mocked(api.applicationOperations).mockResolvedValue({ people: [
+      { person_key: 'm1', name: '历史人员', operation: 'medical_termination', status: 'succeeded', message: '人工标记：已在医保平台核实办理成功；非本系统提交', updated_at: '', task_id: '', account_label: '人工核对' },
+    ], runs: [] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><ApplicationsPage /></MemoryRouter></QueryClientProvider></ConfigProvider>)
+    fireEvent.click(await screen.findByText('TEST-001'))
+    await screen.findByText('已办理')
+    expect(screen.queryByRole('button', { name: '核实已办理' })).toBeNull()
+    expect((screen.getByRole('button', { name: '医保停保' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(api.terminateMedicalApplication).not.toHaveBeenCalled()
+  })
+
+  it('医保参保只有一个按钮，确认医保账号后启动自动建档与参保流程', async () => {
+    const kind = 'medical_enrollment'
+    vi.mocked(api.accounts).mockResolvedValue([
+      { id: 10, display_name: '社保单位', masked_account: 'zw***z7', system_type: 'JSHRSS', ready: true, is_default: true, login_method: 'government_sso' },
+      { id: 20, display_name: '医保单位', masked_account: 'yb***01', system_type: 'MEDICAL', ready: true, is_default: true, login_method: 'government_sso' },
+    ])
+    vi.mocked(api.applications).mockResolvedValue({ records: [{ ...detail, problem_type: kind }], meta: { count: 1, page: 1, page_size: 20, total_page: 1 } } as never)
+    vi.mocked(api.applicationDetail).mockResolvedValue({
+      ...detail, problem_type: kind,
+      med_ins_withdrawal_record: [{ id: 20, user_name: '医保停保人员', id_card_no: '320101199001011234', med_ins_stop_reason: '在职人员解除/终止劳动合同', operation_key: 'm1' }],
+      med_ins_enrollee: [{ id: 21, user_name: '医保参保人员', id_card_no: '320101199001011235', phone: '13800000000', ethnicity: '汉族', arrive_unit_time: '2026-10-12', operation_key: 'm2' }],
+    })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><ApplicationsPage /></MemoryRouter></QueryClientProvider></ConfigProvider>)
+    await screen.findByText('医保人员参保登记')
+    fireEvent.click(await screen.findByText('TEST-001'))
+    await screen.findByText(/先查参保，仅在平台提示需先建档时自动采集并重查/)
+    await screen.findByText('13800000000')
+    expect(screen.getByRole('combobox', { name: '执行账号' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /退\s*保/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '基础信息采集' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '医保参保' }))
+    const confirmation = await dialog('确认执行账号')
+    expect(within(confirmation).getByText(/医保单位/)).toBeTruthy()
+    expect(within(confirmation).getByText(/真实提交/)).toBeTruthy()
+    expect(api.enrollMedicalApplication).not.toHaveBeenCalled()
+    fireEvent.click(within(confirmation).getByRole('button', { name: '确认执行' }))
+    await waitFor(() => expect(api.enrollMedicalApplication).toHaveBeenCalledWith(1, 20))
+    await dialog('医保参保执行进度')
+    expect(api.terminateApplication).not.toHaveBeenCalled()
+  })
+
+  it('医保参保结果待确认者不再重复执行', async () => {
+    vi.mocked(api.accounts).mockResolvedValue([
+      { id: 20, display_name: '医保单位', masked_account: 'yb***01', system_type: 'MEDICAL', ready: true, is_default: true, login_method: 'government_sso' },
+    ])
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'medical_enrollment', med_ins_enrollee: [
+      { id: 21, user_name: '待确认人员', id_card_no: '320101199001011235', phone: '13800000000', operation_key: 'm2' },
+    ] })
+    vi.mocked(api.applicationOperations).mockResolvedValue({ people: [
+      { person_key: 'm2', name: '待确认人员', operation: 'medical_enrollment', status: 'unknown', message: '医保平台结果不明确', updated_at: '', task_id: 'task1', account_label: '医保单位' },
+    ], runs: [] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<ConfigProvider theme={{ token: { motion: false } }}><QueryClientProvider client={client}><MemoryRouter><ApplicationsPage /></MemoryRouter></QueryClientProvider></ConfigProvider>)
+    fireEvent.click(await screen.findByText('TEST-001'))
+    await screen.findByText('结果待确认')
+    expect((screen.getByRole('button', { name: '医保参保' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(api.enrollMedicalApplication).not.toHaveBeenCalled()
   })
 })

@@ -4,7 +4,10 @@ from dataclasses import asdict, replace
 from pathlib import Path
 import shutil
 
-from ehrm.core.auth_repository import AuthenticationRepository, SystemAccount, SystemType
+from ehrm.core.auth_repository import (
+    AuthenticationRepository, SystemAccount, SystemType, medical_browser_profile_name,
+    social_browser_profile_name,
+)
 from ehrm.core.preferences import UserPreferences, UserPreferencesStore
 from ehrm.core.settings import AppSettings, select_ai_model
 
@@ -103,7 +106,9 @@ class WebSettingsService:
             if selected is None:
                 raise ValueError("原账号已不存在，请刷新页面后重试")
         normalized_method = login_method.strip().lower() or "direct"
-        if system_type is not SystemType.JSHRSS:
+        if system_type is SystemType.MEDICAL:
+            normalized_method = "government_sso"
+        elif system_type is not SystemType.JSHRSS:
             normalized_method = "direct"
         if normalized_method not in {"direct", "government_sso"}:
             raise ValueError("智慧人社登录方式无效")
@@ -119,12 +124,16 @@ class WebSettingsService:
             if str(item.profile.get("login_method") or "direct")
             == normalized_method
         )
-        existing = selected or next(
-            (item for item in method_accounts if item.is_default),
-            method_accounts[0] if method_accounts else None,
-        )
+        existing = selected
+        if system_type is not SystemType.MEDICAL and existing is None:
+            existing = next(
+                (item for item in method_accounts if item.is_default),
+                method_accounts[0] if method_accounts else None,
+            )
         normalized_account = account.strip() or (selected.account if selected else "")
-        if system_type is SystemType.JSHRSS and normalized_method == "government_sso":
+        if system_type is SystemType.MEDICAL or (
+            system_type is SystemType.JSHRSS and normalized_method == "government_sso"
+        ):
             normalized_secondary = ""
         else:
             normalized_secondary = secondary_account.strip() or (
@@ -149,6 +158,48 @@ class WebSettingsService:
         resolved_password = password or (existing.password if same_identity else "")
         if not resolved_password:
             raise ValueError("请输入密码；更换账号时不能沿用原账号密码")
+        government_login = system_type is SystemType.MEDICAL or (
+            system_type is SystemType.JSHRSS and normalized_method == "government_sso"
+        )
+        if government_login and existing is not None and existing.credential_id is not None:
+            self.repository.save_government_identity(
+                normalized_account,
+                password,
+                display_name=display_name.strip() or existing.display_name,
+                identity_id=existing.credential_id,
+            )
+            updated = self.repository.get_account_by_id(existing.id)
+            assert updated is not None
+            return updated
+        if system_type is SystemType.MEDICAL:
+            generation = int(selected.profile.get("session_generation") or 0) if selected else 0
+            if selected and (normalized_account != selected.account or password):
+                generation += 1
+            profile = {
+                **(selected.profile if selected else {}),
+                "login_method": "government_sso",
+                "session_generation": generation,
+            }
+            if selected is not None:
+                saved = self.repository.update_account_by_id(
+                    system_type, selected.id,
+                    account=normalized_account,
+                    password=resolved_password,
+                    display_name=display_name.strip() or selected.display_name,
+                    profile=profile,
+                )
+                return self.repository.link_legacy_government_account(saved.id)
+            if self.repository.get_account(SystemType.MEDICAL, normalized_account):
+                raise ValueError("该医保登录账号已存在，请编辑现有账号")
+            saved = self.repository.save_account(
+                SystemType.MEDICAL,
+                normalized_account,
+                resolved_password,
+                display_name=display_name.strip() or normalized_account,
+                profile=profile,
+                make_default=self.repository.get_default_account(SystemType.MEDICAL) is None,
+            )
+            return self.repository.link_legacy_government_account(saved.id)
         saved = self.repository.save_account(
             system_type,
             normalized_account,
@@ -162,6 +213,8 @@ class WebSettingsService:
         )
         if existing is not None and existing.id == saved.id and password:
             self.repository.delete_session(saved.id)
+        if government_login:
+            return self.repository.link_legacy_government_account(saved.id)
         return saved
 
     def account(self, account_id: int, system_type: SystemType) -> SystemAccount:
@@ -182,6 +235,8 @@ class WebSettingsService:
         if not account.account or not account.password:
             raise ValueError("所选账号信息不完整，请先在系统设置中补充")
         login_method = str(account.profile.get("login_method") or "direct")
+        if system_type is SystemType.MEDICAL and login_method != "government_sso":
+            raise ValueError("医保账号必须使用江苏政务服务平台登录")
         if (
             system_type is SystemType.JSHRSS
             and login_method == "direct"
@@ -243,7 +298,8 @@ class WebSettingsService:
         credentials = selected.rights_credentials
         if rights_account is not None:
             profile_root = self.runtime_root / "web-browser-profiles" / (
-                f"jshrss-{rights_account.id}"
+                medical_browser_profile_name(rights_account) if rights_account.system_type is SystemType.MEDICAL
+                else social_browser_profile_name(rights_account)
             )
             browser = replace(
                 browser,
