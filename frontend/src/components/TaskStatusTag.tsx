@@ -1,5 +1,6 @@
 import { Tag } from 'antd'
 import type { TaskStatus } from '../types'
+import { rightsResultOutcome } from '../utils/rights'
 
 const statusMap: Record<
   TaskStatus,
@@ -14,11 +15,16 @@ const statusMap: Record<
   interrupted: { color: 'default', text: '已中断' },
 }
 
-export function taskStatusLabel(status: TaskStatus) {
+export function taskStatusLabel(status: TaskStatus, rightsResult?: unknown) {
+  const outcome = rightsResultOutcome(status, rightsResult)
+  if (outcome === 'warning') return '部分成功'
+  if (outcome === 'error') return '执行失败'
   return statusMap[status].text
 }
 
-export function TaskStatusTag({ status }: { status: TaskStatus }) {
+export function TaskStatusTag({ status, rightsResult }: { status: TaskStatus; rightsResult?: unknown }) {
   const item = statusMap[status]
-  return <Tag color={item.color}>{item.text}</Tag>
+  const outcome = rightsResultOutcome(status, rightsResult)
+  const color = outcome === 'warning' ? 'warning' : outcome === 'error' ? 'error' : item.color
+  return <Tag color={color}>{taskStatusLabel(status, rightsResult)}</Tag>
 }

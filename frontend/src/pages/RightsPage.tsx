@@ -5,6 +5,7 @@ import {
   CloseCircleOutlined,
   DownloadOutlined,
   EditOutlined,
+  ExclamationCircleOutlined,
   FileExcelOutlined,
   FilePdfOutlined,
   FileSearchOutlined,
@@ -29,7 +30,7 @@ import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
 import type { ErpApplicationPreview, RightsImportPreview, RightsIssue, RightsPrintGroup, RightsRecordDetail, TaskRecord } from '../types'
-import { estimateRightsOutputCount } from '../utils/rights'
+import { estimateRightsOutputCount, rightsResultFailures, rightsResultOutcome } from '../utils/rights'
 
 const TRANSACTION_TYPES = ['社保咨询', '工资咨询', '证实咨询', '福利咨询', '合同咨询', '档案咨询', '项目社保申请挂靠', '其他咨询']
 const STATUS_OPTIONS = [
@@ -855,6 +856,10 @@ export function RightsTaskProgressModal({
   const succeeded = status === 'succeeded'
   const failed = status === 'failed'
   const result = taskResult(task?.result)
+  const completed = succeeded || failed
+  const outcome = rightsResultOutcome(status, task?.result)
+  const failures = rightsResultFailures(task?.result)
+  const hasResult = completed && Boolean(task?.result)
   const artifacts = resultArtifacts(task?.result)
   const archive = resultArchive(task?.result)
   const pdfs = artifacts.filter((item) => item.name.toLowerCase().endsWith('.pdf'))
@@ -869,8 +874,14 @@ export function RightsTaskProgressModal({
     if (next) setSelectedPdfUrl(next.url)
   }
   const percent = Math.round(((task?.progress_current ?? 0) / Math.max(task?.progress_total ?? 1, 1)) * 100)
-  const title = running ? '正在获取权益单' : succeeded ? '权益单获取完成' : failed ? '权益单获取失败' : '任务已停止'
-  const hasPdfPreview = succeeded && pdfs.length > 0
+  const title = running ? '正在获取权益单' : outcome === 'warning' ? '权益单部分获取成功' : outcome === 'error' ? '权益单获取失败' : succeeded ? '权益单获取完成' : status === 'interrupted' ? '任务已中断' : '任务已停止'
+  const hasPdfPreview = hasResult && pdfs.length > 0
+  const resultIcon = outcome === 'error' ? <CloseCircleOutlined /> : outcome === 'warning' ? <ExclamationCircleOutlined /> : <CheckCircleOutlined />
+  const completionMessage = outcome === 'error'
+    ? '本次未生成权益单，请查看失败原因和处理结果'
+    : outcome === 'warning'
+      ? '部分权益单已生成，请查看其余人员的失败原因'
+      : task?.message || '任务已完成，可以查看或下载处理结果'
   const selectedPdfPreviewUrl = selectedPdfUrl
     ? `${selectedPdfUrl}${selectedPdfUrl.includes('?') ? '&' : '?'}preview=true&task=${encodeURIComponent(task?.task_id ?? '')}#page=1&view=FitH`
     : ''
@@ -914,12 +925,12 @@ export function RightsTaskProgressModal({
       ]}
     >
       <div className="erp-extraction-progress">
-        <div className={`erp-extraction-progress__icon ${succeeded ? 'is-success' : failed ? 'is-error' : ''}`}>
-          {running || loading ? <LoadingOutlined spin /> : succeeded ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+        <div className={`erp-extraction-progress__icon ${outcome ? `is-${outcome}` : ''}`}>
+          {running || loading ? <LoadingOutlined spin /> : completed ? resultIcon : <CloseCircleOutlined />}
         </div>
         <div>
           <Typography.Title level={3} style={{ margin: 0 }}>{title}</Typography.Title>
-          <Typography.Text type="secondary">{task?.message || '正在创建任务并等待调度'}</Typography.Text>
+          <Typography.Text type="secondary">{completed ? completionMessage : task?.message || '正在创建任务并等待调度'}</Typography.Text>
         </div>
       </div>
       {running && (
@@ -931,15 +942,15 @@ export function RightsTaskProgressModal({
           <Progress percent={percent} status="active" showInfo={false} />
         </div>
       )}
-      {failed && <Alert type="error" showIcon message="权益单获取失败" description={task?.error || '任务执行失败，请检查错误信息后重试。'} />}
+      {completed && outcome === 'error' && failures.length === 0 && <Alert type="error" showIcon title="权益单获取失败" description={<span style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task?.error || '任务执行失败，请检查错误信息后重试。'}</span>} />}
       {status === 'cancelled' && <Alert type="warning" showIcon message="任务已停止" description={task?.message} />}
-      {succeeded && (
+      {hasResult && (
         <>
-          <div className={`rights-result-summary ${result.failed ? 'has-warning' : ''}`}>
-            <CheckCircleOutlined />
+          <div className={`rights-result-summary ${outcome === 'error' ? 'has-error' : outcome === 'warning' ? 'has-warning' : ''}`}>
+            {resultIcon}
             <div>
               <Typography.Text strong>成功 {result.succeeded} 项，失败 {result.failed} 项</Typography.Text>
-              <Typography.Text type="secondary">{result.erp_message || result.erp_warning || (pdfs.length ? '可预览单份 PDF，完整结果请下载压缩包' : '本次任务没有生成可预览的 PDF')}</Typography.Text>
+              <Typography.Text type="secondary">{result.failed ? '具体失败原因见下方；完整结果可下载查看' : result.erp_message || result.erp_warning || (pdfs.length ? '可预览单份 PDF，完整结果请下载压缩包' : '本次任务没有生成可预览的 PDF')}</Typography.Text>
             </div>
             {archive && (
               <Button type="primary" icon={<DownloadOutlined />} href={archive.url}>
@@ -947,6 +958,22 @@ export function RightsTaskProgressModal({
               </Button>
             )}
           </div>
+          {failures.length > 0 && (
+            <div className="rights-result-failures">
+              <Typography.Text strong>失败原因</Typography.Text>
+              <Table
+                size="small"
+                rowKey={(item) => `${item.row_number}:${item.stage}`}
+                dataSource={failures}
+                scroll={{ y: 220 }}
+                pagination={failures.length > 5 ? { pageSize: 5, showSizeChanger: false } : false}
+                columns={[
+                  { title: '人员记录', dataIndex: 'row_number', width: 110, render: (row: number, item) => <div>第 {row} 行<br /><Typography.Text type="secondary">{item.stage}</Typography.Text></div> },
+                  { title: '具体错误', dataIndex: 'message', render: (value: string) => <Typography.Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{value}</Typography.Text> },
+                ]}
+              />
+            </div>
+          )}
           {pdfs.length > 0 ? (
             <div className="rights-pdf-preview">
               <div className="rights-pdf-preview__viewer">
@@ -989,7 +1016,7 @@ export function RightsTaskProgressModal({
               </div>
             </div>
           ) : artifacts.length > 0 ? (
-            <Space direction="vertical" style={{ width: '100%' }}>
+            <Space direction="vertical" className="rights-result-artifacts" style={{ width: '100%' }}>
               {artifacts.map((artifact) => <Button key={artifact.url} icon={<DownloadOutlined />} href={artifact.url}>{artifact.name}</Button>)}
             </Space>
           ) : null}

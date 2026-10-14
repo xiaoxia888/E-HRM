@@ -7,6 +7,7 @@ import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
 import { TaskStatusTag } from '../components/TaskStatusTag'
+import { rightsResultFailures, rightsResultOutcome } from '../utils/rights'
 
 export function TaskCenterPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -29,6 +30,9 @@ export function TaskCenterPage() {
   const selected = tasks.find((task) => task.task_id === selectedTaskId) ?? null
   const artifacts = resultArtifacts(selected?.result)
   const archive = resultArchive(selected?.result)
+  const error = selected?.error || (selected?.operation === 'rights_statement.acquire'
+    ? [...new Set(rightsResultFailures(selected.result).map((item) => item.message))].join('\n\n')
+    : '')
   return (
     <div className="page-stack">
       <PageTitle
@@ -45,18 +49,22 @@ export function TaskCenterPage() {
           pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
           columns={[
             { title: '任务', dataIndex: 'title', width: 200 },
-            { title: '状态', dataIndex: 'status', width: 110, render: (status) => <TaskStatusTag status={status} /> },
+            { title: '状态', dataIndex: 'status', width: 110, render: (status, record) => <TaskStatusTag status={status} rightsResult={record.operation === 'rights_statement.acquire' ? record.result : undefined} /> },
             { title: '使用资源', dataIndex: 'resource_label', width: 180 },
             {
               title: '进度',
               width: 190,
-              render: (_, record) => (
-                <Progress
-                  percent={Math.round((record.progress_current / Math.max(record.progress_total, 1)) * 100)}
-                  size="small"
-                  status={record.status === 'failed' ? 'exception' : undefined}
-                />
-              ),
+              render: (_, record) => {
+                const outcome = rightsResultOutcome(record.status, record.operation === 'rights_statement.acquire' ? record.result : undefined)
+                return (
+                  <Progress
+                    percent={Math.round((record.progress_current / Math.max(record.progress_total, 1)) * 100)}
+                    size="small"
+                    status={outcome === 'error' ? 'exception' : outcome === 'warning' ? 'normal' : undefined}
+                    strokeColor={outcome === 'warning' ? '#faad14' : undefined}
+                  />
+                )
+              },
             },
             { title: '当前说明', dataIndex: 'message', ellipsis: true },
             {
@@ -90,14 +98,14 @@ export function TaskCenterPage() {
           <Space direction="vertical" size={24} style={{ width: '100%' }}>
             <Descriptions column={1} bordered size="small">
               <Descriptions.Item label="任务名称">{selected.title}</Descriptions.Item>
-              <Descriptions.Item label="状态"><TaskStatusTag status={selected.status} /></Descriptions.Item>
+              <Descriptions.Item label="状态"><TaskStatusTag status={selected.status} rightsResult={selected.operation === 'rights_statement.acquire' ? selected.result : undefined} /></Descriptions.Item>
               <Descriptions.Item label="业务资源">{selected.resource_label}</Descriptions.Item>
               <Descriptions.Item label="任务编号"><Typography.Text copyable>{selected.task_id}</Typography.Text></Descriptions.Item>
               <Descriptions.Item label="当前说明">{selected.message}</Descriptions.Item>
             </Descriptions>
-            {selected.error && (
+            {error && (
               <Card size="small" title="错误信息" className="error-card">
-                <Typography.Text type="danger">{selected.error}</Typography.Text>
+                <Typography.Text type="danger" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{error}</Typography.Text>
               </Card>
             )}
             {(archive || artifacts.length > 0) && (

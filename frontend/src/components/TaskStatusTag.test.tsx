@@ -14,4 +14,12 @@ describe('taskStatusLabel', () => {
   ])('将 %s 显示为友好中文状态', (status, expected) => {
     expect(taskStatusLabel(status)).toBe(expected)
   })
+
+  it('历史权益单任务全部失败时不显示已完成', () => {
+    expect(taskStatusLabel('succeeded', { succeeded: 0, failed: 4 })).toBe('执行失败')
+  })
+
+  it('权益单部分成功时显示部分成功', () => {
+    expect(taskStatusLabel('succeeded', { succeeded: 1, failed: 3 })).toBe('部分成功')
+  })
 })

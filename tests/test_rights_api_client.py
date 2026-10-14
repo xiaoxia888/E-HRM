@@ -220,6 +220,24 @@ def test_generate_rights_bill_posts_expected_payload_and_decodes_pdf(
     assert response.disposed is True
 
 
+@pytest.mark.parametrize("phase", ["query", "business-no", "print"])
+def test_request_failure_keeps_reason_without_authentication_headers(
+    tmp_path: Path, phase: str, caplog: pytest.LogCaptureFixture,
+) -> None:
+    reason = "APIRequestContext.post: socket hang up"
+    error = PlaywrightError(reason + "\nCall log:\n  - access-token: test-secret-token\n  - cookie: secret-session")
+    responses = [_business_no_response(), error] if phase == "print" else [error]
+    _, _, _, _, client = _client(tmp_path, responses)
+    with pytest.raises(RightsApiRequestError) as failure:
+        if phase == "query":
+            client.query_people(PersonQueryRequest("test-identity", "202601", "202608"))
+        else:
+            client.generate_rights_bill(RightsBillPrintRequest("202601", "202608", InsuranceCode.PENSION, ("person-1",)))
+    assert failure.value.details == reason
+    assert "test-secret-token" not in caplog.text
+    assert "secret-session" not in caplog.text
+
+
 def test_print_timeout_returns_actionable_message(tmp_path: Path) -> None:
     settings, _, _, _, client = _client(
         tmp_path,
@@ -324,8 +342,12 @@ def test_insurance_enum_uses_platform_codes(
     assert InsuranceCode.from_display_name(insurance.display_name) is insurance
 
 
+@pytest.mark.parametrize("error_message", [
+    "个人编号不能为空",
+    "status 400 reading GlobalBusinessManagerService#startBusiness(BusinessLog)",
+])
 def test_generate_rights_bill_rejects_print_business_error(
-    tmp_path: Path,
+    tmp_path: Path, error_message: str,
 ) -> None:
     response = FakeResponse(
         status=200,
@@ -335,7 +357,7 @@ def test_generate_rights_bill_rejects_print_business_error(
             "map": {
                 "pdf": None,
                 "appCode": "-1",
-                "errorMsg": "个人编号不能为空",
+                "errorMsg": error_message,
             },
         },
     )
@@ -344,7 +366,7 @@ def test_generate_rights_bill_rejects_print_business_error(
         [_business_no_response(), response],
     )
 
-    with pytest.raises(RightsApiRequestError, match="个人编号不能为空"):
+    with pytest.raises(RightsApiRequestError) as failure:
         client.generate_rights_bill(
             RightsBillPrintRequest(
                 "202601",
@@ -354,6 +376,8 @@ def test_generate_rights_bill_rejects_print_business_error(
             )
         )
 
+    assert failure.value.message == error_message
+    assert failure.value.details == "appCode=-1"
     assert response.disposed is True
 
 

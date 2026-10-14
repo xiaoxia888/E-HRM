@@ -31,6 +31,25 @@ export interface TaskListResponse {
   tasks: TaskRecord[]
 }
 
+export interface BusinessUsageSeries {
+  key: 'rights' | 'social' | 'medical'
+  label: string
+  total_count: number
+  today_count: number
+  period_count: number
+  first_used_date: string | null
+  daily: Array<{ date: string; count: number }>
+}
+
+export interface BusinessUsageStatistics {
+  today: string
+  start_date: string
+  end_date: string
+  timezone: string
+  generated_at: string
+  businesses: BusinessUsageSeries[]
+}
+
 export interface AccountSummary {
   id: number
   system_type: 'JSHRSS' | 'MEDICAL' | 'NOCOBASE' | 'ERP'

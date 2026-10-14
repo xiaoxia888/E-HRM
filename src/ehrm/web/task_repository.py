@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ehrm.web.tasks import TaskKind, TaskSnapshot, TaskStatus
 
@@ -52,6 +53,8 @@ class TaskRepository:
                     ON task_records(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_task_records_status
                     ON task_records(status);
+                CREATE INDEX IF NOT EXISTS idx_task_records_operation_created_at
+                    ON task_records(operation, created_at);
 
                 CREATE TABLE IF NOT EXISTS task_artifacts (
                     token TEXT PRIMARY KEY,
@@ -142,6 +145,88 @@ class TaskRepository:
                 (max(int(limit), 1),),
             ).fetchall()
         return tuple(self._snapshot(row) for row in rows)
+
+    def rights_usage(
+        self, *, days: int = 30, start_date: date | None = None,
+        end_date: date | None = None, now: datetime | None = None,
+    ) -> dict[str, object]:
+        """Retain the rights-only response for existing clients."""
+        statistics = self.business_usage(
+            days=days, start_date=start_date, end_date=end_date, now=now,
+        )
+        rights = statistics.pop("businesses")[0]
+        return {**statistics, **{key: value for key, value in rights.items() if key not in {"key", "label"}}}
+
+    def business_usage(
+        self, *, days: int = 30, start_date: date | None = None,
+        end_date: date | None = None, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Count each business task once in its own, non-overlapping category."""
+        generated_at = now or datetime.now(UTC)
+        today = generated_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        if (start_date is None) != (end_date is None):
+            raise ValueError("统计开始日期和结束日期必须同时填写")
+        if not 1 <= days <= 366:
+            raise ValueError("统计天数必须在 1 到 366 之间")
+        start = start_date or today - timedelta(days=days - 1)
+        end = end_date or today
+        if start > end:
+            raise ValueError("统计开始日期不能晚于结束日期")
+        if (end - start).days >= 366:
+            raise ValueError("单次统计日期范围不能超过 366 天")
+        if end > today:
+            raise ValueError("统计结束日期不能晚于今天")
+
+        # One grouped read reconciles all categories without a 500-task cap.
+        # SQLite first converts ISO timestamps to UTC, then applies UTC+8.
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                WITH business_tasks AS (
+                    SELECT CASE
+                        WHEN operation = 'rights_statement.acquire' THEN 'rights'
+                        WHEN operation GLOB 'application.termination:*' THEN 'social'
+                        WHEN operation GLOB 'application.medical_termination:*'
+                            OR operation GLOB 'application.medical_enrollment:*' THEN 'medical'
+                    END AS category,
+                    date(created_at, '+8 hours') AS day
+                    FROM task_records
+                )
+                SELECT category, day, COUNT(*) AS count
+                FROM business_tasks
+                WHERE category IS NOT NULL
+                GROUP BY category, day
+                ORDER BY category, day
+                """
+            ).fetchall()
+        counts_by_category: dict[str, dict[str, int]] = {"rights": {}, "social": {}, "medical": {}}
+        for row in rows:
+            counts_by_category[str(row["category"])][str(row["day"])] = int(row["count"])
+        dates = [
+            (start + timedelta(days=offset)).isoformat()
+            for offset in range((end - start).days + 1)
+        ]
+        businesses = []
+        for key, label in (("rights", "权益单"), ("social", "社保业务"), ("medical", "医保业务")):
+            counts = counts_by_category[key]
+            daily = [{"date": day, "count": counts.get(day, 0)} for day in dates]
+            businesses.append({
+                "key": key,
+                "label": label,
+                "total_count": sum(counts.values()),
+                "today_count": counts.get(today.isoformat(), 0),
+                "period_count": sum(item["count"] for item in daily),
+                "first_used_date": next(iter(counts), None),
+                "daily": daily,
+            })
+        return {
+            "today": today.isoformat(),
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "timezone": "Asia/Shanghai",
+            "generated_at": generated_at.isoformat(),
+            "businesses": businesses,
+        }
 
     def mark_unfinished_interrupted(self) -> int:
         now = datetime.now(UTC).isoformat()

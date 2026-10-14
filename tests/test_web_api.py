@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
-from datetime import datetime
+from datetime import UTC, datetime
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ehrm.core.auth_repository import AuthenticationRepository, SystemType, medical_browser_profile_name
@@ -15,6 +17,7 @@ from ehrm.gui.template_service import RightsStatementTemplateService
 from ehrm.modules.rights_statement.excel_models import (
     EmployeeRecord,
     ExcelRunResult,
+    ExcelTaskRequest,
     ExportMode,
     ItemResult,
 )
@@ -52,6 +55,62 @@ def test_web_health_and_concurrency_policy_are_explicit(tmp_path: Path) -> None:
         assert items[0]["behavior"] == "串行排队"
         assert items[1]["behavior"] == "独立浏览器并行"
         assert items[2]["behavior"] == "直接并行"
+    finally:
+        coordinator.close()
+
+
+def test_dashboard_rights_usage_returns_persisted_counts_and_daily_series(tmp_path: Path) -> None:
+    client, coordinator = _client(tmp_path)
+    repository = client.app.state.task_repository
+    try:
+        submitted = coordinator.submit(title="获取权益单", operation="rights_statement.acquire", kind=TaskKind.API_QUERY, runner=lambda _context: None)
+        assert wait_until(lambda: coordinator.get(submitted.task_id).status.terminal)
+        snapshot = replace(coordinator.get(submitted.task_id), status=TaskStatus.FAILED, created_at="2026-10-12T16:00:00+00:00")
+        repository.save(snapshot)
+        repository.save(replace(snapshot, status=TaskStatus.SUCCEEDED))
+        repository.save(replace(snapshot, task_id="erp-task", operation="erp.rights.upload"))
+        repository.save(replace(snapshot, task_id="social-old", operation="application.termination:old", created_at="2026-10-11T00:00:00Z"))
+        repository.save(replace(snapshot, task_id="social-today", operation="application.termination:today"))
+        repository.save(replace(snapshot, task_id="medical-stop", operation="application.medical_termination:stop"))
+        repository.save(replace(snapshot, task_id="medical-enroll", operation="application.medical_enrollment:enroll"))
+        with patch("ehrm.web.task_repository.datetime") as clock:
+            clock.now.return_value = datetime(2026, 10, 13, 6, tzinfo=UTC)
+            response = client.get("/api/v1/dashboard/rights-usage?days=3")
+            assert response.status_code == 200
+            stats = response.json()
+            assert stats["total_count"] == stats["today_count"] == stats["period_count"] == 1
+            assert stats["timezone"] == "Asia/Shanghai"
+            assert stats["first_used_date"] == "2026-10-13"
+            assert stats["daily"] == [{"date": "2026-10-11", "count": 0}, {"date": "2026-10-12", "count": 0}, {"date": "2026-10-13", "count": 1}]
+            selected = client.get("/api/v1/dashboard/rights-usage?start_date=2026-10-12&end_date=2026-10-12").json()
+            assert selected["period_count"] == 0
+            assert selected["total_count"] == selected["today_count"] == 1
+            response = client.get("/api/v1/dashboard/business-usage?days=3")
+            assert response.status_code == 200
+            businesses = response.json()["businesses"]
+            assert [item["key"] for item in businesses] == ["rights", "social", "medical"]
+            assert [item["total_count"] for item in businesses] == [1, 2, 2]
+            assert [item["today_count"] for item in businesses] == [1, 1, 2]
+            assert [item["period_count"] for item in businesses] == [1, 2, 2]
+            assert businesses[0]["daily"] == stats["daily"]
+            selected = client.get("/api/v1/dashboard/business-usage?start_date=2026-10-12&end_date=2026-10-12").json()
+            assert [item["period_count"] for item in selected["businesses"]] == [0, 0, 0]
+            assert [item["total_count"] for item in selected["businesses"]] == [1, 2, 2]
+    finally:
+        coordinator.close()
+
+
+@pytest.mark.parametrize("query,status", [
+    ("days=0", 422), ("days=367", 422), ("days=bad", 422),
+    ("start_date=bad&end_date=2026-10-12", 422),
+    ("start_date=2026-10-01", 400),
+    ("start_date=2026-10-12&end_date=2026-10-11", 400),
+])
+@pytest.mark.parametrize("endpoint", ["rights-usage", "business-usage"])
+def test_dashboard_usage_validates_query_parameters(tmp_path: Path, query: str, status: int, endpoint: str) -> None:
+    client, coordinator = _client(tmp_path)
+    try:
+        assert client.get(f"/api/v1/dashboard/{endpoint}?{query}").status_code == status
     finally:
         coordinator.close()
 
@@ -132,6 +191,61 @@ def test_rights_result_archive_contains_pdfs_and_result_excel_only(
                 "权益单处理结果.xlsx",
             }
             assert "result.json" not in zipped.namelist()
+    finally:
+        coordinator.close()
+
+
+@pytest.mark.parametrize("succeeded,failed", [(2, 0), (1, 1), (0, 2)])
+def test_rights_task_reports_business_failures_and_retains_downloads(
+    tmp_path: Path, succeeded: int, failed: int,
+) -> None:
+    client, coordinator = _client(tmp_path)
+    service = client.app.state.rights_service
+    repository = AuthenticationRepository(client.app.state.settings.auth_database_path)
+    account = repository.save_account(
+        SystemType.JSHRSS, "test-unit", "test-password", secondary_account="test-mobile",
+    )
+    repository.save_account(SystemType.ERP, "test-erp", "test-password")
+    output = tmp_path / "output"
+    output.mkdir()
+    manifest = output / "result.json"
+    workbook = output / "结果.xlsx"
+    pdf = output / "权益单.pdf"
+    manifest.write_text("{}", encoding="utf-8")
+    workbook.write_bytes(b"excel")
+    if succeeded:
+        pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+    error = "智慧人社业务接口请求失败\nstatus 400 reading GlobalBusinessManagerService#startBusiness(BusinessLog)\nappCode=-1"
+    result = ExcelRunResult(
+        mode=ExportMode.BATCH, total=2, succeeded=succeeded, failed=failed,
+        manifest_path=manifest, result_workbook_path=workbook,
+        items=tuple(
+            ItemResult(row + 2, row < succeeded, "SUCCESS" if row < succeeded else "RIGHTS_API_REQUEST_FAILED", "成功" if row < succeeded else error, pdf if row < succeeded else None)
+            for row in range(2)
+        ),
+    )
+    request = ExcelTaskRequest((), ExportMode.BATCH, output, workbook, upload_to_erp=succeeded == 0)
+    try:
+        with patch("ehrm.web.rights_service.DesktopWorkbench") as workbench, patch.object(service, "_run_erp") as upload:
+            workbench.return_value.__enter__.return_value.run.return_value = result
+            submitted = service._submit(account, request, title="打印权益单")
+            assert wait_until(lambda: coordinator.get(submitted.task_id).status.terminal)
+            response = client.get(f"/api/v1/tasks/{submitted.task_id}")
+            assert response.status_code == 200
+            task = response.json()
+            assert task["status"] == ("failed" if succeeded == 0 else "succeeded")
+            assert task["result"]["succeeded"] == succeeded
+            assert task["result"]["failed"] == failed
+            if failed:
+                assert task["error"] == error
+                assert "失败原因" in task["message"]
+                assert task["result"]["items"][-1]["message"] == error
+            if succeeded and failed:
+                assert "部分获取成功" in task["message"]
+            assert client.get(task["result"]["archive"]["url"]).status_code == 200
+            assert client.get(task["result"]["artifacts"][1]["url"]).status_code == 200
+            upload.assert_not_called()
+            assert "erp_task_id" not in task["result"]
     finally:
         coordinator.close()
 

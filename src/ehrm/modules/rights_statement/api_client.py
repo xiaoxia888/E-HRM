@@ -76,7 +76,7 @@ class RightsStatementApiClient:
         except PlaywrightError as exc:
             raise RightsApiRequestError(
                 "人员信息查询请求失败",
-                details=str(exc),
+                details=self._request_error_details(exc),
             ) from exc
 
         result = self._parse_query_response(response)
@@ -135,7 +135,7 @@ class RightsStatementApiClient:
             )
         except PlaywrightError as exc:
             elapsed_seconds = time.monotonic() - started_at
-            details = str(exc)
+            details = self._request_error_details(exc)
             self.logger.error(
                 "智慧人社权益单打印请求异常 elapsed=%.3fs path=%s error_type=%s error=%s",
                 elapsed_seconds,
@@ -219,7 +219,7 @@ class RightsStatementApiClient:
         except PlaywrightError as exc:
             raise RightsApiRequestError(
                 "打印业务流水号请求失败",
-                details=str(exc),
+                details=self._request_error_details(exc),
             ) from exc
         business_no = self._parse_business_no_response(response)
         self.logger.info(
@@ -506,6 +506,11 @@ class RightsStatementApiClient:
                 "人员信息查询分页信息错误",
                 details=f"{key}={value!r}",
             ) from exc
+
+    @staticmethod
+    def _request_error_details(exc: PlaywrightError) -> str:
+        # Playwright's call log contains authentication headers and cookies.
+        return str(exc).split("\nCall log:", 1)[0].strip()
 
     def _url(self, path: str) -> str:
         login = urlsplit(self.settings.site.login_url)

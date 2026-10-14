@@ -421,12 +421,12 @@ class ExcelRightsStatementService:
                     "row_number": item.row_number,
                     "success": item.success,
                     "code": item.code,
-                    "message": display_message(item.code, item.message),
+                    "message": item.message or display_message(item.code),
                     "file_path": str(item.file_path) if item.file_path else None,
                     "erp_success": item.erp_success,
                     "erp_code": item.erp_code,
                     "erp_message": (
-                        display_message(item.erp_code, item.erp_message)
+                        item.erp_message or display_message(item.erp_code)
                         if item.erp_code
                         else item.erp_message
                     ),

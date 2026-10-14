@@ -27,7 +27,9 @@ from ehrm.modules.rights_statement.excel_models import (
 )
 from ehrm.web.settings_service import WebSettingsService
 from ehrm.web.task_repository import TaskRepository
-from ehrm.web.tasks import TaskContext, TaskCoordinator, TaskKind, TaskSnapshot
+from ehrm.web.tasks import (
+    TaskContext, TaskCoordinator, TaskKind, TaskOutcome, TaskSnapshot, TaskStatus,
+)
 from ehrm.workbench import DesktopWorkbench
 
 
@@ -1286,7 +1288,7 @@ class RightsWebService:
         context: TaskContext,
         account: SystemAccount,
         request: ExcelTaskRequest,
-    ) -> dict[str, object]:
+    ) -> TaskOutcome:
         total = max(1, len(request.groups))
         progress_current = 0
 
@@ -1310,7 +1312,7 @@ class RightsWebService:
             result = workbench.run(request)
         context.report("正在整理结果文件", current=total, total=total)
         payload = self._result_payload(result)
-        if request.upload_to_erp:
+        if request.upload_to_erp and result.succeeded > 0:
             erp_account = self.settings_service.repository.get_default_account(
                 SystemType.ERP
             )
@@ -1337,7 +1339,21 @@ class RightsWebService:
                 payload["erp_message"] = (
                     "权益单已下载，ERP 上传已按账号单独排队"
                 )
-        return payload
+        if result.failed:
+            errors = list(dict.fromkeys(
+                item.message or display_message(item.code)
+                for item in result.items if not item.success
+            ))
+            return TaskOutcome(
+                result=payload,
+                status=TaskStatus.FAILED if result.succeeded == 0 else TaskStatus.SUCCEEDED,
+                message=(
+                    f"权益单{'获取失败' if result.succeeded == 0 else '部分获取成功'}："
+                    f"成功 {result.succeeded} 项，失败 {result.failed} 项；请查看失败原因"
+                ),
+                error="\n\n".join(errors),
+            )
+        return TaskOutcome(result=payload)
 
     def _run_erp(
         self,

@@ -105,6 +105,16 @@ class TaskContext:
         self._progress_callback(message, current, total)
 
 
+@dataclass(frozen=True, slots=True)
+class TaskOutcome:
+    """A completed business operation that may retain results on failure."""
+
+    result: object | None
+    status: TaskStatus = TaskStatus.SUCCEEDED
+    message: str = "任务已完成，可以查看或下载处理结果"
+    error: str = ""
+
+
 TaskRunner = Callable[[TaskContext], object | None]
 
 
@@ -351,14 +361,16 @@ class TaskCoordinator:
                 record.finished_at = datetime.now(UTC)
                 self._notify_locked(record)
         else:
+            outcome = result if isinstance(result, TaskOutcome) else TaskOutcome(result)
             with self._lock:
-                record.status = TaskStatus.SUCCEEDED
-                record.result = result
+                record.status = outcome.status
+                record.result = outcome.result
                 record.progress_current = max(
                     record.progress_current,
                     record.progress_total,
                 )
-                record.message = "任务已完成，可以查看或下载处理结果"
+                record.message = outcome.message
+                record.error = outcome.error
                 record.finished_at = datetime.now(UTC)
                 self._notify_locked(record)
         finally:

@@ -63,7 +63,7 @@ class ResultWorkbookWriter:
                 if item.success:
                     cell.value = ""
                 else:
-                    cell.value = display_message(item.code, item.message)
+                    cell.value = item.message or display_message(item.code)
                     cell.fill = copy(_FAILURE_FILL)
                     cell.alignment = Alignment(
                         horizontal="left",
@@ -80,9 +80,8 @@ class ResultWorkbookWriter:
                 else:
                     erp_status.value = "上传失败"
                     erp_status.fill = copy(_FAILURE_FILL)
-                    erp_failure.value = display_message(
-                        item.erp_code or "ERP_UPLOAD_FAILED",
-                        item.erp_message,
+                    erp_failure.value = item.erp_message or display_message(
+                        item.erp_code or "ERP_UPLOAD_FAILED"
                     )
                     erp_failure.fill = copy(_FAILURE_FILL)
                     erp_failure.alignment = Alignment(

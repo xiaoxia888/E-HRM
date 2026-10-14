@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import date
 import logging
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -55,6 +56,8 @@ from ehrm.web.schemas import (
     NocoBaseTerminationRequest,
     TaskListResponse,
     TaskResponse,
+    RightsUsageResponse,
+    BusinessUsageResponse,
     PreferencesUpdateRequest,
     RightsTaskRequest,
     RightsManualRecordRequest,
@@ -229,6 +232,26 @@ def create_app(
                     explanation="避免同一业务资源被重复写入",
                 ),
             ],
+        )
+
+    @app.get("/api/v1/dashboard/rights-usage", response_model=RightsUsageResponse)
+    def rights_usage(
+        days: int = Query(default=30, ge=1, le=366),
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> dict[str, object]:
+        return task_repository.rights_usage(
+            days=days, start_date=start_date, end_date=end_date,
+        )
+
+    @app.get("/api/v1/dashboard/business-usage", response_model=BusinessUsageResponse)
+    def business_usage(
+        days: int = Query(default=30, ge=1, le=366),
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> dict[str, object]:
+        return task_repository.business_usage(
+            days=days, start_date=start_date, end_date=end_date,
         )
 
     @app.get("/api/v1/accounts", response_model=list[AccountSummary])

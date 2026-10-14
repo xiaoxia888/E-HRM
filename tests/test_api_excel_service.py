@@ -1,8 +1,12 @@
 import logging
+import json
 from pathlib import Path
 
+import pytest
+from openpyxl import Workbook, load_workbook
+
 from ehrm.core.error_catalog import ErrorCode
-from ehrm.core.exceptions import AuthenticationFailedError
+from ehrm.core.exceptions import AuthenticationFailedError, RightsApiRequestError
 from ehrm.core.settings import load_settings
 from ehrm.modules.rights_statement.api_excel_service import (
     ApiExcelRightsStatementService,
@@ -175,3 +179,48 @@ def test_api_excel_service_stops_batch_after_login_failure(
         raise AssertionError("登录失败应立即终止整批任务")
 
     assert query_count == 1
+
+
+@pytest.mark.parametrize("phase", ["query", "print"])
+def test_platform_failure_details_survive_row_results_and_exports(
+    tmp_path: Path, phase: str,
+) -> None:
+    settings = load_settings(Path("config/settings.toml"), data_root=tmp_path / "runtime")
+    service = ApiExcelRightsStatementService(settings, logging.getLogger("test.api-errors"))
+    records = (_record(2, "张三", "320101199001011234"), _record(3, "李四", "320101199002021235"))
+    source = tmp_path / "人员.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["姓名"])
+    for record in records:
+        workbook.active.append([record.name])
+    workbook.save(source)
+    workbook.close()
+    platform_error = "status 400 reading GlobalBusinessManagerService#startBusiness(BusinessLog)"
+
+    def fail():
+        raise RightsApiRequestError(platform_error, details="appCode=-1")
+
+    def query_people(query):
+        if phase == "query":
+            fail()
+        record = next(item for item in records if item.identity_number == query.identity_number)
+        return _query_result(PersonRecord(f"person-{record.row_number}", record.identity_number, record.name))
+
+    result = service.execute_with_api(
+        [WorkGroup(sequence=1, records=records)], ExportMode.BATCH,
+        tmp_path / "output", source,
+        query_people=query_people, download_rights_bill=lambda *_args: fail(),
+    )
+
+    assert result.succeeded == 0
+    assert result.failed == 2
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    exported = load_workbook(result.result_workbook_path, read_only=True)
+    try:
+        for item, exported_item in zip(result.items, manifest["items"], strict=True):
+            assert platform_error in item.message
+            assert "appCode=-1" in item.message
+            assert exported_item["message"] == item.message
+            assert exported.active.cell(item.row_number, 2).value == item.message
+    finally:
+        exported.close()

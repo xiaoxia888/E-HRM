@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +40,43 @@ class TaskResponse(BaseModel):
 class TaskListResponse(BaseModel):
     revision: int
     tasks: list[TaskResponse]
+
+
+class RightsUsageDay(BaseModel):
+    date: date
+    count: int
+
+
+class RightsUsageResponse(BaseModel):
+    total_count: int
+    today_count: int
+    period_count: int
+    today: date
+    start_date: date
+    end_date: date
+    first_used_date: date | None
+    timezone: str
+    generated_at: datetime
+    daily: list[RightsUsageDay]
+
+
+class BusinessUsageSeries(BaseModel):
+    key: Literal["rights", "social", "medical"]
+    label: str
+    total_count: int
+    today_count: int
+    period_count: int
+    first_used_date: date | None
+    daily: list[RightsUsageDay]
+
+
+class BusinessUsageResponse(BaseModel):
+    today: date
+    start_date: date
+    end_date: date
+    timezone: str
+    generated_at: datetime
+    businesses: list[BusinessUsageSeries]
 
 
 class AccountSummary(BaseModel):

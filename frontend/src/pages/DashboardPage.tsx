@@ -8,6 +8,7 @@ import { Alert, Card, Col, Row, Skeleton, Statistic, Table, Tag } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/queries'
 import { PageTitle } from '../components/PageTitle'
+import { BusinessUsagePanel } from '../components/BusinessUsagePanel'
 
 export function DashboardPage() {
   const tasks = useQuery({ queryKey: ['tasks'], queryFn: api.tasks })
@@ -22,6 +23,7 @@ export function DashboardPage() {
         title="工作台"
         description="统一查看业务运行状态、账号队列和处理结果"
       />
+      <BusinessUsagePanel />
       <Alert
         type="info"
         showIcon

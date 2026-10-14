@@ -10,6 +10,7 @@ import type {
   RightsApplicationPage,
   TaskListResponse,
   TaskRecord,
+  BusinessUsageStatistics,
   RightsImportPreview,
   RightsRecordDetail,
   WebPreferences,
@@ -34,6 +35,13 @@ export const api = {
     ),
   policy: () => apiRequest<PolicyResponse>('/api/v1/concurrency-policy'),
   tasks: () => apiRequest<TaskListResponse>('/api/v1/tasks?limit=500'),
+  businessUsage: (values: { days?: number; start_date?: string; end_date?: string }) => {
+    const params = new URLSearchParams()
+    if (values.days !== undefined) params.set('days', String(values.days))
+    if (values.start_date) params.set('start_date', values.start_date)
+    if (values.end_date) params.set('end_date', values.end_date)
+    return apiRequest<BusinessUsageStatistics>(`/api/v1/dashboard/business-usage?${params}`)
+  },
   task: (taskId: string) => apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}`),
   cancelTask: (taskId: string) =>
     apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}/cancel`, {
