@@ -24,6 +24,11 @@ from ehrm.core.auth_repository import SystemType
 from ehrm.core.exceptions import EhrmError, EmployeeNotFoundError, TaskCancelledError
 from ehrm.modules.employment_termination.models import EmploymentTerminationItem, normalize_termination_items
 from ehrm.modules.employment_termination.service import EmploymentTerminationService
+from ehrm.modules.employment_enrollment.models import EmploymentEnrollmentItem
+from ehrm.modules.employment_enrollment.page import EmploymentEnrollmentPage
+from ehrm.modules.person_information_collection.models import PersonInformationItem
+from ehrm.modules.person_information_collection.page import PersonInformationPage
+from ehrm.modules.social_submission import SocialSubmissionError, SocialSubmitter
 from ehrm.modules.medical_enrollment.models import MedicalPreSubmitItem, MedicalStage
 from ehrm.modules.medical_enrollment.page import MedicalPreSubmitBlockedError
 from ehrm.modules.medical_enrollment.submission import (
@@ -34,7 +39,7 @@ from ehrm.modules.medical_termination.page import (
     MEDICAL_LOGIN_URL, MedicalSubmissionUncertainError, MedicalTerminationPage,
     is_medical_portal_ready, is_medical_portal_url, verify_existing_medical_session,
 )
-from ehrm.web.tasks import TaskKind
+from ehrm.web.tasks import TaskKind, TaskOutcome, TaskStatus
 
 
 def person_key(identity: str) -> str:
@@ -84,18 +89,26 @@ class ApplicationOperationRepository:
             if db.execute("SELECT 1 FROM application_runs WHERE application_id=? AND operation=? AND active=1",
                           (application_id, operation)).fetchone():
                 raise HTTPException(409, "该申请正在排队或执行，请勿重复发起")
+            if operation in {'information_collection', 'enrollment'} and db.execute(
+                "SELECT 1 FROM application_runs WHERE application_id=? AND operation IN ('information_collection','enrollment') AND active=1",
+                (application_id,),
+            ).fetchone():
+                raise HTTPException(409, "该申请的社保采集或参保正在执行，请等待当前操作结束")
             eligible = []
             for item, name in people:
                 key = person_key(item.identity_number)
                 previous = db.execute("SELECT status FROM application_people_operations WHERE application_id=? AND operation=? AND person_key=?",
                                       (application_id, operation, key)).fetchone()
-                if previous and previous['status'] in ('succeeded', 'unknown'):
+                if previous and previous['status'] in ('succeeded', 'existing', 'unknown'):
                     continue
                 eligible.append(item)
                 db.execute("INSERT OR REPLACE INTO application_people_operations VALUES (?,?,?,?,?,?,?,?)",
                            (application_id, operation, key, name, 'queued', '等待执行', self.now(), run_id))
             if not eligible:
-                raise HTTPException(409, "人员均已成功办理或结果待确认，不会再次提交；待确认项请人工核对")
+                message = ("人员均已成功办理、平台已采集或结果待确认，不会再次提交；待确认项请人工核对"
+                           if operation == 'information_collection' else
+                           "人员均已成功办理或结果待确认，不会再次提交；待确认项请人工核对")
+                raise HTTPException(409, message)
             db.execute("INSERT INTO application_runs VALUES (?,?,?,1,NULL,?,?)",
                        (run_id, application_id, operation, account.id, account.display_name or '智慧人社账号'))
         return run_id, tuple(eligible)
@@ -145,7 +158,8 @@ class ApplicationOperationRepository:
 
     def observe(self, snapshot):
         if not snapshot.operation.startswith(('application.termination:', 'application.medical_termination:',
-                                              'application.medical_enrollment:')):
+                                              'application.medical_enrollment:', 'application.information_collection:',
+                                              'application.enrollment:')):
             return
         run_id = snapshot.operation.split(':', 1)[1]
         with self.connect() as db:
@@ -171,6 +185,140 @@ class ApplicationOperationService:
         self.repository = ApplicationOperationRepository(settings_service.runtime_root / 'data' / 'application_operations.sqlite3')
         self.repository.recover()
         coordinator.observe(self.repository.observe)
+
+    def submit_social(self, detail, account_id, *, operation):
+        if operation not in {'information_collection', 'enrollment'}:
+            raise ValueError('不支持的社保操作')
+        if detail.problem_type != 'social_security_enrollment':
+            raise ValueError('只有社保用工参保登记申请可以执行采集或参保')
+        if not detail.insurance_person:
+            raise ValueError('当前申请没有社保参保人员')
+        account = self.settings_service.account(account_id, SystemType.JSHRSS)
+        handled = {row['person_key'] for row in self.repository.state(detail.application_id)['people']
+                   if row['operation'] == operation and row['status'] in {'succeeded', 'existing', 'unknown'}}
+        identities = set()
+        people = []
+        for index, row in enumerate(detail.insurance_person, 1):
+            identity = str(row.get('id_card_no') or '').strip().upper()
+            if identity in identities:
+                raise ValueError('同一申请含重复身份证号，已停止以避免重复提交')
+            identities.add(identity)
+            if person_key(identity) in handled:
+                continue
+            if operation == 'information_collection':
+                region = row.get('household_region')
+                address = []
+                visited = set()
+                while isinstance(region, dict):
+                    region_id = str(region.get('id') or region.get('code') or '')
+                    if not region_id or region_id in visited or len(address) >= 6:
+                        raise ValueError(f'第 {index} 人户籍地行政区划关联不完整或循环，请在 NocoBase 核对')
+                    visited.add(region_id)
+                    name = str(region.get('name') or '').strip()
+                    if not name:
+                        raise ValueError(f'第 {index} 人户籍地行政区划缺少名称')
+                    if name != '中国':
+                        address.insert(0, name)
+                    parent = region.get('parent')
+                    if region.get('parentId') and not isinstance(parent, dict):
+                        raise ValueError(f'第 {index} 人户籍地行政区划父级未加载，请重新查询申请')
+                    region = parent
+                item = PersonInformationItem(
+                    identity_number=identity, name=str(row.get('user_name') or ''), mobile=str(row.get('phone') or ''),
+                    nation=str(row.get('ethnicity') or ''), household_type=str(row.get('household_type') or ''),
+                    address=tuple(address), source_index=index,
+                ).normalized()
+                if not address and any(token in item.household_type for token in ('本省', '外省')):
+                    raise ValueError(f'第 {index} 人缺少户籍地行政区划关联，请在 NocoBase 补全')
+            else:
+                management = str(row.get('is_technology') if row.get('is_technology') is not None else '').strip()
+                if management not in {'0', '1'}:
+                    raise ValueError(f'第 {index} 人是否管理技术岗必须填写“是”或“否”')
+                item = EmploymentEnrollmentItem(
+                    identity_number=identity, contract_add_reason=str(row.get('contract_add_reason') or ''),
+                    contract_type=str(row.get('contract_type') or ''), contract_start_date=str(row.get('contract_start_date') or '')[:10],
+                    contract_end_date=str(row.get('contract_end_date') or '')[:10] or None,
+                    position_type=str(row.get('job_type') or ''), monthly_wage=row.get('monthly_contribution_salary'),
+                    insured_identity=str(row.get('insurance_identity') or ''), source_index=index, management=management,
+                ).normalized()
+            people.append((item, str(row.get('user_name') or '')))
+        run_id, eligible = self.repository.reserve(detail.application_id, operation, tuple(people), account)
+        label = '社保基础信息采集' if operation == 'information_collection' else '社保参保登记'
+        try:
+            return self.coordinator.submit(
+                title=f'{label} {detail.code}', operation=f'application.{operation}:{run_id}',
+                kind=TaskKind.JSHRSS_BROWSER, resource_key=str(account.id),
+                resource_label=account.display_name or '智慧人社账号',
+                runner=lambda context: self._run_social(context, run_id, account, eligible, operation=operation),
+            )
+        except Exception:
+            self.repository.finish(run_id)
+            raise
+
+    def _run_social(self, context, run_id, account, items, *, operation):
+        settings = self.settings_service.runtime_settings(rights_account=account)
+        results = []
+        label = '社保基础信息采集' if operation == 'information_collection' else '社保参保登记'
+
+        def progress(message):
+            self.repository.log(run_id, message)
+            context.report(message, current=len(results), total=len(items))
+
+        def record(item, status, message):
+            self.repository.mark(run_id, item, status, message)
+            results.append({'person_key': person_key(item.identity_number), 'status': status, 'message': message})
+
+        try:
+            self.repository.start(run_id)
+            progress(f'{label}：正在准备所选账号的登录状态')
+            with BrowserManager(settings.browser, stealth_enabled=settings.captcha.stealth_enabled and
+                                is_allowed_host_url(settings.site.login_url, settings.captcha.allowed_hosts)) as browser:
+                login = LoginService(browser.page, settings, progress_callback=progress)
+                login.ensure_authenticated()
+                automation_class = PersonInformationPage if operation == 'information_collection' else EmploymentEnrollmentPage
+                automation = automation_class(login.page, settings, progress_callback=progress, cancel_check=lambda: context.cancelled)
+                for index, item in enumerate(items):
+                    started = False
+
+                    def before_submit():
+                        nonlocal started
+                        context.raise_if_cancelled()
+                        self.repository.mark(run_id, item, 'submitting', '正在提交并等待平台最终结果，请勿重复办理')
+                        started = True
+
+                    try:
+                        context.raise_if_cancelled()
+                        progress(f'{label}：开始第 {index + 1}/{len(items)} 人')
+                        # Opening a fresh business frame also clears the previous
+                        # person's success page or already-collected dialog.
+                        frame = automation.open()
+                        automation.fill_item(frame, item)
+                        context.raise_if_cancelled()
+                        receipt = SocialSubmitter(automation, frame, item, operation=operation).run(before_submit=before_submit)
+                    except TaskCancelledError:
+                        raise
+                    except (EhrmError, PlaywrightError, ValueError) as exc:
+                        status = exc.outcome if isinstance(exc, SocialSubmissionError) else 'unknown' if started else 'failed'
+                        record(item, status, str(exc))
+                        progress(f'{label}：第 {index + 1} 人{str(exc)}')
+                        for remaining in items[index + 1:]:
+                            record(remaining, 'not_processed', '前一条失败或结果待确认，本条未执行')
+                        break
+                    else:
+                        # Persist before progress/cancellation or opening the next
+                        # person, so a later failure cannot erase this receipt.
+                        record(item, 'existing' if receipt.outcome == 'existing' else 'succeeded', receipt.message)
+                        progress(f'{label}：第 {index + 1} 人{receipt.message}')
+            summary = {'submitted_count': sum(row['status'] == 'succeeded' for row in results),
+                       'existing_count': sum(row['status'] == 'existing' for row in results),
+                       'unknown_count': sum(row['status'] == 'unknown' for row in results),
+                       'total': len(items), 'results': results}
+            completed = summary['submitted_count'] + summary['existing_count'] == len(items)
+            message = f'{label}结束：提交成功 {summary["submitted_count"]} 人，平台已采集 {summary["existing_count"]} 人，待确认 {summary["unknown_count"]} 人'
+            return TaskOutcome(summary, TaskStatus.SUCCEEDED if completed else TaskStatus.FAILED, message,
+                               next((row['message'] for row in results if row['status'] not in {'succeeded', 'existing'}), ''))
+        finally:
+            self.repository.finish(run_id)
 
     def submit_termination(self, detail, account_id):
         if detail.problem_type != 'social_security_termination':

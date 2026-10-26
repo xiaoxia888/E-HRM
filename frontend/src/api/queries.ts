@@ -64,6 +64,16 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ account_id: accountId, confirmed: true }),
     }),
+  collectSocialApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
+    `/api/v1/nocobase/applications/${applicationId}/information-collection`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, confirmed: true }),
+    }),
+  enrollSocialApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
+    `/api/v1/nocobase/applications/${applicationId}/enrollment`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, confirmed: true }),
+    }),
   terminateMedicalApplication: (applicationId: number, accountId: number) => apiRequest<TaskRecord>(
     `/api/v1/nocobase/applications/${applicationId}/medical-termination`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

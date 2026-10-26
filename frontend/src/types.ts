@@ -305,6 +305,7 @@ export interface BusinessPerson {
   termination_reason?: string; termination_reason_label?: string; phone?: string; household_type?: string
   contract_type?: string; contract_start_date?: string; contract_end_date?: string
   ethnicity?: string; job_type?: string; administrative_division_id?: number
+  household_region?: { name: string; parent?: BusinessPerson['household_region'] }
   contract_add_reason?: string; insurance_identity?: string; monthly_contribution_salary?: number; is_technology?: string
   status?: string; med_ins_stop_reason?: string; med_stop_date?: string; med_ins_stop_month_fee?: string
   cert_valid_from?: string; cert_valid_to?: string; arrive_unit_time?: string

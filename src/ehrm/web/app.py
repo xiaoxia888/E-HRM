@@ -577,6 +577,20 @@ def create_app(
         detail = query_service.get_application(application_id)
         return TaskResponse.from_snapshot(application_operations.submit_medical_termination(detail, request.account_id))
 
+    @app.post('/api/v1/nocobase/applications/{application_id}/information-collection', response_model=TaskResponse)
+    def start_application_information_collection(application_id: int, request: NocoBaseTerminationRequest):
+        if not request.confirmed:
+            raise ValueError('请先确认智慧人社账号及真实采集提交')
+        detail = query_service.get_application(application_id)
+        return TaskResponse.from_snapshot(application_operations.submit_social(detail, request.account_id, operation='information_collection'))
+
+    @app.post('/api/v1/nocobase/applications/{application_id}/enrollment', response_model=TaskResponse)
+    def start_application_enrollment(application_id: int, request: NocoBaseTerminationRequest):
+        if not request.confirmed:
+            raise ValueError('请先确认智慧人社账号及真实参保提交')
+        detail = query_service.get_application(application_id)
+        return TaskResponse.from_snapshot(application_operations.submit_social(detail, request.account_id, operation='enrollment'))
+
     @app.post('/api/v1/nocobase/applications/{application_id}/medical-enrollment', response_model=TaskResponse)
     def start_application_medical_enrollment(application_id: int, request: NocoBaseTerminationRequest):
         if not request.confirmed:

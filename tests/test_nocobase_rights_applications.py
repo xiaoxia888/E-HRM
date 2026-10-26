@@ -256,6 +256,7 @@ def test_get_application_builds_query_and_parses_detail(tmp_path: Path) -> None:
             "related_persons",
             "attachments",
             "insurance_person",
+            *["insurance_person.household_region" + ".parent" * level for level in range(6)],
             "termination_person",
             "termination_person.createdBy",
             "med_ins_withdrawal_record",

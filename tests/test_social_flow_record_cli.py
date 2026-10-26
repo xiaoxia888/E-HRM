@@ -52,14 +52,14 @@ def test_social_recorder_captures_mock_business_submission(tmp_path: Path) -> No
             context.on("requestfinished", capture.request_finished)
 
             def route_handler(route):
-                if route.request.url.endswith("/api/enroll"):
+                if route.request.url.endswith("/registerWorkApply/submitEmpPersonRegistration"):
                     route.fulfill(status=200, content_type="application/json", body='{"code":0,"message":"提交成功"}')
                 else:
                     route.fulfill(content_type="text/html; charset=utf-8", body="""
                         <button>提交</button><p id="result"></p>
                         <script>
                           document.querySelector('button').onclick = () =>
-                            fetch('/api/enroll', {method: 'POST', body: '{}'})
+                            fetch('/api/ehrss-si-enterprise-app/api/applys/employee/registerWorkApply/submitEmpPersonRegistration', {method: 'POST', body: '{}'})
                               .then(r => r.json()).then(r => document.querySelector('#result').textContent = r.message)
                         </script>
                     """)
@@ -81,3 +81,19 @@ def test_social_recorder_captures_mock_business_submission(tmp_path: Path) -> No
         finally:
             context.close()
             capture.close()
+
+
+def test_social_summary_finds_real_submissions_before_enter_and_ignores_menu_posts(tmp_path):
+    capture = Capture(tmp_path, system='social')
+    try:
+        capture.requests.append({'phase': 'submit_and_post', 'method': 'POST',
+                                 'url': 'https://rs.jshrss.jiangsu.gov.cn/api/menu', 'status': 200})
+        assert capture.summary()['warning']
+        capture.requests.append({'phase': 'login_and_fill', 'method': 'POST',
+                                 'url': 'https://rs.jshrss.jiangsu.gov.cn/api/ehrss-si-enterprise-app/api/applys/employee/registerBaseApply/submitEmpRegisterBaseApplyRest?token=secret', 'status': 400})
+        summary = capture.summary()
+        assert summary['warning'] == ''
+        assert summary['social_business_submissions_all_phases'][0]['phase'] == 'login_and_fill'
+        assert 'secret' not in str(summary)
+    finally:
+        capture.close()

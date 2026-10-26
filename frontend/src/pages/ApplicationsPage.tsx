@@ -16,9 +16,17 @@ const businessLabels: Record<string, string> = {
   social_security_enrollment: '社保用工参保登记', medical_termination: '医保退工停保登记',
   medical_enrollment: '医保人员参保登记',
 }
-const stateLabels: Record<string, string> = { queued: '排队中', running: '执行中', submitting: '提交中', succeeded: '已办理', unknown: '结果待确认', failed: '失败', not_processed: '未办理' }
+const stateLabels: Record<string, string> = { queued: '排队中', running: '执行中', submitting: '提交中', succeeded: '已办理', existing: '平台已采集', unknown: '结果待确认', failed: '失败', not_processed: '未办理' }
 type Action = 'print' | 'termination' | 'medical_termination' | 'medical_enrollment' | 'information_collection' | 'enrollment'
 const actionLabels = { print: '打印社保权益单', termination: '社保退保', medical_termination: '医保停保', medical_enrollment: '医保参保', information_collection: '基础信息采集', enrollment: '参保登记' }
+const operationActions = ['termination', 'medical_termination', 'medical_enrollment', 'information_collection', 'enrollment']
+const blockedStates = ['succeeded', 'existing', 'unknown']
+function householdAddress(person: BusinessPerson) {
+  const names: string[] = []
+  let region = person.household_region
+  for (let depth = 0; region && depth < 6; depth++, region = region.parent) names.unshift(region.name)
+  return names.filter((name) => name !== '中国').join(' / ') || '-'
+}
 type Confirmation = { action: Action; applicationId: number; account: AccountSummary; upload: boolean }
 
 export function ApplicationsPage() {
@@ -54,9 +62,9 @@ export function ApplicationsPage() {
   })
   const progressStates = useQuery({
     queryKey: ['application-operations', activeTask?.applicationId], queryFn: () => api.applicationOperations(activeTask!.applicationId),
-    enabled: Boolean(activeTask) && progressOpen && ['termination', 'medical_termination', 'medical_enrollment'].includes(activeTask?.action ?? ''), refetchInterval: progressOpen ? 1000 : false,
+    enabled: Boolean(activeTask) && progressOpen && operationActions.includes(activeTask?.action ?? ''), refetchInterval: progressOpen ? 1000 : false,
   })
-  const runId = ['application.termination:', 'application.medical_termination:', 'application.medical_enrollment:'].some((prefix) => task.data?.operation.startsWith(prefix)) ? task.data?.operation.split(':')[1] ?? '' : ''
+  const runId = operationActions.some((action) => task.data?.operation.startsWith(`application.${action}:`)) ? task.data?.operation.split(':')[1] ?? '' : ''
   const operationResult = task.data?.result as { submitted_count: number; existing_count?: number; unknown_count: number; total: number } | null | undefined
   const logs = useQuery({
     queryKey: ['application-operation-logs', runId], queryFn: () => api.applicationOperationLogs(activeTask!.applicationId, runId),
@@ -83,13 +91,12 @@ export function ApplicationsPage() {
     if (settings.data) setUploadToErp(settings.data.upload_to_erp)
   }, [settings.data])
   const executor = useMutation({
-    mutationFn: (value: Confirmation) => value.action === 'termination'
-      ? api.terminateApplication(value.applicationId, value.account.id)
-      : value.action === 'medical_termination'
-        ? api.terminateMedicalApplication(value.applicationId, value.account.id)
-        : value.action === 'medical_enrollment'
-          ? api.enrollMedicalApplication(value.applicationId, value.account.id)
-          : api.printApplication(value.applicationId, value.account.id, value.upload),
+    mutationFn: (value: Confirmation) => {
+      const handlers = { termination: api.terminateApplication, medical_termination: api.terminateMedicalApplication,
+        medical_enrollment: api.enrollMedicalApplication, information_collection: api.collectSocialApplication, enrollment: api.enrollSocialApplication }
+      return value.action === 'print' ? api.printApplication(value.applicationId, value.account.id, value.upload)
+        : handlers[value.action](value.applicationId, value.account.id)
+    },
     onSuccess: (result, value) => {
       setConfirmation(null)
       setActiveTask({ id: result.task_id, applicationId: value.applicationId, action: value.action })
@@ -101,11 +108,13 @@ export function ApplicationsPage() {
   const kind = detail.data?.problem_type ?? ''
   const currentStates = (statesId === selectedId ? operationStates.data : undefined) ?? detail.data?.operation_states
   const stateFor = (person: BusinessPerson, operation: string) => currentStates?.people.find((item) => item.person_key === person.operation_key && item.operation === operation)
-  const operation = kind === 'medical_termination' ? 'medical_termination' : kind === 'medical_enrollment' ? 'medical_enrollment' : 'termination'
+  const operation = kind === 'medical_termination' ? 'medical_termination' : kind === 'medical_enrollment' ? 'medical_enrollment' : kind === 'social_security_enrollment' ? 'enrollment' : 'termination'
   const activeRun = currentStates?.runs.find((item) => item.active && item.operation === operation)
   const latestRun = currentStates?.runs.find((item) => item.operation === operation && item.task_id)
-  const operationPeople = kind === 'medical_termination' ? detail.data?.med_ins_withdrawal_record ?? [] : kind === 'medical_enrollment' ? detail.data?.med_ins_enrollee ?? [] : detail.data?.termination_person ?? []
-  const eligible = operationPeople.filter((person) => !['succeeded', 'unknown'].includes(stateFor(person, operation)?.status ?? ''))
+  const operationPeople = kind === 'medical_termination' ? detail.data?.med_ins_withdrawal_record ?? [] : kind === 'medical_enrollment' ? detail.data?.med_ins_enrollee ?? [] : kind === 'social_security_enrollment' ? detail.data?.insurance_person ?? [] : detail.data?.termination_person ?? []
+  const eligibleFor = (action: string) => operationPeople.filter((person) => !blockedStates.includes(stateFor(person, action)?.status ?? ''))
+  const eligible = eligibleFor(operation)
+  const socialActive = currentStates?.runs.some((run) => run.active && ['information_collection', 'enrollment'].includes(run.operation))
   const ask = (action: Action) => {
     const medical = action === 'medical_termination' || action === 'medical_enrollment'
     const account = medical
@@ -116,24 +125,19 @@ export function ApplicationsPage() {
   }
   const confirm = () => {
     if (!confirmation) return
-    if (['information_collection', 'enrollment'].includes(confirmation.action)) {
-      message.info(`${actionLabels[confirmation.action]}为预留功能，本次未执行任何操作，也不会标记已办理`)
-      setConfirmation(null)
-      return
-    }
     executor.mutate(confirmation)
   }
   const renderStatus = (person: BusinessPerson, operation: string) => {
     const state = stateFor(person, operation)
     const label = stateLabels[state?.status ?? 'not_processed'] ?? state?.status
-    return <Space direction="vertical" size={0}><Tag color={state?.status === 'succeeded' ? 'green' : state?.status === 'unknown' ? 'orange' : 'blue'}>{label}</Tag>{state?.message && <Typography.Text type="secondary">{state.message}</Typography.Text>}</Space>
+    return <Space direction="vertical" size={0}><Tag color={state?.status === 'succeeded' ? 'green' : state?.status === 'existing' ? 'cyan' : state?.status === 'unknown' ? 'orange' : state?.status === 'failed' ? 'red' : 'blue'}>{label}</Tag>{state?.message && <Typography.Text type="secondary">{state.message}</Typography.Text>}</Space>
   }
 
   return (
     <div className="page-stack">
       <PageTitle
         title="权益申请"
-        description="通过 NocoBase API 查询申请，并记录退保与医保参保执行状态"
+        description="查询业务申请，分别查看采集、参保与退保的办理进度和结果"
         extra={<Button icon={<ReloadOutlined />} onClick={() => applications.refetch()}>刷新</Button>}
       />
       {applications.isError && <Alert type="error" showIcon message="权益申请查询失败" description={errorMessage(applications.error)} />}
@@ -207,7 +211,15 @@ export function ApplicationsPage() {
               <Button type="primary" disabled={!eligible.length || Boolean(activeRun) || medicalAccountId === undefined} loading={executor.isPending} onClick={() => ask('medical_enrollment')}>医保参保</Button>
               {latestRun?.task_id && <Button onClick={() => { setActiveTask({ id: latestRun.task_id, applicationId: selectedId!, action: 'medical_enrollment' }); setProgressOpen(true) }}>{activeRun ? '查看进度' : '查看执行结果'}</Button>}
             </>}
-            {kind === 'social_security_enrollment' && <><Button disabled={printAccountId === undefined} onClick={() => ask('information_collection')}>基础信息采集</Button><Button disabled={printAccountId === undefined} onClick={() => ask('enrollment')}>参保登记</Button></>}
+            {kind === 'social_security_enrollment' && <>
+              {(['information_collection', 'enrollment'] as const).map((action) => {
+                const latest = currentStates?.runs.find((run) => run.operation === action && run.task_id)
+                return <Space key={action} size={6}>
+                  <Button type={action === 'enrollment' ? 'primary' : 'default'} disabled={!eligibleFor(action).length || socialActive || printAccountId === undefined} loading={executor.isPending} onClick={() => ask(action)}>{actionLabels[action]}</Button>
+                  {latest?.task_id && <Button onClick={() => { setActiveTask({ id: latest.task_id, applicationId: selectedId!, action }); setProgressOpen(true) }}>{action === 'enrollment' ? '参保' : '采集'}{latest.active ? '进度' : '结果'}</Button>}
+                </Space>
+              })}
+            </>}
           </div>
         ) : null}
       >
@@ -235,10 +247,11 @@ export function ApplicationsPage() {
               ]} />
             </>}
             {kind === 'social_security_enrollment' && <>
-              <Alert type="info" showIcon message="基础信息采集和参保登记暂未接入执行。两个操作独立记录状态，预留按钮不会提交或标记成功。" />
+              <Alert type="info" showIcon message="采集和参保分别执行、分别记录。平台已采集会显示原始提示；参保需等待加载结束并核对最终成功结果。已办理、已采集或待确认人员不会重复执行同一步骤。" />
               <Table<BusinessPerson> rowKey="id" size="small" dataSource={detail.data.insurance_person ?? []} pagination={false} scroll={{ x: 1300 }} expandable={{ expandedRowRender: (row) => <Descriptions bordered column={2} size="small">
                 <Descriptions.Item label="民族">{row.ethnicity || '-'}</Descriptions.Item><Descriptions.Item label="工种">{row.job_type || '-'}</Descriptions.Item>
                 <Descriptions.Item label="户籍地区 ID">{row.administrative_division_id ?? '-'}</Descriptions.Item><Descriptions.Item label="合同增加原因">{row.contract_add_reason || '-'}</Descriptions.Item>
+                <Descriptions.Item label="户籍地行政区划" span={2}>{householdAddress(row)}</Descriptions.Item>
                 <Descriptions.Item label="合同结束日期">{row.contract_end_date || '-'}</Descriptions.Item><Descriptions.Item label="参保身份">{row.insurance_identity || '-'}</Descriptions.Item>
                 <Descriptions.Item label="月缴费工资">{row.monthly_contribution_salary ?? '-'}</Descriptions.Item><Descriptions.Item label="是否管理技术岗">{row.is_technology === '1' ? '是' : row.is_technology === '0' ? '否' : '-'}</Descriptions.Item>
               </Descriptions> }} columns={[
@@ -300,7 +313,7 @@ export function ApplicationsPage() {
           </Space>
         ) : null}
       </Drawer>
-      <Modal title="确认执行账号" open={Boolean(confirmation)} width={['medical_termination', 'medical_enrollment'].includes(confirmation?.action ?? '') ? 760 : undefined} destroyOnHidden onCancel={() => !executor.isPending && setConfirmation(null)} onOk={confirm} confirmLoading={executor.isPending} okText="确认执行" cancelText="取消" closable={!executor.isPending} maskClosable={false}>
+      <Modal title="确认执行账号" open={Boolean(confirmation)} width={['medical_termination', 'medical_enrollment', 'information_collection', 'enrollment'].includes(confirmation?.action ?? '') ? 760 : undefined} destroyOnHidden onCancel={() => !executor.isPending && setConfirmation(null)} onOk={confirm} confirmLoading={executor.isPending} okText="确认执行" cancelText="取消" closable={!executor.isPending} maskClosable={false}>
         <Typography.Paragraph>确定使用以下账号执行「{confirmation && actionLabels[confirmation.action]}」？</Typography.Paragraph>
         <Descriptions column={1} bordered size="small">
           <Descriptions.Item label="执行账号">{confirmation?.account.display_name} · {confirmation?.account.masked_account}</Descriptions.Item>
@@ -327,18 +340,34 @@ export function ApplicationsPage() {
             { title: '民族（需建档时）', dataIndex: 'ethnicity', width: 140, render: (value) => value || '-' },
           ]} />
         </>}
-        {confirmation && ['enrollment', 'information_collection'].includes(confirmation.action) && <Alert style={{ marginTop: 16 }} type="info" message="仅为功能预留，不执行真实操作。" />}
+        {confirmation && ['enrollment', 'information_collection'].includes(confirmation.action) && <>
+          <Alert style={{ marginTop: 16 }} type="warning" showIcon message={`本次${actionLabels[confirmation.action]} ${eligibleFor(confirmation.action).length} 人。请核对账号所属单位和人员资料，确认后会真实提交；失败或结果待确认时停止后续人员，不自动重试。`} />
+          <Table<BusinessPerson> style={{ marginTop: 16 }} size="small" rowKey="id" pagination={false} scroll={{ x: 680, y: 240 }} dataSource={eligibleFor(confirmation.action)} columns={[
+            { title: '姓名', dataIndex: 'user_name', width: 100 }, { title: '身份证号', dataIndex: 'id_card_no', width: 190 },
+            ...(confirmation.action === 'information_collection' ? [
+              { title: '电话', dataIndex: 'phone', width: 130 }, { title: '民族', dataIndex: 'ethnicity', width: 80 },
+              { title: '户籍性质', dataIndex: 'household_type', width: 100 },
+              { title: '户籍地行政区划', width: 250, render: (_: unknown, row: BusinessPerson) => householdAddress(row) },
+            ] : [
+              { title: '合同类别', dataIndex: 'contract_type', width: 120 }, { title: '开始日期', dataIndex: 'contract_start_date', width: 130 },
+              { title: '结束日期', dataIndex: 'contract_end_date', width: 130 }, { title: '合同增加原因', dataIndex: 'contract_add_reason', width: 100 },
+              { title: '岗位工种', dataIndex: 'job_type', width: 130 }, { title: '参保身份', dataIndex: 'insurance_identity', width: 100 },
+              { title: '月缴费工资', dataIndex: 'monthly_contribution_salary', width: 100 },
+              { title: '管理技术岗', dataIndex: 'is_technology', width: 100, render: (value: string) => value === '1' ? '是' : value === '0' ? '否' : '-' },
+            ]),
+          ]} />
+        </>}
       </Modal>
       {activeTask?.action === 'print' && <RightsTaskProgressModal open={progressOpen} task={task.data} loading={task.isLoading} cancelling={canceller.isPending} onCancelTask={() => canceller.mutate(activeTask.id)} onOpenTasks={() => navigate('/tasks')} onClose={() => setProgressOpen(false)} />}
-      {activeTask && ['termination', 'medical_termination', 'medical_enrollment'].includes(activeTask.action) && <Modal title={`${activeTask.action === 'medical_enrollment' ? '医保参保' : '退保'}执行${task.data && !['queued', 'running', 'cancelling'].includes(task.data.status) ? '结果' : '进度'}`} open={progressOpen} width={880} onCancel={() => setProgressOpen(false)} maskClosable={false} footer={<Space><Button onClick={() => navigate('/tasks')}>任务中心</Button>{task.data && ['queued', 'running', 'cancelling'].includes(task.data.status) && <Button danger loading={canceller.isPending} onClick={() => canceller.mutate(activeTask.id)}>停止后续处理</Button>}<Button onClick={() => setProgressOpen(false)}>关闭</Button></Space>}>
+      {activeTask && operationActions.includes(activeTask.action) && <Modal title={`${activeTask.action === 'medical_enrollment' ? '医保参保' : activeTask.action === 'information_collection' ? '基础信息采集' : activeTask.action === 'enrollment' ? '参保登记' : '退保'}执行${task.data && !['queued', 'running', 'cancelling'].includes(task.data.status) ? '结果' : '进度'}`} open={progressOpen} width={880} onCancel={() => setProgressOpen(false)} maskClosable={false} footer={<Space><Button onClick={() => navigate('/tasks')}>任务中心</Button>{task.data && ['queued', 'running', 'cancelling'].includes(task.data.status) && <Button danger loading={canceller.isPending} onClick={() => canceller.mutate(activeTask.id)}>停止后续处理</Button>}<Button onClick={() => setProgressOpen(false)}>关闭</Button></Space>}>
         {task.isError && <Alert type="error" message="进度获取失败，不能据此判断提交失败，请勿重复提交" description={errorMessage(task.error)} />}
-        <Progress percent={Math.round((task.data?.progress_current ?? 0) / Math.max(1, task.data?.progress_total ?? 1) * 100)} />
+        <Progress status={task.data?.status === 'failed' ? 'exception' : undefined} percent={Math.round((task.data?.progress_current ?? 0) / Math.max(1, task.data?.progress_total ?? 1) * 100)} />
         <Typography.Paragraph>{task.data?.message ?? '正在获取执行进度……'}</Typography.Paragraph>
-        {operationResult?.total !== undefined && <Alert showIcon type={operationResult.submitted_count + (operationResult.existing_count ?? 0) === operationResult.total ? 'success' : 'warning'} message={`本次 ${operationResult.total} 人：提交成功 ${operationResult.submitted_count} 人${activeTask.action === 'medical_enrollment' ? `，平台已参保 ${operationResult.existing_count ?? 0} 人` : ''}，结果待确认 ${operationResult.unknown_count} 人，失败或未执行 ${operationResult.total - operationResult.submitted_count - (operationResult.existing_count ?? 0) - operationResult.unknown_count} 人。`} />}
+        {operationResult?.total !== undefined && <Alert showIcon type={operationResult.submitted_count + (operationResult.existing_count ?? 0) === operationResult.total ? 'success' : 'warning'} message={`本次 ${operationResult.total} 人：提交成功 ${operationResult.submitted_count} 人${activeTask.action === 'medical_enrollment' ? `，平台已参保 ${operationResult.existing_count ?? 0} 人` : activeTask.action === 'information_collection' ? `，平台已采集 ${operationResult.existing_count ?? 0} 人` : ''}，结果待确认 ${operationResult.unknown_count} 人，失败或未执行 ${operationResult.total - operationResult.submitted_count - (operationResult.existing_count ?? 0) - operationResult.unknown_count} 人。`} />}
         {task.data?.error && <Alert type="error" showIcon message={task.data.error} />}
         {progressStates.isError && <Alert type="error" message="办理状态加载失败，请人工核对结果，勿重复提交" />}
-        <Table size="small" rowKey="person_key" pagination={false} dataSource={progressStates.data?.people.filter((item) => item.operation === (activeTask.action === 'medical_termination' ? 'medical_termination' : activeTask.action === 'medical_enrollment' ? 'medical_enrollment' : 'termination')) ?? []} columns={[
-          { title: '姓名', dataIndex: 'name' }, { title: activeTask.action === 'medical_enrollment' ? '参保状态' : '退保状态', dataIndex: 'status', render: (value) => <Tag color={value === 'succeeded' ? 'green' : value === 'unknown' ? 'orange' : 'blue'}>{stateLabels[value] ?? value}</Tag> }, { title: '结果说明', dataIndex: 'message' },
+        <Table size="small" rowKey="person_key" pagination={false} dataSource={progressStates.data?.people.filter((item) => item.operation === activeTask.action) ?? []} columns={[
+          { title: '姓名', dataIndex: 'name' }, { title: activeTask.action === 'information_collection' ? '采集状态' : ['enrollment', 'medical_enrollment'].includes(activeTask.action) ? '参保状态' : '退保状态', dataIndex: 'status', render: (value) => <Tag color={value === 'succeeded' ? 'green' : value === 'existing' ? 'cyan' : value === 'unknown' ? 'orange' : value === 'failed' ? 'red' : 'blue'}>{stateLabels[value] ?? value}</Tag> }, { title: '平台提示 / 结果说明', dataIndex: 'message' },
         ]} />
         <Typography.Title level={5}>执行日志</Typography.Title>
         {logs.isError && <Alert type="warning" message="执行日志加载失败" />}

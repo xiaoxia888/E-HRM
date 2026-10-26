@@ -174,6 +174,14 @@ class Capture:
                 "/api/ryda/saveRydainfo", "/api/dwctbbl/rycbdj/saveInfo",
             ))
         ]
+        social_submissions = [
+            row for row in self.requests
+            if self.system == "social" and row["method"] == "POST"
+            and urlsplit(str(row["url"])).path.endswith((
+                "/registerBaseApply/submitEmpRegisterBaseApplyRest",
+                "/registerWorkApply/submitEmpPersonRegistration",
+            ))
+        ]
         endpoints = Counter(
             (str(row["method"]), re.sub(r"\d{8,}", "{id}", urlsplit(str(row["url"])).path), row["status"])
             for row in calls
@@ -188,6 +196,10 @@ class Capture:
                 {"phase": row["phase"], "path": urlsplit(str(row["url"])).path, "status": row["status"]}
                 for row in medical_submissions
             ],
+            "social_business_submissions_all_phases": [
+                {"phase": row["phase"], "path": urlsplit(str(row["url"])).path, "status": row["status"]}
+                for row in social_submissions
+            ],
             "endpoints_after_pre_submit": [
                 {"method": method, "path": path, "status": status, "count": count}
                 for (method, path, status), count in sorted(endpoints.items(), key=lambda item: str(item[0]))
@@ -195,8 +207,8 @@ class Capture:
             "warning": (
                 "未捕获医保建档或参保提交接口；请检查实际操作和录制文件"
                 if self.system == "medical" and not medical_submissions
-                else "未捕获提交阶段的社保 POST/PUT/PATCH/DELETE 请求；录制不能用于判断提交接口"
-                if self.system == "social" and not non_get else ""
+                else "未捕获社保采集或参保业务提交接口；请检查实际操作和录制文件"
+                if self.system == "social" and not social_submissions else ""
             ),
         }
 
@@ -293,7 +305,7 @@ def _record(profile: Path, output_dir: Path, url: str, *, flow: str = "collectio
             context.tracing.start(screenshots=True, snapshots=True, sources=True)
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(url, wait_until="domcontentloaded")
-            portal_name = "医保平台" if system == "medical" else "八化建的智慧人社"
+            portal_name = "医保平台" if system == "medical" else "目标单位的智慧人社"
             print(f"录制浏览器已打开。请手动登录{portal_name}，进入“{flow_name}”，填写测试人员资料。")
             print("此脚本不会代替你点击“确认/保存/提交”。HAR、页面快照及接口正文含个人信息和令牌，请勿直接分享。")
             try:

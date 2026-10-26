@@ -131,6 +131,7 @@ class EmploymentEnrollmentItem:
     monthly_wage: Decimal | int | float | str | None = None
     insured_identity: InsuredIdentity | str = InsuredIdentity.ENTERPRISE_EMPLOYEE
     source_index: int = 0
+    management: str | None = None
 
     def normalized(self) -> "EmploymentEnrollmentItem":
         prefix = f"第 {self.source_index} 行" if self.source_index > 0 else "参保数据"
@@ -156,6 +157,9 @@ class EmploymentEnrollmentItem:
         wage: Decimal | None = None
         if reason is ContractAddReason.NEW:
             wage = _parse_wage(self.monthly_wage, prefix)
+        management = str(self.management).strip() if self.management is not None else None
+        if management is not None and management not in {"0", "1"}:
+            raise QueryValidationError(f"{prefix}是否管理技术岗必须为 0（否）或 1（是）")
         return EmploymentEnrollmentItem(
             identity_number=identity,
             contract_add_reason=reason,
@@ -166,6 +170,7 @@ class EmploymentEnrollmentItem:
             monthly_wage=wage,
             insured_identity=insured,
             source_index=self.source_index,
+            management=management,
         )
 
 

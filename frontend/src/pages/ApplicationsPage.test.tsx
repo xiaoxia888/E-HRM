@@ -12,6 +12,7 @@ vi.mock('../api/queries', () => ({ api: {
   applications: vi.fn(), applicationDetail: vi.fn(), accounts: vi.fn(), settings: vi.fn(),
   applicationOperations: vi.fn(), applicationOperationLogs: vi.fn(), terminateApplication: vi.fn(),
   terminateMedicalApplication: vi.fn(), enrollMedicalApplication: vi.fn(),
+  collectSocialApplication: vi.fn(), enrollSocialApplication: vi.fn(),
   printApplication: vi.fn(), task: vi.fn(), cancelTask: vi.fn(),
 } }))
 const nativeGetComputedStyle = window.getComputedStyle.bind(window)
@@ -35,6 +36,8 @@ beforeEach(() => {
   vi.mocked(api.terminateApplication).mockResolvedValue(task)
   vi.mocked(api.terminateMedicalApplication).mockResolvedValue({ ...task, operation: 'application.medical_termination:run1' })
   vi.mocked(api.enrollMedicalApplication).mockResolvedValue({ ...task, operation: 'application.medical_enrollment:run1' })
+  vi.mocked(api.collectSocialApplication).mockResolvedValue({ ...task, operation: 'application.information_collection:run1' })
+  vi.mocked(api.enrollSocialApplication).mockResolvedValue({ ...task, operation: 'application.enrollment:run1' })
   vi.mocked(api.task).mockResolvedValue(task)
   vi.mocked(api.printApplication).mockResolvedValue({ ...task, operation: 'rights_statement.acquire' })
 })
@@ -73,20 +76,61 @@ describe('权益申请分类执行', () => {
     await screen.findByText(/日志：正在进入单位办理/)
   })
 
-  it('参保显示两个预留按钮，不提交、不标记成功', async () => {
+  it.each([
+    ['基础信息采集', 'information_collection', 'collectSocialApplication'],
+    ['参保登记', 'enrollment', 'enrollSocialApplication'],
+  ] as const)('社保%s确认账号后执行对应操作并显示进度', async (label, operation, handler) => {
     vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'social_security_enrollment' })
+    vi.mocked(api.task).mockResolvedValue({ ...task, operation: `application.${operation}:run1` })
     await openPage()
     expect(screen.queryByRole('button', { name: /退\s*保/ })).toBeNull()
     await screen.findByText('参保人员')
-    for (const label of ['基础信息采集', '参保登记']) {
-      fireEvent.click(screen.getByRole('button', { name: label }))
-      const modal = await dialog('确认执行账号')
-      fireEvent.click(within(modal).getByRole('button', { name: '确认执行' }))
-      await waitFor(() => expect(screen.queryByText('确认执行账号')).toBeNull())
-    }
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    const modal = await dialog('确认执行账号')
+    expect(within(modal).getByText(/确认后会真实提交/)).toBeTruthy()
+    expect(api[handler]).not.toHaveBeenCalled()
+    fireEvent.click(within(modal).getByRole('button', { name: '确认执行' }))
+    await waitFor(() => expect(api[handler]).toHaveBeenCalledWith(1, 10))
+    await dialog(`${label}执行进度`)
     expect(api.terminateApplication).not.toHaveBeenCalled()
     expect(api.printApplication).not.toHaveBeenCalled()
-    expect(screen.queryByText('已办理')).toBeNull()
+  })
+
+  it('已采集保留平台原始提示，只阻止重复采集，参保仍可独立执行', async () => {
+    const platformMessage = '证件号为320101199002021235的人员信息已采集,人员编号为123456789'
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'social_security_enrollment' })
+    vi.mocked(api.applicationOperations).mockResolvedValue({ people: [{ person_key: 'key2', name: '参保人员', operation: 'information_collection', status: 'existing', message: platformMessage, updated_at: '', task_id: 'old', account_label: '八化建' }], runs: [] })
+    await openPage()
+    await screen.findByText('平台已采集')
+    expect(screen.getByText(platformMessage)).toBeTruthy()
+    expect((screen.getByRole('button', { name: '基础信息采集' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '参保登记' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('参保加载期间显示提交中，待确认结果不显示办理成功', async () => {
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'social_security_enrollment' })
+    vi.mocked(api.applicationOperations).mockResolvedValue({ people: [{ person_key: 'key2', name: '参保人员', operation: 'enrollment', status: 'submitting', message: '正在等待平台加载和最终结果', updated_at: '', task_id: 'task1', account_label: '八化建' }], runs: [{ id: 'run1', operation: 'enrollment', active: 1, task_id: 'task1', account_label: '八化建' }] })
+    vi.mocked(api.task).mockResolvedValue({ ...task, operation: 'application.enrollment:run1', message: '等待加载结束和办理结果' })
+    await openPage()
+    await screen.findByText('提交中')
+    fireEvent.click(screen.getByRole('button', { name: '参保进度' }))
+    const modal = await dialog('参保登记执行进度')
+    expect(await within(modal).findByText('等待加载结束和办理结果')).toBeTruthy()
+    expect(within(modal).queryByText('已办理')).toBeNull()
+    expect(api.enrollSocialApplication).not.toHaveBeenCalled()
+  })
+
+  it('社保参保结果待确认会保留原因并禁止重复提交', async () => {
+    vi.mocked(api.applicationDetail).mockResolvedValue({ ...detail, problem_type: 'social_security_enrollment' })
+    vi.mocked(api.applicationOperations).mockResolvedValue({ people: [{ person_key: 'key2', name: '参保人员', operation: 'enrollment', status: 'unknown', message: '提交后等待加载超时，请人工核对', updated_at: '', task_id: 'old', account_label: '八化建' }], runs: [{ id: 'run1', operation: 'enrollment', active: 0, task_id: 'old', account_label: '八化建' }] })
+    vi.mocked(api.task).mockResolvedValue({ ...task, status: 'failed', operation: 'application.enrollment:run1', result: { submitted_count: 0, unknown_count: 1, total: 1 }, error: '提交后等待加载超时，请人工核对' })
+    await openPage()
+    expect((screen.getByRole('button', { name: '参保登记' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '参保结果' }))
+    const modal = await dialog('参保登记执行结果')
+    expect(within(modal).getByText(/提交成功 0 人，结果待确认 1 人/)).toBeTruthy()
+    expect(within(modal).getByText('结果待确认')).toBeTruthy()
+    expect(api.enrollSocialApplication).not.toHaveBeenCalled()
   })
 
   it.each(['succeeded', 'unknown'])('状态 %s 显示状态并禁止重复点击', async (status) => {

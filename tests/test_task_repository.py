@@ -226,6 +226,15 @@ def test_empty_business_usage_keeps_all_categories_and_zero_fills_dates(tmp_path
         assert business["daily"] == [{"date": f"2026-10-{day}", "count": 0} for day in (11, 12, 13)]
 
 
+def test_social_usage_includes_collection_enrollment_and_termination_in_one_category(tmp_path: Path) -> None:
+    repository = TaskRepository(tmp_path / 'tasks.sqlite3')
+    for index, operation in enumerate(('application.information_collection:collect', 'application.enrollment:enroll', 'application.termination:stop')):
+        repository.save(replace(_snapshot(f'social-{index}', TaskStatus.SUCCEEDED), operation=operation, created_at='2026-10-12T16:00:00Z'))
+    statistics = repository.business_usage(days=1, now=datetime(2026, 10, 13, 6, tzinfo=UTC))
+    assert [business['total_count'] for business in statistics['businesses']] == [0, 3, 0]
+    assert statistics['businesses'][1]['daily'] == [{'date': '2026-10-13', 'count': 3}]
+
+
 @pytest.mark.parametrize("values", [
     {"days": 0}, {"days": 367}, {"start_date": date(2026, 10, 1)},
     {"start_date": date(2026, 10, 12), "end_date": date(2026, 10, 11)},

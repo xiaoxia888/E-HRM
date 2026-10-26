@@ -12,7 +12,7 @@ from ehrm.entrypoints.medical_collection_record_cli import SOCIAL_LOGIN_URL, _re
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="完整录制八化建社保人员信息维护或用工参保登记的手工操作、业务接口及提交前后状态"
+        description="完整录制社保人员信息维护或用工参保登记的手工操作、业务接口及提交前后状态"
     )
     parser.add_argument("--flow", choices=("information", "enrollment"), required=True,
                         help="人员信息维护或用工参保登记")

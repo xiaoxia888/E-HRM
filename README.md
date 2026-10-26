@@ -383,14 +383,16 @@ PYTHONPATH=src python -m ehrm.entrypoints.medical_collection_record_cli
 PYTHONPATH=src python -m ehrm.entrypoints.medical_collection_record_cli --flow enrollment
 ```
 
-八化建社保人员信息维护、用工参保登记也分别使用同样的完整录制方式，默认从智慧人社登录页进入；在浏览器里选择江苏政务服务网登录并确认使用八化建账号：
+社保人员信息维护、用工参保登记也分别使用同样的完整录制方式，默认从智慧人社登录页进入；在浏览器里选择江苏政务服务网登录并确认使用目标单位账号：
 
 ```bash
 PYTHONPATH=src python -m ehrm.entrypoints.social_flow_record_cli --flow information
 PYTHONPATH=src python -m ehrm.entrypoints.social_flow_record_cli --flow enrollment
 ```
 
-社保录制分别保存到 `runtime/artifacts/bhj-social-information-full-时间戳/` 和 `runtime/artifacts/bhj-social-enrollment-full-时间戳/`；各自使用独立浏览器目录，并额外生成 `social-network.jsonl`。录制器只观察你在浏览器中的操作，不会自动提交。最终确认/提交前按一次 Enter，人工提交并查看结果后再按一次 Enter；如果没有捕获到提交阶段的社保写入请求，命令会以非零状态结束，需核对录制是否完整。
+社保录制默认分别保存到 `runtime/artifacts/bhj-social-information-full-时间戳/` 和 `runtime/artifacts/bhj-social-enrollment-full-时间戳/`；可用 `--profile`、`--output-dir` 为南化建等其他单位指定独立目录。录制器只观察手工操作，不会自动提交。最终确认/提交前按一次 Enter，人工提交并查看结果后再按一次 Enter。摘要跨全部阶段检查实际采集和参保提交接口，避免先操作、后按 Enter 被误报为未提交；只捕获菜单等普通 POST 不算业务提交证据。正常结束才能保证 HAR 完整，Ctrl+C 中断后应核对 `social-network.jsonl` 和 `trace.zip`，不能只凭阶段计数判断是否可用。
+
+正式社保采集与参保入口为 Web「权益申请 → 社保用工参保登记」，两个操作独立执行和记录。平台提示人员已采集会显示“平台已采集”和原始说明；参保必须核对本次人员接口、办件收尾及加载后的成功页。提交结果待确认时停止后续人员并阻止重复提交，详情见 [Web 运行边界](docs/WEB_SETUP_AND_RUN.md#5-运行边界)。
 
 - `collection`（人员基础信息采集）：必填列“身份证号｜姓名”；可选列“联系电话｜民族｜证件有效期起始日期｜证件有效期截止日期”。
 - `enrollment`（人员参保登记）：必填列“身份证号｜参保日期｜联系电话”。日期使用 `YYYY-MM-DD` 或 Excel 日期，手机号为 11 位。

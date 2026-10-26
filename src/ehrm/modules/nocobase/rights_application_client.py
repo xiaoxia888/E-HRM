@@ -119,6 +119,7 @@ class NocoBaseRightsApplicationClient:
                 ("appends[]", "related_persons"),
                 ("appends[]", "attachments"),
                 ("appends[]", "insurance_person"),
+                *[("appends[]", "insurance_person.household_region" + ".parent" * level) for level in range(6)],
                 ("appends[]", "termination_person"),
                 ("appends[]", "termination_person.createdBy"),
                 ("appends[]", "med_ins_withdrawal_record"),

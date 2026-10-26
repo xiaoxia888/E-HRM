@@ -126,6 +126,8 @@ class EmploymentEnrollmentPage:
                 item.position_type.value,
                 "岗位工种",
             )
+            if item.management is not None:
+                self._select_code(frame.locator("#management"), item.management, "是否管理技术岗")
             if item.contract_add_reason is ContractAddReason.NEW:
                 self._select_code(
                     frame.locator("#insuredIdentity"),
@@ -381,6 +383,8 @@ class EmploymentEnrollmentPage:
             "#contractAddType": item.contract_type.value,
             "#positionType": item.position_type.value,
         }
+        if item.management is not None:
+            expected_selects["#management"] = item.management
         if item.contract_add_reason is ContractAddReason.NEW:
             expected_selects["#insuredIdentity"] = item.insured_identity.value
         for selector, expected in expected_selects.items():

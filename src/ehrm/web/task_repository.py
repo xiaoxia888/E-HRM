@@ -185,7 +185,9 @@ class TaskRepository:
                 WITH business_tasks AS (
                     SELECT CASE
                         WHEN operation = 'rights_statement.acquire' THEN 'rights'
-                        WHEN operation GLOB 'application.termination:*' THEN 'social'
+                        WHEN operation GLOB 'application.termination:*'
+                            OR operation GLOB 'application.information_collection:*'
+                            OR operation GLOB 'application.enrollment:*' THEN 'social'
                         WHEN operation GLOB 'application.medical_termination:*'
                             OR operation GLOB 'application.medical_enrollment:*' THEN 'medical'
                     END AS category,
