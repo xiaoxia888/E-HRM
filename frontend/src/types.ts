@@ -31,6 +31,29 @@ export interface TaskListResponse {
   tasks: TaskRecord[]
 }
 
+export type ExecutionOutcome = TaskStatus | 'partial' | 'unknown' | 'existing'
+export interface ExecutionPerson {
+  name?: string; identity_number?: string; department?: string; company?: string; phone?: string
+  insurance_type?: string; start_month?: string; end_month?: string; row_number?: string
+  person_key?: string; status?: string; message?: string; file_name?: string
+  erp_success?: boolean | null; erp_message?: string
+  [key: string]: unknown
+}
+export interface ExecutionSummary {
+  task_id: string; application_index: number; source: string; operation: string; operation_label: string
+  transaction_type: string; title: string; erp_code: string; application_code: string; initiator: string
+  initiated_at: string; account_label: string; people_count: number; created_at: string; finished_at: string | null
+  status: TaskStatus; outcome: ExecutionOutcome; snapshot_origin: string
+}
+export interface ExecutionPage { records: ExecutionSummary[]; total: number; page: number; page_size: number }
+export interface ExecutionDetail {
+  account: { id?: number; display_name?: string; masked_account?: string; system_type?: string; login_method?: string }
+  application: { source: string; title: string; transaction_type: string; erp_code: string; application_code: string;
+    initiator: string; initiated_at: string; department?: string; problem_description?: string; handling_method?: string;
+    snapshot_origin: string; application_id?: number }
+  task: TaskRecord; operation_label: string; outcome: ExecutionOutcome; people: ExecutionPerson[]
+}
+
 export interface BusinessUsageSeries {
   key: 'rights' | 'social' | 'medical'
   label: string

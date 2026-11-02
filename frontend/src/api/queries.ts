@@ -10,6 +10,7 @@ import type {
   RightsApplicationPage,
   TaskListResponse,
   TaskRecord,
+  ExecutionPage, ExecutionDetail,
   BusinessUsageStatistics,
   RightsImportPreview,
   RightsRecordDetail,
@@ -43,6 +44,12 @@ export const api = {
     return apiRequest<BusinessUsageStatistics>(`/api/v1/dashboard/business-usage?${params}`)
   },
   task: (taskId: string) => apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}`),
+  executions: (values: { page: number; page_size: number; keyword?: string; operation?: string; start_date?: string; end_date?: string }) => {
+    const params = new URLSearchParams()
+    Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) })
+    return apiRequest<ExecutionPage>(`/api/v1/executions?${params}`)
+  },
+  executionDetail: (taskId: string, applicationIndex: number) => apiRequest<ExecutionDetail>(`/api/v1/executions/${taskId}/${applicationIndex}`),
   cancelTask: (taskId: string) =>
     apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}/cancel`, {
       method: 'POST',

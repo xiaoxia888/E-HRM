@@ -40,6 +40,7 @@ from ehrm.modules.medical_termination.page import (
     is_medical_portal_ready, is_medical_portal_url, verify_existing_medical_session,
 )
 from ehrm.web.tasks import TaskKind, TaskOutcome, TaskStatus
+from ehrm.web.execution_context import nocobase_context
 
 
 def person_key(identity: str) -> str:
@@ -250,6 +251,7 @@ class ApplicationOperationService:
                 kind=TaskKind.JSHRSS_BROWSER, resource_key=str(account.id),
                 resource_label=account.display_name or '智慧人社账号',
                 runner=lambda context: self._run_social(context, run_id, account, eligible, operation=operation),
+                business_context=nocobase_context(detail, account, people=[detail.insurance_person[item.source_index - 1] for item in eligible]),
             )
         except Exception:
             self.repository.finish(run_id)
@@ -338,6 +340,7 @@ class ApplicationOperationService:
                 kind=TaskKind.JSHRSS_BROWSER, resource_key=str(account.id),
                 resource_label=account.display_name or '智慧人社账号',
                 runner=lambda context: self._run(context, run_id, account, eligible),
+                business_context=nocobase_context(detail, account, people=[detail.termination_person[item.source_index - 1] for item in eligible]),
             )
         except Exception:
             self.repository.finish(run_id)
@@ -388,6 +391,7 @@ class ApplicationOperationService:
                 kind=TaskKind.MEDICAL_BROWSER, resource_key=str(account.id),
                 resource_label=account.display_name or '医保政务平台账号',
                 runner=lambda context: self._run_medical(context, run_id, account, eligible),
+                business_context=nocobase_context(detail, account, people=[detail.med_ins_withdrawal_record[item.source_index - 1] for item in eligible]),
             )
         except Exception:
             self.repository.finish(run_id)
@@ -442,6 +446,7 @@ class ApplicationOperationService:
                 kind=TaskKind.MEDICAL_BROWSER, resource_key=str(account.id),
                 resource_label=account.display_name or '医保政务平台账号',
                 runner=lambda context: self._run_medical_enrollment(context, run_id, account, eligible),
+                business_context=nocobase_context(detail, account, people=[detail.med_ins_enrollee[item.source_index - 1] for item in eligible]),
             )
         except Exception:
             self.repository.finish(run_id)

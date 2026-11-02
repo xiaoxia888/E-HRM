@@ -359,6 +359,11 @@ html, body, #root { min-width: 1024px; width: 100%; height: 100%; margin: 0; ove
   padding-block: 8px;
 }
 .application-detail-actions__account { width: 340px; max-width: 100%; }
+.execution-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+.execution-filters .ant-input-search { width: 320px; max-width: 100%; }
+.execution-filters .ant-select { width: 210px; }
+.execution-detail-content { width: 100%; }
+.execution-long-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 1280px) {
   .rights-workbench-grid { grid-template-columns: minmax(620px, 1fr) 300px; }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import sqlite3
@@ -62,6 +63,17 @@ class TaskRepository:
                     path TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS task_execution_applications (
+                    task_id TEXT NOT NULL REFERENCES task_records(task_id) ON DELETE CASCADE,
+                    application_index INTEGER NOT NULL, source TEXT NOT NULL,
+                    transaction_type TEXT NOT NULL, title TEXT NOT NULL, erp_code TEXT NOT NULL,
+                    application_code TEXT NOT NULL, initiator TEXT NOT NULL, initiated_at TEXT NOT NULL,
+                    account_label TEXT NOT NULL, people_count INTEGER NOT NULL,
+                    context_json TEXT NOT NULL,
+                    PRIMARY KEY(task_id, application_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_erp_code ON task_execution_applications(erp_code);
                 """
             )
         try:
@@ -69,7 +81,7 @@ class TaskRepository:
         except OSError:
             pass
 
-    def save(self, snapshot: TaskSnapshot) -> None:
+    def save(self, snapshot: TaskSnapshot, *, _connection: sqlite3.Connection | None = None) -> None:
         result_json = (
             json.dumps(
                 snapshot.result,
@@ -81,7 +93,7 @@ class TaskRepository:
             else None
         )
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with (nullcontext(_connection) if _connection is not None else self._connect()) as connection:
             connection.execute(
                 """
                 INSERT INTO task_records (
@@ -125,6 +137,65 @@ class TaskRepository:
                     now,
                 ),
             )
+
+    def save_submission(self, snapshot: TaskSnapshot, business_context: dict, *, preserve_task: bool = False) -> None:
+        with self._connect() as connection:
+            if not preserve_task:
+                self.save(snapshot, _connection=connection)
+            account = business_context.get('account') or {}
+            for index, application in enumerate(business_context.get('applications') or []):
+                payload = {'account': account, 'application': application}
+                connection.execute("""
+                    INSERT OR IGNORE INTO task_execution_applications
+                    (task_id,application_index,source,transaction_type,title,erp_code,application_code,
+                     initiator,initiated_at,account_label,people_count,context_json)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (snapshot.task_id, index, application.get('source', ''), application.get('transaction_type', ''),
+                      application.get('title', ''), application.get('erp_code', ''), application.get('application_code', ''),
+                      application.get('initiator', ''), application.get('initiated_at', ''),
+                      account.get('display_name') or snapshot.resource_label, len(application.get('people') or []),
+                      json.dumps(payload, ensure_ascii=False, default=_json_default)))
+
+    def execution_records(self, *, page=1, page_size=20, keyword='', operation='', start_date=None, end_date=None):
+        clauses, values = [], []
+        if keyword.strip():
+            # Literal substring search; '%' and '_' are not wildcard operators.
+            clauses.append("(" + ' OR '.join(f'instr(lower(e.{field}),lower(?))>0' for field in ('title', 'erp_code', 'application_code', 'initiator', 'account_label', 'transaction_type')) + ")")
+            values.extend([keyword.strip()] * 6)
+        if operation:
+            clauses.append("(t.operation=? OR substr(t.operation,1,instr(t.operation,':')-1)=?)")
+            values.extend([operation, operation])
+        if start_date:
+            clauses.append("date(t.created_at,'+8 hours')>=?")
+            values.append(start_date.isoformat())
+        if end_date:
+            clauses.append("date(t.created_at,'+8 hours')<=?")
+            values.append(end_date.isoformat())
+        where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        base = ' FROM task_execution_applications e JOIN task_records t ON t.task_id=e.task_id'
+        with self._connect() as connection:
+            total = connection.execute('SELECT COUNT(*)' + base + where, values).fetchone()[0]
+            rows = connection.execute(
+                'SELECT e.*,t.operation,t.status,t.created_at,t.finished_at,t.result_json,t.message,t.error' + base + where
+                + ' ORDER BY t.created_at DESC,t.rowid DESC,e.application_index LIMIT ? OFFSET ?',
+                [*values, page_size, (page - 1) * page_size],
+            ).fetchall()
+        return {'records': [dict(row) for row in rows], 'total': total, 'page': page, 'page_size': page_size}
+
+    def execution_record(self, task_id: str, application_index: int):
+        with self._connect() as connection:
+            row = connection.execute('SELECT context_json FROM task_execution_applications WHERE task_id=? AND application_index=?', (task_id, application_index)).fetchone()
+        return json.loads(row['context_json']) if row else None
+
+    def missing_execution_records(self):
+        with self._connect() as connection:
+            rows = connection.execute("""
+                SELECT t.* FROM task_records t
+                WHERE NOT EXISTS (SELECT 1 FROM task_execution_applications e WHERE e.task_id=t.task_id)
+                AND (t.operation IN ('rights_statement.acquire','erp.rights.upload') OR t.operation GLOB 'application.*:*')
+                ORDER BY t.created_at
+            """).fetchall()
+        return [self._snapshot(row) for row in rows]
 
     def get(self, task_id: str) -> TaskSnapshot | None:
         with self._connect() as connection:

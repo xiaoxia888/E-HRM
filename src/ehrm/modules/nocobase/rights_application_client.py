@@ -320,6 +320,7 @@ class NocoBaseRightsApplicationClient:
             key_value=str(payload.get("key_value") or ""),
             department=str(payload.get("dept_name") or ""),
             erp_all_field_value=payload.get("erp_all_field_value") if isinstance(payload.get("erp_all_field_value"), dict) else None,
+            erp_code=str(payload.get('erp_code') or '').strip(),
             insurance_person=tuple(item for item in (payload.get("insurance_person") or []) if isinstance(item, dict)),
             termination_person=tuple(item for item in (payload.get("termination_person") or []) if isinstance(item, dict)),
             med_ins_withdrawal_record=tuple(item for item in (payload.get("med_ins_withdrawal_record") or []) if isinstance(item, dict)),

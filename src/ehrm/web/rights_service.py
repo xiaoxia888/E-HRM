@@ -27,6 +27,7 @@ from ehrm.modules.rights_statement.excel_models import (
 )
 from ehrm.web.settings_service import WebSettingsService
 from ehrm.web.task_repository import TaskRepository
+from ehrm.web.execution_context import execution_account, nocobase_context, rights_context
 from ehrm.web.tasks import (
     TaskContext, TaskCoordinator, TaskKind, TaskOutcome, TaskSnapshot, TaskStatus,
 )
@@ -167,7 +168,9 @@ class RightsWebService:
             label=source.stem,
             upload_to_erp=upload_to_erp,
         )
-        return self._submit(account, request, title="获取社保权益单")
+        state = self._read_erp_state(import_id) if is_erp_source else None
+        return self._submit(account, request, title="获取社保权益单",
+                            business_context=rights_context(records, account, erp_state=state))
 
     def submit_erp_extraction(
         self,
@@ -1264,6 +1267,7 @@ class RightsWebService:
             account,
             request,
             title=f"打印权益申请 {detail.code}",
+            business_context=nocobase_context(detail, account, people=records),
         )
 
     def _submit(
@@ -1272,6 +1276,7 @@ class RightsWebService:
         request: ExcelTaskRequest,
         *,
         title: str,
+        business_context: dict | None = None,
     ) -> TaskSnapshot:
         label = account.display_name or self._mask_account(account.account)
         return self.coordinator.submit(
@@ -1281,6 +1286,7 @@ class RightsWebService:
             resource_key=str(account.id),
             resource_label=label,
             runner=lambda context: self._run(context, account, request),
+            business_context=business_context,
         )
 
     def _run(
@@ -1322,12 +1328,17 @@ class RightsWebService:
                     "未启动自动上传"
                 )
             else:
+                parent_context = getattr(context, 'business_context', {})
+                parent_context = dict(parent_context) if isinstance(parent_context, dict) else {}
+                if parent_context:
+                    parent_context['account'] = execution_account(erp_account)
                 erp_task = self.coordinator.submit(
                     title="上传权益单至 ERP",
                     operation="erp.rights.upload",
                     kind=TaskKind.ERP_WRITE,
                     resource_key=str(erp_account.id),
                     resource_label=erp_account.display_name or self._mask_account(erp_account.account),
+                    business_context=parent_context,
                     runner=lambda erp_context: self._run_erp(
                         erp_context,
                         settings,

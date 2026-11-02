@@ -10,6 +10,7 @@ import {
   MenuUnfoldOutlined,
   SettingOutlined,
   UnorderedListOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import { Badge, Button, Flex, Layout, Menu, Tooltip, Typography } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -25,6 +26,7 @@ const items = [
   { key: '/rights', icon: <DatabaseOutlined />, label: '权益单获取' },
   { key: '/social-security', icon: <ApartmentOutlined />, label: '社保业务' },
   { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务中心' },
+  { key: '/executions', icon: <HistoryOutlined />, label: '执行记录' },
   { key: '/scheduled-tasks', icon: <ClockCircleOutlined />, label: '定时任务' },
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -74,6 +75,8 @@ class TaskStore(Protocol):
 
     def mark_unfinished_interrupted(self) -> int: ...
 
+    def save_submission(self, snapshot: TaskSnapshot, business_context: dict) -> None: ...
+
 
 class TaskContext:
     def __init__(
@@ -81,10 +84,16 @@ class TaskContext:
         task_id: str,
         cancel_event: threading.Event,
         progress_callback: Callable[[str, int | None, int | None], None],
+        business_context: dict | None = None,
     ) -> None:
         self.task_id = task_id
         self._cancel_event = cancel_event
         self._progress_callback = progress_callback
+        self._business_context = deepcopy(business_context or {})
+
+    @property
+    def business_context(self) -> dict:
+        return deepcopy(self._business_context)
 
     @property
     def cancelled(self) -> bool:
@@ -127,6 +136,7 @@ class _TaskRecord:
     resource_key: str
     resource_label: str
     runner: TaskRunner
+    business_context: dict = field(default_factory=dict)
     status: TaskStatus = TaskStatus.QUEUED
     message: str = "任务已创建，正在等待调度"
     progress_current: int = 0
@@ -192,6 +202,7 @@ class TaskCoordinator:
         runner: TaskRunner,
         resource_key: str = "",
         resource_label: str = "",
+        business_context: dict | None = None,
     ) -> TaskSnapshot:
         normalized_title = title.strip()
         normalized_operation = operation.strip()
@@ -218,7 +229,12 @@ class TaskCoordinator:
                 resource_key=normalized_key,
                 resource_label=resource_label.strip() or "未命名资源",
                 runner=runner,
+                business_context=deepcopy(business_context or {}),
             )
+            # Register the immutable application snapshot atomically with the
+            # queued task, before any browser or worker can start.
+            if record.business_context and self._store is not None:
+                self._store.save_submission(self._snapshot_locked(record), record.business_context)
             self._tasks[task_id] = record
             self._order.appendleft(task_id)
             resource_token = self._resource_token(record)
@@ -338,6 +354,7 @@ class TaskCoordinator:
                 current,
                 total,
             ),
+            business_context=record.business_context,
         )
         try:
             context.raise_if_cancelled()

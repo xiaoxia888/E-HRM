@@ -67,6 +67,8 @@ from ehrm.web.schemas import (
 )
 from ehrm.web.rights_service import ArtifactRegistry, RightsWebService
 from ehrm.web.task_repository import TaskRepository
+from ehrm.web.execution_history import ExecutionHistoryService
+from ehrm.web.execution_context import OPERATION_LABELS
 from ehrm.web.settings_service import WebSettingsService
 from ehrm.web.tasks import TaskCoordinator
 from ehrm.web.nocobase_sync import NocoBaseSyncController
@@ -118,6 +120,8 @@ def create_app(
     sync_controller = NocoBaseSyncController(settings_service, task_coordinator, resolved_logger)
     scheduled_tasks = ScheduledTaskWorkbench(sync_controller)
     application_operations = ApplicationOperationService(settings_service, task_coordinator, resolved_logger)
+    execution_history = ExecutionHistoryService(task_repository, task_coordinator, rights_service,
+                                                application_operations.repository, resolved_logger)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -147,6 +151,7 @@ def create_app(
     app.state.nocobase_sync = sync_controller
     app.state.scheduled_tasks = scheduled_tasks
     app.state.application_operations = application_operations
+    app.state.execution_history = execution_history
     nocobase_url = urlsplit(resolved_settings.nocobase.base_url)
     nocobase_origin = f"{nocobase_url.scheme}://{nocobase_url.netloc}"
     app.add_middleware(
@@ -796,6 +801,24 @@ def create_app(
             upload_to_erp=request.upload_to_erp,
         )
         return TaskResponse.from_snapshot(snapshot)
+
+    @app.get('/api/v1/executions')
+    def execution_records(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
+                          keyword: str = Query(default='', max_length=200), operation: str = '',
+                          start_date: date | None = None, end_date: date | None = None):
+        if operation and operation not in OPERATION_LABELS:
+            raise ValueError('不支持的执行操作筛选')
+        if start_date and end_date and start_date > end_date:
+            raise ValueError('执行开始日期不能晚于结束日期')
+        return execution_history.list(page=page, page_size=page_size, keyword=keyword, operation=operation,
+                                      start_date=start_date, end_date=end_date)
+
+    @app.get('/api/v1/executions/{task_id}/{application_index}')
+    def execution_record_detail(task_id: str, application_index: int):
+        record = execution_history.detail(task_id, application_index)
+        if record is None:
+            raise HTTPException(404, '执行记录不存在')
+        return record
 
     @app.get("/api/v1/artifacts/{token}", response_model=None)
     def download_artifact(token: str, preview: bool = False) -> FileResponse:

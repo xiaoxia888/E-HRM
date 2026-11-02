@@ -153,3 +153,4 @@ class NocoBaseRightsApplicationDetail:
     termination_person: tuple[dict[str, object], ...] = field(default=(), repr=False)
     med_ins_withdrawal_record: tuple[dict[str, object], ...] = field(default=(), repr=False)
     med_ins_enrollee: tuple[dict[str, object], ...] = field(default=(), repr=False)
+    erp_code: str = ''

@@ -3,6 +3,7 @@ import { Button, Card, Descriptions, Drawer, Empty, message, Progress, Space, Ta
 import { DownloadOutlined, StopOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/queries'
 import { errorMessage } from '../api/client'
 import { PageTitle } from '../components/PageTitle'
@@ -10,6 +11,7 @@ import { TaskStatusTag } from '../components/TaskStatusTag'
 import { rightsResultFailures, rightsResultOutcome } from '../utils/rights'
 
 export function TaskCenterPage() {
+  const navigate = useNavigate()
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -38,6 +40,7 @@ export function TaskCenterPage() {
       <PageTitle
         title="任务中心"
         description="任务可以在后台运行，离开当前页面不会中断处理"
+        extra={<Button onClick={() => navigate('/executions')}>业务执行记录</Button>}
       />
       <Card className="content-card">
         <Table

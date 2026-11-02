@@ -18,6 +18,7 @@ const SocialSecurityPage = lazy(() =>
 const TaskCenterPage = lazy(() =>
   import('./pages/TaskCenterPage').then((module) => ({ default: module.TaskCenterPage })),
 )
+const ExecutionRecordsPage = lazy(() => import('./pages/ExecutionRecordsPage').then((module) => ({ default: module.ExecutionRecordsPage })))
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
 )
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/rights" element={<RightsPage />} />
           <Route path="/social-security" element={<SocialSecurityPage />} />
           <Route path="/tasks" element={<TaskCenterPage />} />
+          <Route path="/executions" element={<ExecutionRecordsPage />} />
           <Route path="/scheduled-tasks" element={<ScheduledTasksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
